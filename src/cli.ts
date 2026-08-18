@@ -9,8 +9,12 @@ import type { JobState } from "./jobs/queue.ts";
 import { MIGRATIONS } from "./db/migrations.ts";
 import { toIso } from "./clock.ts";
 import { VERSION } from "./version.ts";
+import type { Logger } from "./log.ts";
 import { creerHandlers, cleAnnuaire } from "./seed/index.ts";
 import type { ContexteSeed } from "./seed/index.ts";
+import { creerHandlersDecouverte, campagneDuJour, cleDecouverte } from "./decouverte/index.ts";
+import type { ContexteDecouverte } from "./decouverte/index.ts";
+import { PAGES_MAX_PAR_COMMUNE } from "./decouverte/scoring.ts";
 
 const USAGE = `annuaire ${VERSION} — annuaire de la vie associative locale
 
@@ -18,8 +22,10 @@ Usage : annuaire <commande> [options]
 
 Commandes
   init                    Prepare le repertoire de donnees et la base
-  run --departement <dd>  Execute un run : amorce RNA et resolution des URL de mairie
+  run --departement <dd>  Execute un run complet : amorce, resolution, puis decouverte
+  decouvrir --departement <dd>  Rejoue la seule decouverte sur une base deja amorcee
   communes --departement <dd>   Communes du departement et URL de leur mairie
+  contacts --departement <dd>   Contacts collectes, avec leur provenance
   associations --departement <dd>  Associations amorcees, avec leur commune
   dumps                   Etat des dumps ouverts et de leur reprise
   status                  Etat de l'installation et de la file de jobs
@@ -33,6 +39,14 @@ Options de run
                           mouvement declare depuis 2009, souvent dormantes)
   --rna-file <chemin>     Lit un ZIP RNA officiel telecharge a la main plutot que le
                           miroir agrege : 6,5 Mo au lieu de 1,25 Go pour un departement
+  --sans-decouverte       S'arrete apres l'amorce, sans explorer les sites de mairie
+
+Options de decouverte
+  --max-pages <n>         Pages explorees au maximum par commune (defaut : ${PAGES_MAX_PAR_COMMUNE})
+  --avec-mobiles          RISQUE. Conserve les numeros en 06/07, que le brief exclut
+                          par defaut (§4.6) : un mobile associatif est presque toujours
+                          la ligne personnelle d'un benevole. A n'activer qu'en
+                          connaissance du regime applicable.
 
 Options communes
   --data-dir <chemin>     Repertoire de donnees (defaut : emplacement systeme)
@@ -59,6 +73,9 @@ export async function main(argv: readonly string[]): Promise<number> {
         state: { type: "string" },
         "rna-file": { type: "string" },
         "avec-import": { type: "boolean", default: false },
+        "sans-decouverte": { type: "boolean", default: false },
+        "avec-mobiles": { type: "boolean", default: false },
+        "max-pages": { type: "string" },
         limit: { type: "string" },
         json: { type: "boolean", default: false },
         verbose: { type: "boolean", default: false },
@@ -91,6 +108,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       console: !(values.json === true),
     });
 
+  const decouverte = lireOptionsDecouverte(values["max-pages"], values["avec-mobiles"] === true);
+  if (decouverte === undefined) {
+    process.stderr.write(`--max-pages attend un entier positif, recu « ${values["max-pages"]} »\n`);
+    return 2;
+  }
+
   try {
     switch (commande) {
       case "init":
@@ -107,7 +130,13 @@ export async function main(argv: readonly string[]): Promise<number> {
         return await commandeRun(ouvrir, values.departement, {
           avecImport: values["avec-import"] === true,
           rnaFile: values["rna-file"],
+          sansDecouverte: values["sans-decouverte"] === true,
+          decouverte,
         });
+      case "decouvrir":
+        return await commandeDecouvrir(ouvrir, values.departement, decouverte);
+      case "contacts":
+        return commandeContacts(ouvrir, values.departement, values.json === true, values.limit);
       case "communes":
         return commandeCommunes(ouvrir, values.departement, values.json === true, values.limit);
       case "associations":
@@ -270,7 +299,12 @@ function commandePurge(ouvrir: () => App): number {
 async function commandeRun(
   ouvrir: () => App,
   departement: string | undefined,
-  options: { avecImport: boolean; rnaFile: string | undefined },
+  options: {
+    avecImport: boolean;
+    rnaFile: string | undefined;
+    sansDecouverte: boolean;
+    decouverte: OptionsDecouverte;
+  },
 ): Promise<number> {
   if (departement === undefined || !/^(\d{2}|\d[AB]|\d{3})$/i.test(departement)) {
     process.stderr.write("Un departement est requis : annuaire run --departement 35\n");
@@ -332,6 +366,15 @@ async function commandeRun(
 
     const worker = new Worker(app.queue, creerHandlers(contexte), { concurrency: app.config.concurrency });
     const stats = await worker.run(controller.signal);
+
+    // La decouverte est lancee dans une seconde passe, apres que l'amorce soit
+    // entierement drainee. Ce n'est pas une precaution de style : le rapprochement
+    // d'un contact avec une association lit la table `association`, et la laisser
+    // tourner en parallele du second dump RNA (--avec-import) ferait echouer des
+    // rattachements que rien ne viendrait corriger ensuite.
+    if (!options.sansDecouverte && !controller.signal.aborted) {
+      await lancerDecouverte(app, runId, logger, departement, options.decouverte, controller.signal);
+    }
 
     const interrompu = controller.signal.aborted;
     app.db
@@ -558,6 +601,171 @@ function formaterOctets(valeur: number): string {
 }
 
 /** Resume ce que le run a produit, pour que le jalon soit lisible sans autre commande. */
+export type OptionsDecouverte = { maxPages: number; avecMobiles: boolean };
+
+/** Rend `undefined` sur une valeur invalide : c'est une erreur d'usage, pas d'execution. */
+function lireOptionsDecouverte(
+  maxPages: string | undefined,
+  avecMobiles: boolean,
+): OptionsDecouverte | undefined {
+  if (maxPages === undefined) return { maxPages: PAGES_MAX_PAR_COMMUNE, avecMobiles };
+  const valeur = Number.parseInt(maxPages, 10);
+  if (!Number.isInteger(valeur) || valeur < 1 || String(valeur) !== maxPages.trim()) return undefined;
+  return { maxPages: valeur, avecMobiles };
+}
+
+/**
+ * Enfile l'etape [3] et draine la file. Partage par `run`, ou elle suit l'amorce, et
+ * par `decouvrir`, ou elle est rejouee seule sur une base deja amorcee — le seed d'un
+ * departement coute 40 s, on ne le repaie pas a chaque reglage du scoring.
+ */
+async function lancerDecouverte(
+  app: App,
+  runId: number,
+  logger: Logger,
+  departement: string,
+  options: OptionsDecouverte,
+  signal: AbortSignal,
+): Promise<void> {
+  const client = requireClient(app);
+  const campagne = campagneDuJour(app.clock.now());
+  logger.info("Demarrage de la decouverte", { departement, campagne, ...options });
+
+  const contexte: ContexteDecouverte = {
+    db: app.db,
+    client,
+    counters: app.counters.forRun(runId),
+    clock: app.clock,
+    logger,
+    queue: app.queue,
+    runId,
+  };
+
+  app.queue.enqueue(
+    "decouverte_planifiee",
+    cleDecouverte(departement, campagne),
+    { departement, campagne, maxPages: options.maxPages, avecMobiles: options.avecMobiles },
+    { runId },
+  );
+
+  const worker = new Worker(app.queue, creerHandlersDecouverte(contexte), {
+    concurrency: app.config.concurrency,
+  });
+  const stats = await worker.run(signal);
+  logger.info("Fin de la decouverte", stats);
+}
+
+async function commandeDecouvrir(
+  ouvrir: () => App,
+  departement: string | undefined,
+  options: OptionsDecouverte,
+): Promise<number> {
+  if (!exigerDepartement(departement, "decouvrir")) return 2;
+
+  const app = ouvrir();
+  try {
+    requireClient(app);
+    startupPurge(app);
+
+    const communes = Number(
+      (app.db
+        .prepare("SELECT count(*) AS n FROM commune WHERE departement = ? AND url_mairie IS NOT NULL")
+        .get(departement) as { n?: number } | undefined)?.n ?? 0,
+    );
+    if (communes === 0) {
+      process.stderr.write(
+        `Aucune URL de mairie connue pour le departement ${departement}.\n` +
+          `Lancez d'abord l'amorce : annuaire run --departement ${departement}\n`,
+      );
+      return 2;
+    }
+
+    const info = app.db
+      .prepare("INSERT INTO run (departement, started_at, statut) VALUES (?, ?, 'en_cours')")
+      .run(departement, toIso(app.clock.now()));
+    const runId = Number(info.lastInsertRowid);
+    const logger = app.logger.child({ run_id: runId });
+
+    const controller = installShutdownHandlers(() => {
+      logger.warn("Arret demande : plus aucun job n'est pris, les jobs en cours vont finir");
+    });
+
+    await lancerDecouverte(app, runId, logger, departement, options, controller.signal);
+
+    const interrompu = controller.signal.aborted;
+    app.db
+      .prepare("UPDATE run SET finished_at = ?, statut = ? WHERE id = ?")
+      .run(toIso(app.clock.now()), interrompu ? "interrompu" : "termine", runId);
+
+    resumeRun(app, departement);
+    return interrompu ? 130 : 0;
+  } finally {
+    app.close();
+  }
+}
+
+type LigneContact = {
+  commune: string;
+  association: string | null;
+  kind: string;
+  valeur: string;
+  is_generique: number | null;
+  methode_extraction: string;
+  confiance: number;
+  source_url: string;
+  review_statut: string;
+};
+
+function commandeContacts(
+  ouvrir: () => App,
+  departement: string | undefined,
+  json: boolean,
+  limite: string | undefined,
+): number {
+  if (!exigerDepartement(departement, "contacts")) return 2;
+
+  const app = ouvrir();
+  try {
+    const lignes = app.db
+      .prepare(
+        `SELECT c.nom AS commune, a.nom AS association, ct.kind, ct.valeur, ct.is_generique,
+                ct.methode_extraction, ct.confiance, ct.source_url, ct.review_statut
+           FROM contact ct
+           JOIN commune c ON c.code_insee = ct.code_insee
+           LEFT JOIN association a ON a.id = ct.association_id
+          WHERE c.departement = ?
+          ORDER BY ct.confiance DESC, c.nom, ct.valeur
+          LIMIT ?`,
+      )
+      .all(departement, lireLimite(limite)) as unknown as LigneContact[];
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(lignes, null, 2)}\n`);
+      return 0;
+    }
+
+    if (lignes.length === 0) {
+      process.stdout.write(
+        `Aucun contact pour le departement ${departement}.\n` +
+          `Lancez la decouverte : annuaire decouvrir --departement ${departement}\n`,
+      );
+      return 0;
+    }
+
+    for (const ligne of lignes) {
+      const regime = ligne.kind !== "email" ? "" : ligne.is_generique === 1 ? " [generique]" : ligne.is_generique === 0 ? " [nominatif]" : " [indetermine]";
+      const cible = ligne.association ?? `${ligne.commune} (commune)`;
+      process.stdout.write(
+        `${ligne.valeur.padEnd(38)} ${ligne.confiance.toFixed(2)} ${ligne.methode_extraction.padEnd(18)}` +
+          `${regime}\n    ${cible}\n    source : ${ligne.source_url}\n`,
+      );
+    }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
 function resumeRun(app: App, departement: string): void {
   const compte = (sql: string): number =>
     Number((app.db.prepare(sql).get(departement) as { n?: number })?.n ?? 0);
@@ -575,8 +783,42 @@ function resumeRun(app: App, departement: string): void {
       "WHERE c.departement = ? AND a.date_dissolution IS NULL",
   );
   process.stdout.write(
-    `${communes} communes, dont ${resolues} avec l'URL de leur mairie. ${associations} associations actives.\n` +
-      `Detail : annuaire communes --departement ${departement}\n`,
+    `${communes} communes, dont ${resolues} avec l'URL de leur mairie. ${associations} associations actives.\n`,
+  );
+
+  const pagesVisitees = compte(
+    "SELECT count(*) AS n FROM page p JOIN commune c ON c.code_insee = p.code_insee " +
+      "WHERE c.departement = ? AND p.statut = 'visitee'",
+  );
+  if (pagesVisitees === 0) {
+    process.stdout.write(
+      `Aucune page exploree. Detail : annuaire communes --departement ${departement}\n`,
+    );
+    return;
+  }
+
+  const injoignables = compte(
+    "SELECT count(*) AS n FROM commune WHERE departement = ? AND crawl_statut IN ('injoignable','interdit_robots','refuse')",
+  );
+  const contacts = compte(
+    "SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee " +
+      "WHERE c.departement = ?",
+  );
+  // §8 du brief : le taux de couverture est la metrique qui fera le README. Elle se
+  // mesure sur les associations, pas sur les pages : c'est l'annuaire qu'on construit.
+  const couvertes = compte(
+    "SELECT count(DISTINCT a.id) AS n FROM association a " +
+      "JOIN commune c ON c.code_insee = a.code_insee " +
+      "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
+      "WHERE c.departement = ? AND a.date_dissolution IS NULL",
+  );
+  const taux = associations === 0 ? 0 : (couvertes / associations) * 100;
+
+  process.stdout.write(
+    `${pagesVisitees} pages explorees, ${injoignables} communes sans collecte possible.\n` +
+      `${contacts} contacts collectes. Couverture : ${couvertes} associations avec au moins ` +
+      `un email, soit ${taux.toFixed(1)} %.\n` +
+      `Detail : annuaire contacts --departement ${departement}\n`,
   );
 }
 

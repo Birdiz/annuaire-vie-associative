@@ -48,8 +48,14 @@ export function purge(
 
   const result = transaction(db, () => {
     const contacts = db.prepare("DELETE FROM contact WHERE collected_at < ?").run(cutoff).changes;
+    // Une page planifiee mais jamais visitee n'a pas de fetched_at : s'en tenir a
+    // cette colonne la rendrait immortelle, et elle consommerait le budget de sa
+    // commune pour toujours apres un arret brutal.
     const pages = db
-      .prepare("DELETE FROM page WHERE fetched_at IS NOT NULL AND fetched_at < ?")
+      .prepare(
+        "DELETE FROM page WHERE coalesce(fetched_at, planifiee_at) IS NOT NULL" +
+          " AND coalesce(fetched_at, planifiee_at) < ?",
+      )
       .run(cutoff).changes;
     const runs = db.prepare("DELETE FROM run WHERE started_at < ?").run(cutoff).changes;
 

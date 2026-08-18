@@ -66,6 +66,26 @@ test("aucun module hors de src/http n'emet de requete reseau", () => {
   );
 });
 
+test("node-html-parser n'est importe que par l'adaptateur DOM", () => {
+  // Meme logique que la porte de sortie reseau : la dependance reste remplacable, et
+  // `css-select`, tire transitivement, n'est jamais atteint. Ses accesseurs `.text`
+  // restituent en outre le contenu des <script> et collent deux cellules voisines, ce
+  // qui peut fabriquer un numero de telephone inexistant.
+  const adaptateur = join("src", "parse", "html.ts");
+  const interdits: string[] = [];
+
+  for (const fichier of fichiersSource(SRC)) {
+    const relatif = relative(RACINE, fichier);
+    if (relatif === adaptateur) continue;
+    const source = readFileSync(fichier, "utf8");
+    if (source.includes('"node-html-parser"') || source.includes("'node-html-parser'")) {
+      interdits.push(relatif);
+    }
+  }
+
+  assert.deepEqual(interdits, [], "Le parseur DOM ne s'importe que depuis src/parse/html.ts.");
+});
+
 test("le type FetchOutcome ne permet pas d'ignorer un blocage par robots.txt", () => {
   const source = readFileSync(join(SRC, "http", "client.ts"), "utf8");
   assert.match(

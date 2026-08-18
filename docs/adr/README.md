@@ -16,3 +16,6 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [007](007-telechargement-en-flux.md) | Télécharger en flux, à côté de `fetch` | Acceptée |
 | [008](008-job-de-longue-haleine.md) | Jobs de longue haleine : commits par tranche | Acceptée |
 | [009](009-peuplement-des-communes.md) | Peupler `commune` depuis l'Annuaire | Acceptée |
+| [010](010-decoupage-du-crawl.md) | Un job par page, et un budget par campagne | Acceptée |
+| [011](011-premiere-dependance-runtime.md) | Première dépendance runtime : `node-html-parser` | Acceptée |
+| [012](012-rattachement-et-regime-des-contacts.md) | Rattachement déterministe, et régime des contacts | Acceptée |

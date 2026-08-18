@@ -82,21 +82,25 @@ test("les pages anciennes et le HTML brut correspondant partent ensemble", (t) =
   const cache = new HttpCache(join(dir, "cache"));
 
   const vieux = cutoffFor(MAINTENANT) - JOUR;
-  db.prepare(
-    `INSERT INTO page (url_hash, url, domaine, fetched_at) VALUES ('h1', 'https://a.fr/1', 'a.fr', ?)`,
-  ).run(toIso(vieux));
-  db.prepare(
-    `INSERT INTO page (url_hash, url, domaine, fetched_at) VALUES ('h2', 'https://a.fr/2', 'a.fr', ?)`,
-  ).run(toIso(MAINTENANT));
-  // Une page jamais recuperee n'a pas de date : elle ne doit pas disparaitre.
-  db.prepare(`INSERT INTO page (url_hash, url, domaine) VALUES ('h3', 'https://a.fr/3', 'a.fr')`).run();
+  const inserer = db.prepare(
+    `INSERT INTO page (url_hash, campagne, url, domaine, planifiee_at, fetched_at)
+     VALUES (?, 'c', ?, 'a.fr', ?, ?)`,
+  );
+  inserer.run("h1", "https://a.fr/1", toIso(vieux), toIso(vieux));
+  inserer.run("h2", "https://a.fr/2", toIso(MAINTENANT), toIso(MAINTENANT));
+  // Planifiee il y a plus de trois ans et jamais visitee : sans date de recuperation,
+  // c'est la date d'enfilement qui la rend purgeable. Sinon elle consommerait le
+  // budget de sa commune indefiniment.
+  inserer.run("h3", "https://a.fr/3", toIso(vieux), null);
+  // Planifiee aujourd'hui et pas encore visitee : elle reste.
+  inserer.run("h4", "https://a.fr/4", toIso(MAINTENANT), null);
 
   const resultat = purge(db, cache, clock, counters);
 
-  assert.equal(resultat.pages, 1);
+  assert.equal(resultat.pages, 2);
   const restantes = (db.prepare("SELECT url_hash FROM page ORDER BY url_hash").all() as { url_hash: string }[])
     .map((row) => row.url_hash);
-  assert.deepEqual(restantes, ["h2", "h3"]);
+  assert.deepEqual(restantes, ["h2", "h4"], "une page planifiee de longue date doit partir");
 });
 
 test("un run ancien emporte ses jobs et ses metriques", (t) => {

@@ -24,15 +24,23 @@ async function setup(
   t.after(() => db.close());
 
   const counters = new Counters(db, null);
+  // Horodater les departs plutot que les arrivees : la premiere requete paie
+  // l'etablissement de la connexion, la seconde l'economise par keep-alive, et l'ecart
+  // ainsi introduit se voit des que la machine est chargee.
+  const departs: { url: string; at: number }[] = [];
   const client = new HttpClient({
     cache: new HttpCache(makeTempDir(t)),
     throttle: new DomainThrottle({ minDelayMs: options.minDelayMs ?? 5, lookup: lookupLocal }),
     counters,
     userAgent: buildUserAgent("0.1.0", CONTACT),
     cacheTtlMs: options.cacheTtlMs ?? 3_600_000,
+    fetchImpl: (input, init) => {
+      departs.push({ url: String(input), at: performance.now() });
+      return globalThis.fetch(input, init);
+    },
   });
 
-  return { server, client, counters };
+  return { server, client, counters, departs };
 }
 
 test("une reponse est mise en cache et la requete suivante n'atteint pas le reseau", async (t) => {
@@ -107,7 +115,7 @@ test("robots.txt n'est demande qu'une fois par origine", async (t) => {
 });
 
 test("un Crawl-delay superieur au plancher est respecte", async (t) => {
-  const { server, client } = await setup(
+  const { server, client, departs } = await setup(
     t,
     { "/robots.txt": text("User-agent: *\nCrawl-delay: 0.3\n"), "/a": text("a"), "/b": text("b") },
     { minDelayMs: 5 },
@@ -116,10 +124,10 @@ test("un Crawl-delay superieur au plancher est respecte", async (t) => {
   await client.fetch(`${server.origin}/a`);
   await client.fetch(`${server.origin}/b`);
 
-  const pages = server.requests.filter((r) => r.url === "/a" || r.url === "/b");
+  const pages = departs.filter((depart) => depart.url.endsWith("/a") || depart.url.endsWith("/b"));
   assert.equal(pages.length, 2);
   const ecart = pages[1]!.at - pages[0]!.at;
-  assert.ok(ecart >= 295, `Crawl-delay de 300 ms non respecte : ${ecart.toFixed(0)} ms`);
+  assert.ok(ecart >= 300, `Crawl-delay de 300 ms non respecte : ${ecart.toFixed(0)} ms`);
 });
 
 test("une entree perimee est revalidee, et un 304 evite de retelecharger", async (t) => {

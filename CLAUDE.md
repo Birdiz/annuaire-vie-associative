@@ -62,14 +62,16 @@ doit echouer au niveau de la base, pas etre evite par de la logique applicative.
 | D3 | Dump RNA telecharge au 1er run, `--rna-file` en override | Downloader resumable par `Range` |
 | D4 | LLM : BYOK, provider pluggable, desactive par defaut | Le pipeline est complet et mesurable sans aucune cle |
 | D5 | UI : `node:http` + htmx + CSS ecrit a la main | Pas de bundler, pas de React |
-| D6 | Parseur DOM : `node-html-parser` | Repli sur `cheerio` si les selecteurs manquent |
+| D6 | Parseur DOM : `node-html-parser` | Applique au lot 3 : 11 paquets, 3,0 Mo (ADR-011) |
 | D7 | Tests : `node:test` + `node:assert` | Zero dependance de test |
 | D8 | Build : aucun pour le dev, `esbuild` (devDep) pour le SEA | Node 24 execute le TS nativement |
 | D9 | Config validee a la main | Pas de `zod` |
 | D11 | Migrations SQL numerotees | Pas d'ORM |
 
 Le poids du bundle final est un critere de conception. **Justifier tout ajout de
-dependance**, et par defaut s'en passer : le lot 1 a zero dependance runtime.
+dependance**, et par defaut s'en passer. Le projet a **une seule** dependance runtime,
+`node-html-parser`, entree au lot 3 apres mesure de son cout (ADR-011). C'est un seuil
+qui ne se franchit qu'une fois : tout ajout ulterieur se justifie de la meme facon.
 
 ## Conventions
 
@@ -79,6 +81,14 @@ dependance**, et par defaut s'en passer : le lot 1 a zero dependance runtime.
 - Imports relatifs avec l'extension `.ts` explicite (exige par Node en execution directe).
 - Syntaxe effacable uniquement : pas d'`enum`, pas de parametres-proprietes, pas de
   `namespace`. Utiliser des unions de litteraux de chaine a la place des `enum`.
+
+## Une seule porte d'entree DOM
+
+`node-html-parser` n'est importe que par `src/parse/html.ts`. Meme logique que la porte
+de sortie reseau : la dependance reste remplacable, et `css-select` — tire
+transitivement — n'est jamais atteint. N'appelez pas ses accesseurs `.text` depuis
+ailleurs : ils restituent le contenu des `<script>` et collent deux cellules voisines,
+ce qui peut fabriquer un numero de telephone inexistant.
 
 ## Une seule porte de sortie reseau
 

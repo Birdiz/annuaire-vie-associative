@@ -273,4 +273,100 @@ CREATE UNIQUE INDEX idx_dump_en_cours ON dump (source) WHERE statut = 'en_cours'
 CREATE INDEX idx_dump_source ON dump (source, started_at);
 `,
   },
+  {
+    version: 3,
+    name: "decouverte-et-extraction",
+    sql: `
+--------------------------------------------------------------------------------
+-- Communes : ce que la decouverte a constate
+--------------------------------------------------------------------------------
+
+-- L'ADR-009 laissait au lot 3 la verification que l'URL de mairie repond, mais
+-- statut_resolution ne peut pas porter cette information : il dit ce que declare
+-- l'Annuaire, et le seed du run suivant remonterait a 'resolue' toute valeur qu'on
+-- aurait retrogradee ici. Les deux faits sont distincts, ils ont donc deux colonnes.
+--
+-- 'refuse' couvre le cas ou l'Annuaire declare comme site officiel une page de reseau
+-- social : le §5 du brief l'interdit, la commune est donc laissee sans crawl plutot
+-- que traitee comme injoignable, qui aurait suggere une panne a corriger.
+ALTER TABLE commune ADD COLUMN crawl_statut TEXT NOT NULL DEFAULT 'non_tente'
+  CHECK (crawl_statut IN ('non_tente','ok','injoignable','interdit_robots','refuse'));
+
+ALTER TABLE commune ADD COLUMN crawl_erreur TEXT;
+
+--------------------------------------------------------------------------------
+-- Pages : une ligne par campagne, par commune et par URL
+--------------------------------------------------------------------------------
+
+-- La table page etait creee au lot 1 et n'a jamais servi. Trois defauts la rendaient
+-- inutilisable, et aucun ne se corrige par ALTER :
+--
+-- 1. url etait UNIQUE globalement. Or le lot 2 attribue la meme url_mairie a tous
+--    les codes INSEE d'une fiche — une commune nouvelle conserve les codes de ses
+--    communes deleguees. La seconde commune n'aurait eu aucune ligne, donc aucune
+--    page et aucun contact, silencieusement. La cle porte donc le code INSEE.
+-- 2. Rien ne distinguait deux passages. Le budget de pages par commune se lit par
+--    comptage : sans campagne, la seconde campagne aurait trouve le budget deja
+--    consomme par la premiere et n'aurait plus rien crawle, definitivement.
+-- 3. Une page planifiee mais jamais visitee n'avait aucune date, et la purge ne
+--    supprime que ce qui porte fetched_at. Un arret brutal laissait donc des lignes
+--    immortelles qui consommaient le budget pour toujours. D'ou planifiee_at.
+--
+-- La recreation est sans risque : aucune table ne reference page, et seule la purge
+-- la lit. C'est ce qui la distingue du cas de la migration 2, ou la recreation de
+-- commune aurait exige de desactiver les cles etrangeres.
+
+CREATE TABLE page_nouvelle (
+  -- sha256(campagne + "\\n" + code_insee + "\\n" + url) : la meme URL vue depuis deux
+  -- communes, ou lors de deux campagnes, donne autant de lignes distinctes.
+  url_hash       TEXT PRIMARY KEY,
+  -- Ce qui identifie un passage. Le jour suffit : deux campagnes le meme jour sur la
+  -- meme commune sont la meme campagne, et c'est ce qui rend la reprise idempotente.
+  campagne       TEXT NOT NULL,
+  url            TEXT NOT NULL,
+  domaine        TEXT NOT NULL,
+  code_insee     TEXT REFERENCES commune (code_insee) ON DELETE CASCADE,
+  http_status    INTEGER,
+  content_hash   TEXT,
+  -- Date d'enfilement. Distincte de fetched_at, qui reste vide tant que la page n'a
+  -- pas ete visitee : c'est elle qui rend une page planifiee purgeable.
+  planifiee_at   TEXT,
+  fetched_at     TEXT,
+  cache_path     TEXT,
+  score_candidat REAL,
+  profondeur     INTEGER NOT NULL DEFAULT 0,
+  statut         TEXT NOT NULL DEFAULT 'a_visiter'
+                 CHECK (statut IN ('a_visiter','visitee','bloquee','erreur','hors_type')),
+  -- Lien parent, sans quoi la provenance d'une page de profondeur 2 serait perdue.
+  url_source     TEXT
+) STRICT;
+
+INSERT INTO page_nouvelle
+  (url_hash, campagne, url, domaine, code_insee, http_status, content_hash,
+   planifiee_at, fetched_at, cache_path, score_candidat, profondeur, statut)
+SELECT
+  url_hash, 'heritee', url, domaine, code_insee, http_status, content_hash,
+  fetched_at, fetched_at, cache_path, score_candidat, profondeur,
+  CASE WHEN fetched_at IS NULL THEN 'a_visiter' ELSE 'visitee' END
+FROM page;
+
+DROP TABLE page;
+
+ALTER TABLE page_nouvelle RENAME TO page;
+
+CREATE INDEX idx_page_domaine ON page (domaine);
+CREATE INDEX idx_page_fetched_at ON page (fetched_at);
+CREATE INDEX idx_page_code_insee ON page (code_insee);
+
+-- Deux communes peuvent partager une URL, une commune ne peut pas l'avoir deux fois
+-- dans la meme campagne : c'est cette contrainte qui rend l'enfilement idempotent.
+CREATE UNIQUE INDEX idx_page_campagne_url ON page (campagne, code_insee, url);
+
+-- Lecture du budget, faite a chaque enfilement.
+CREATE INDEX idx_page_budget ON page (campagne, code_insee);
+
+-- Purge des pages planifiees mais jamais visitees.
+CREATE INDEX idx_page_planifiee_at ON page (planifiee_at);
+`,
+  },
 ];

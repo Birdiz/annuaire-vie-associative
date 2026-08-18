@@ -7,6 +7,7 @@ import { appartientAuDepartement, estEntreeRnaDuDepartement, urlDumpRna } from "
 import type { JobHandler } from "../jobs/worker.ts";
 import type { ContexteSeed } from "./contexte.ts";
 import { TAILLE_TRANCHE, lireDepartement } from "./contexte.ts";
+import { normaliserNom } from "../texte.ts";
 
 /**
  * Etape [1] : amorce des associations depuis le RNA.
@@ -38,19 +39,6 @@ export type LigneAssociation = {
   libelleCommune: string | undefined;
   dateDissolution: string | undefined;
 };
-
-/**
- * Forme comparable d'un nom d'association : sans diacritiques ni ponctuation. Sert au
- * rapprochement avec les noms lus sur les pages de mairie, au lot suivant.
- */
-export function normaliserNom(nom: string): string {
-  return nom
-    .normalize("NFD")
-    .replace(/[̀-ͯ]/g, "")
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, " ")
-    .trim();
-}
 
 /** Convertit une ligne du CSV RNA, ou rend `undefined` si elle est inexploitable. */
 export function convertirLigne(champ: (nom: string) => string, departement: string): LigneAssociation | undefined {

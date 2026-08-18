@@ -15,18 +15,26 @@ const CONTACT = "https://exemple.fr/contact";
 const lookupLocal: LookupFn = async () => ({ address: "127.0.0.1", family: 4 });
 const CORPS = "0123456789abcdefghijklmnopqrstuvwxyz";
 
-async function setup(t: TestContext, routes: Record<string, Handler>) {
+async function setup(t: TestContext, routes: Record<string, Handler>, minDelayMs = 5) {
   const server = await startServer(t, { "/robots.txt": robotsAllowAll, ...routes });
   const db = openDatabase(":memory:");
   t.after(() => db.close());
+  // Les departs sont horodates avant tout appel reseau. Mesurer cote serveur ferait
+  // dependre le resultat de l'etablissement de connexion, que la premiere requete
+  // paie et que la seconde economise par keep-alive.
+  const departs: { url: string; at: number }[] = [];
   const client = new HttpClient({
     cache: new HttpCache(makeTempDir(t)),
-    throttle: new DomainThrottle({ minDelayMs: 5, lookup: lookupLocal }),
+    throttle: new DomainThrottle({ minDelayMs, lookup: lookupLocal }),
     counters: new Counters(db, null),
     userAgent: buildUserAgent("0.1.0", CONTACT),
     cacheTtlMs: 3_600_000,
+    fetchImpl: (input, init) => {
+      departs.push({ url: String(input), at: performance.now() });
+      return globalThis.fetch(input, init);
+    },
   });
-  return { server, client };
+  return { server, client, departs };
 }
 
 /** Sert `CORPS` en honorant `Range`, avec un ETag fixe. */
@@ -128,13 +136,19 @@ test("un statut d'erreur est rendu sans exception", async (t) => {
 });
 
 test("le throttle s'applique aux flux", async (t) => {
-  const { server, client } = await setup(t, { "/a": dumpAvecRange, "/b": dumpAvecRange });
+  // Un plancher de 50 ms, et non les 5 ms des autres tests : sur cinq millisecondes,
+  // la gigue de l'ordonnanceur pese autant que le delai qu'on veut mesurer, et le test
+  // devient un detecteur de charge machine plutot que de regression.
+  const { server, client, departs } = await setup(t, { "/a": dumpAvecRange, "/b": dumpAvecRange }, 50);
   const premier = await client.openStream(`${server.origin}/a`);
   assert.equal(premier.kind, "ok");
   await collecter(premier.body);
-  const avant = performance.now();
   const second = await client.openStream(`${server.origin}/b`);
   assert.equal(second.kind, "ok");
   await collecter(second.body);
-  assert.ok(performance.now() - avant >= 4, "la seconde requete doit attendre le delai minimal");
+
+  const flux = departs.filter((depart) => depart.url.endsWith("/a") || depart.url.endsWith("/b"));
+  assert.equal(flux.length, 2, "deux departs de flux attendus");
+  const ecart = (flux[1]?.at ?? 0) - (flux[0]?.at ?? 0);
+  assert.ok(ecart >= 45, `les departs doivent etre espaces du delai minimal, mesure ${ecart.toFixed(1)} ms`);
 });
