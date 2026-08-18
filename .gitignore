@@ -1,0 +1,16 @@
+node_modules/
+dist/
+build/
+
+# Donnees d'execution. Voir §5 du brief : aucune donnee reelle collectee
+# ne doit entrer dans le depot. Les tests utilisent des fixtures synthetiques.
+data/
+cache/
+*.sqlite
+*.sqlite-journal
+*.sqlite-wal
+*.sqlite-shm
+
+*.log
+.DS_Store
+.env
