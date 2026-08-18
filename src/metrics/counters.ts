@@ -80,4 +80,10 @@ export const ETAPE = {
   http: "http",
   jobs: "jobs",
   purge: "purge",
+  /** Telechargement des dumps ouverts, en octets et en reprises. */
+  dump: "dump",
+  /** Etape [2] : resolution de l'URL de mairie. */
+  annuaire: "annuaire",
+  /** Etape [1] : amorce des associations. */
+  rna: "rna",
 } as const;

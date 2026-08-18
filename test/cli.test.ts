@@ -8,6 +8,9 @@ import type { TestContext } from "node:test";
 import { makeTempDir } from "./helpers/tmp.ts";
 
 const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+// Le garde-fou anti-reseau vit dans le processus de test ; ces commandes s'executent
+// dans un sous-processus, qui doit donc le precharger a son tour.
+const GARDE_RESEAU = fileURLToPath(new URL("./helpers/pas-de-reseau.ts", import.meta.url));
 
 type Resultat = { code: number; stdout: string; stderr: string };
 
@@ -16,7 +19,7 @@ function annuaire(
   env: Record<string, string> = {},
 ): Promise<Resultat> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [CLI, ...args], {
+    const child = spawn(process.execPath, ["--import", GARDE_RESEAU, CLI, ...args], {
       stdio: ["ignore", "pipe", "pipe"],
       env: { ...process.env, ...env },
     });
@@ -114,7 +117,9 @@ test("un departement manquant ou mal forme est refuse", async (t) => {
   assert.equal((await annuaire(["run", "--departement", "trente-cinq", "--data-dir", dir], env)).code, 2);
 });
 
-test("un run configure se termine proprement sur une file vide", async (t) => {
+test("un run se termine proprement meme quand la collecte echoue", async (t) => {
+  // Les sources reelles sont hors d'atteinte sous le garde-fou : c'est exactement le
+  // cas d'une machine sans reseau, et le run doit s'en sortir sans planter ni bloquer.
   const dir = dataDir(t);
   const { code, stdout } = await annuaire(
     ["run", "--departement", "35", "--data-dir", dir],
@@ -122,10 +127,44 @@ test("un run configure se termine proprement sur une file vide", async (t) => {
   );
 
   assert.equal(code, 0);
-  assert.match(stdout, /Aucune etape de collecte/);
+  assert.match(stdout, /Aucune commune n'a ete resolue/);
 
   const status = await annuaire(["status", "--data-dir", dir]);
   assert.match(status.stdout, /#1  dept 35  termine/);
+});
+
+test("les commandes du jalon guident vers le run quand la base est vide", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const communes = await annuaire(["communes", "--departement", "35", "--data-dir", dir]);
+  assert.equal(communes.code, 0);
+  assert.match(communes.stdout, /annuaire run --departement 35/);
+
+  const associations = await annuaire(["associations", "--departement", "35", "--data-dir", dir]);
+  assert.equal(associations.code, 0);
+  assert.match(associations.stdout, /annuaire run --departement 35/);
+
+  const dumps = await annuaire(["dumps", "--data-dir", dir]);
+  assert.equal(dumps.code, 0);
+  assert.match(dumps.stdout, /Aucun dump/);
+});
+
+test("les commandes du jalon exigent un departement", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  assert.equal((await annuaire(["communes", "--data-dir", dir])).code, 2);
+  assert.equal((await annuaire(["associations", "--data-dir", dir])).code, 2);
+});
+
+test("un fichier RNA inexistant est signale avant tout acces reseau", async (t) => {
+  const dir = dataDir(t);
+  const { code, stderr } = await annuaire(
+    ["run", "--departement", "35", "--rna-file", join(dir, "absent.zip"), "--data-dir", dir],
+    { ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact" },
+  );
+  assert.equal(code, 2);
+  assert.match(stderr, /Fichier RNA introuvable/);
 });
 
 test("metrics --json produit un document exploitable sans journal parasite", async (t) => {

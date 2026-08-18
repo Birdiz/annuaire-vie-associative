@@ -102,6 +102,10 @@ test("aucune adresse d'infrastructure de l'editeur n'est codee en dur", () => {
   const suspects = /https?:\/\/(?!(?:127\.0\.0\.1|localhost)\b)[^\s"'`)]+/g;
   const autorises = [
     "https://www.data.gouv.fr",
+    // Sources du lot 2. Le miroir agrege du RNA et le dump du co-marquage sont les
+    // seules portes que robots.txt laisse ouvertes (ADR-006).
+    "https://data-pipeline-open.s3.sbg.io.cloud.ovh.net",
+    "https://lecomarquage.service-public.gouv.fr",
     "https://exemple.fr",
     "https://mairie",
     "https://a.fr",

@@ -183,4 +183,94 @@ CREATE UNIQUE INDEX idx_metric_cle_globale
   WHERE run_id IS NULL;
 `,
   },
+  {
+    version: 2,
+    name: "seed-rna-et-resolution-mairie",
+    sql: `
+--------------------------------------------------------------------------------
+-- Provenance de la resolution d'URL de mairie (invariant 5)
+--------------------------------------------------------------------------------
+
+ALTER TABLE commune ADD COLUMN resolution_source_url TEXT;
+ALTER TABLE commune ADD COLUMN resolution_collected_at TEXT;
+ALTER TABLE commune ADD COLUMN resolution_confiance REAL;
+
+-- L'invariant 5 veut qu'une donnee sans provenance ne puisse pas entrer en base. Sur
+-- une table neuve il s'ecrirait en CHECK ; ici la table existe deja, et un CHECK
+-- portant sur plusieurs colonnes ne s'ajoute pas apres coup. La recreation de table
+-- n'est pas une option : elle exigerait de desactiver les cles etrangeres, or
+-- PRAGMA foreign_keys est sans effet a l'interieur d'une transaction et chaque
+-- migration s'execute dans la sienne. Deux triggers donnent la meme garantie, au
+-- meme endroit : la base refuse l'ecriture, l'applicatif n'a rien a verifier.
+
+CREATE TRIGGER commune_resolution_provenance_insert
+BEFORE INSERT ON commune
+WHEN NEW.statut_resolution = 'resolue'
+ AND (NEW.url_mairie IS NULL
+   OR NEW.resolution_source_url IS NULL
+   OR NEW.resolution_collected_at IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'commune resolue sans provenance complete');
+END;
+
+CREATE TRIGGER commune_resolution_provenance_update
+BEFORE UPDATE ON commune
+WHEN NEW.statut_resolution = 'resolue'
+ AND (NEW.url_mairie IS NULL
+   OR NEW.resolution_source_url IS NULL
+   OR NEW.resolution_collected_at IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'commune resolue sans provenance complete');
+END;
+
+--------------------------------------------------------------------------------
+-- Associations : dissolution
+--------------------------------------------------------------------------------
+
+-- Le RNA porte une date de dissolution. La retenir permet d'ecarter les structures
+-- eteintes d'un annuaire de la vie associative sans perdre la ligne d'origine.
+ALTER TABLE association ADD COLUMN date_dissolution TEXT;
+
+CREATE INDEX idx_association_dissolution
+  ON association (date_dissolution)
+  WHERE date_dissolution IS NOT NULL;
+
+--------------------------------------------------------------------------------
+-- Dumps ouverts : etat de reprise
+--------------------------------------------------------------------------------
+
+-- Un dump pese de 273 Mo a 1,25 Go et n'est jamais stocke en entier. Sa reprise
+-- repose donc sur un offset d'octets, avance dans la meme transaction que les lignes
+-- qu'il a produites : apres un arret brutal, l'offset et les donnees sont d'accord.
+-- etag et total_bytes servent a verifier que la ressource n'a pas change avant de
+-- reprendre — le serveur du miroir RNA ignore If-Range, on ne peut pas lui deleguer
+-- ce controle.
+CREATE TABLE dump (
+  id              INTEGER PRIMARY KEY,
+  source          TEXT NOT NULL
+                  CHECK (source IN ('rna_waldec','rna_import','annuaire_local')),
+  url             TEXT NOT NULL,
+  etag            TEXT,
+  last_modified   TEXT,
+  total_bytes     INTEGER,
+  consumed_bytes  INTEGER NOT NULL DEFAULT 0 CHECK (consumed_bytes >= 0),
+  statut          TEXT NOT NULL DEFAULT 'en_cours'
+                  CHECK (statut IN ('en_cours','termine','echec')),
+  fichier_local   TEXT,
+  -- En-tete du CSV, memorise des la premiere tranche. Une reprise redemarre au milieu
+  -- du fichier, la ou l'ordre des colonnes n'est plus lisible : sans cela il faudrait
+  -- une requete supplementaire pour relire les premiers octets a chaque reprise.
+  entete          TEXT,
+  derniere_erreur TEXT,
+  started_at      TEXT NOT NULL,
+  finished_at     TEXT
+) STRICT;
+
+-- Un seul dump en cours par source : la reprise n'a ainsi jamais a choisir entre
+-- plusieurs candidats.
+CREATE UNIQUE INDEX idx_dump_en_cours ON dump (source) WHERE statut = 'en_cours';
+
+CREATE INDEX idx_dump_source ON dump (source, started_at);
+`,
+  },
 ];

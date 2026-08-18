@@ -48,7 +48,10 @@ doit echouer au niveau de la base, pas etre evite par de la logique applicative.
 - Aucun envoi d'email depuis l'outil.
 - Aucun appel reseau sortant vers une infra de l'editeur (telemetrie, phone-home).
 - **La suite de tests ne sort jamais sur Internet.** Tout ce qui touche au reseau se
-  teste contre un serveur HTTP local jetable.
+  teste contre un serveur HTTP local jetable. Cet interdit est tenu **par construction**
+  depuis le lot 2 : `npm test` precharge `test/helpers/pas-de-reseau.ts`, qui refuse
+  tout hote hors boucle locale. Les tests qui lancent la CLI en sous-processus doivent
+  le precharger aussi.
 
 ## Decisions techniques
 

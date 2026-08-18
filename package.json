@@ -14,7 +14,7 @@
     "annuaire": "node src/cli.ts",
     "check": "npm run typecheck && npm test",
     "typecheck": "tsc --noEmit",
-    "test": "node --test \"test/**/*.test.ts\""
+    "test": "node --test --import ./test/helpers/pas-de-reseau.ts \"test/**/*.test.ts\""
   },
   "devDependencies": {
     "@types/node": "^24.3.0",

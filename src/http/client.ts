@@ -44,6 +44,44 @@ export type FetchOptions = {
   forceRevalidate?: boolean;
 };
 
+/**
+ * Un dump ouvert ne passe pas par `fetch` : il pese de 273 Mo a 1,25 Go, la ou `fetch`
+ * plafonne a `MAX_RESPONSE_BYTES` et garde le corps entier en memoire avant de l'ecrire
+ * dans le cache. Le cache par hash est concu pour des pages, pas pour cela.
+ *
+ * `openStream` rend donc le corps au fil de l'eau. Il applique les memes garanties que
+ * `fetch` — robots.txt, throttle, User-Agent identifiable — parce qu'il emprunte les
+ * memes chemins internes.
+ */
+export type StreamOptions = {
+  signal?: AbortSignal;
+  /**
+   * Octets deja consommes lors d'une tentative precedente. Declenche une requete `Range`.
+   * L'appelant doit d'abord verifier que la ressource n'a pas change (voir `resumed`).
+   */
+  fromByte?: number;
+  /**
+   * Refuse la compression de transport. Indispensable des qu'on veut reprendre par
+   * `Range` : un offset d'octets decompresses n'a aucun sens pour le serveur, qui
+   * compte en octets transmis.
+   */
+  identityEncoding?: boolean;
+};
+
+export type StreamOutcome =
+  | {
+      kind: "ok";
+      etag: string | null;
+      lastModified: string | null;
+      /** Taille totale de la ressource, y compris quand la reponse est partielle. */
+      totalBytes: number | null;
+      /** Faux si le serveur a ignore le `Range` : l'appelant doit repartir de zero. */
+      resumed: boolean;
+      body: AsyncIterable<Uint8Array>;
+    }
+  | { kind: "blocked"; reason: string }
+  | { kind: "status"; status: number; finalUrl: string };
+
 export function buildUserAgent(version: string, contactUrl: string): string {
   return `${USER_AGENT_PRODUCT}/${version} (+${contactUrl})`;
 }
@@ -151,6 +189,71 @@ export class HttpClient {
     return { kind: "status", status: 310, finalUrl: current.href };
   }
 
+
+  /**
+   * Ouvre un flux de lecture sur une ressource volumineuse.
+   *
+   * Le timeout de `REQUEST_TIMEOUT_MS` ne couvre que l'obtention des en-tetes : une fois
+   * la reponse acquise, le corps peut couler aussi longtemps qu'il le faut. L'appelant
+   * garde la main par son propre `signal`.
+   */
+  async openStream(rawUrl: string | URL, options: StreamOptions = {}): Promise<StreamOutcome> {
+    let current = new URL(canonicalizeUrl(rawUrl));
+    assertSupportedScheme(current);
+
+    for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
+      const decision = await this.#checkRobots(current, options.signal);
+      if (!decision.allowed) {
+        this.#counters.inc(ETAPE.http, "robots_blocked");
+        return { kind: "blocked", reason: decision.reason };
+      }
+
+      await this.#throttle.acquire(current, decision.delayMs, options.signal);
+
+      const response = await this.#sendStream(current, options);
+      this.#counters.inc(ETAPE.http, "requests");
+
+      if (response.status === 429) {
+        this.#counters.inc(ETAPE.http, "throttled_429");
+        this.#throttle.penalize(current, retryAfterMs(response.headers.get("retry-after")));
+        return { kind: "status", status: 429, finalUrl: current.href };
+      }
+
+      if (isRedirect(response.status)) {
+        const location = response.headers.get("location");
+        if (location === null) return { kind: "status", status: response.status, finalUrl: current.href };
+        const next = new URL(location, current);
+        assertSupportedScheme(next);
+        this.#counters.inc(ETAPE.http, "redirects");
+        current = new URL(canonicalizeUrl(next));
+        continue;
+      }
+
+      if (response.status < 200 || response.status >= 300) {
+        this.#counters.inc(ETAPE.http, `status_${statusClass(response.status)}`);
+        return { kind: "status", status: response.status, finalUrl: current.href };
+      }
+
+      const demandePartielle = (options.fromByte ?? 0) > 0;
+      const resumed = demandePartielle && response.status === 206;
+      if (response.body === null) {
+        return { kind: "status", status: response.status, finalUrl: current.href };
+      }
+
+      return {
+        kind: "ok",
+        etag: response.headers.get("etag"),
+        lastModified: response.headers.get("last-modified"),
+        totalBytes: tailleTotale(response),
+        resumed,
+        body: iterer(response.body),
+      };
+    }
+
+    this.#counters.inc(ETAPE.http, "redirect_loops");
+    return { kind: "status", status: 310, finalUrl: current.href };
+  }
+
   /** Chemin relatif du corps en cache, a stocker dans `page.cache_path`. */
   cachePathFor(url: string | URL): string {
     return this.#cache.relativeBodyPath(url);
@@ -158,6 +261,34 @@ export class HttpClient {
 
   #isFresh(meta: CacheMeta): boolean {
     return Date.parse(meta.fetchedAt) + this.#cacheTtlMs > this.#clock.now();
+  }
+
+
+  /**
+   * Variante de `#send` pour les flux : pas de revalidation par cache, un `Range`
+   * optionnel, et un timeout desarme des que les en-tetes arrivent.
+   */
+  async #sendStream(url: URL, options: StreamOptions): Promise<Response> {
+    const headers = new Headers({ "user-agent": this.#userAgent, accept: "*/*" });
+    const depuis = options.fromByte ?? 0;
+    if (depuis > 0) headers.set("range", `bytes=${depuis}-`);
+    // `identity` et `Range` vont de pair : sans cela le serveur compterait les octets
+    // compresses et l'offset de reprise designerait le mauvais endroit.
+    if (options.identityEncoding === true) headers.set("accept-encoding", "identity");
+
+    const minuteur = new AbortController();
+    const minuterie = setTimeout(() => minuteur.abort(), REQUEST_TIMEOUT_MS);
+    const signaux = options.signal === undefined ? [minuteur.signal] : [options.signal, minuteur.signal];
+    try {
+      return await this.#fetch(url, {
+        method: "GET",
+        headers,
+        redirect: "manual",
+        signal: AbortSignal.any(signaux),
+      });
+    } finally {
+      clearTimeout(minuterie);
+    }
   }
 
   async #send(url: URL, cached: CacheMeta | undefined, signal?: AbortSignal): Promise<Response> {
@@ -228,6 +359,37 @@ export class HttpClient {
       return DISALLOW_ALL;
     }
   }
+}
+
+
+/** Convertit le corps d'une reponse en iterable asynchrone d'octets. */
+async function* iterer(flux: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
+  const lecteur = flux.getReader();
+  try {
+    for (;;) {
+      const { done, value } = await lecteur.read();
+      if (done) return;
+      if (value !== undefined) yield value;
+    }
+  } finally {
+    lecteur.releaseLock();
+  }
+}
+
+/**
+ * Taille de la ressource entiere. Sur une reponse partielle, `Content-Length` ne donne
+ * que celle du fragment : c'est `Content-Range` qui porte le total.
+ */
+function tailleTotale(response: Response): number | null {
+  const plage = response.headers.get("content-range");
+  if (plage !== null) {
+    const total = /\/\s*(\d+)\s*$/.exec(plage);
+    if (total?.[1] !== undefined) return Number(total[1]);
+  }
+  const longueur = response.headers.get("content-length");
+  if (longueur === null) return null;
+  const valeur = Number(longueur);
+  return Number.isFinite(valeur) ? valeur : null;
 }
 
 function assertSupportedScheme(url: URL): void {
