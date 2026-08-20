@@ -28,9 +28,11 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 | [7] Normalisation | déduplication, validation, classification | ⬜ |
 | [8] Scoring | confiance par contact, écran de revue | ⬜ |
 
-Mesure de bout en bout du lot 2, sur l'Ille-et-Vilaine : **353 communes, dont 332 avec l'URL de
-leur mairie (94 %), et 31 273 associations actives, en 40 s.** Le lot 3 n'a pas encore d'équivalent
-mesuré sur données réelles — voir [Ce qui n'est pas encore mesuré](#ce-qui-nest-pas-encore-mesuré).
+Mesure de bout en bout sur l'Ille-et-Vilaine. Lot 2 : **353 communes, dont 332 avec l'URL de leur
+mairie (94 %), et 31 273 associations actives, en 40 s.** Lot 3 : **2 591 pages explorées et 7 424
+contacts collectés** en une quarantaine de minutes, dont 1 674 rattachés à une association — soit
+**1,5 % de couverture**. Ce que ce chiffre veut dire, et ce qu'il ne veut pas dire, est détaillé
+plus bas.
 
 ## Prérequis
 
@@ -56,7 +58,7 @@ npm install
 npm run check
 ```
 
-Typecheck strict, puis 264 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
+Typecheck strict, puis 267 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
 un garde-fou qui refuse tout hôte hors de la boucle locale, sous-processus compris. Tout ce qui
 touche au réseau se teste contre un serveur HTTP local jetable, sur des fixtures HTML synthétiques
 écrites à la main.
@@ -140,7 +142,7 @@ Une fois la base amorcée, la découverte se rejoue seule, sans relire le dump. 
 d'itération quand on règle le scoring :
 
 ```bash
-npm run annuaire -- decouvrir --departement 35 --max-pages 10
+npm run annuaire -- decouvrir --departement 35 --max-pages 20
 ```
 
 ```bash
@@ -194,20 +196,29 @@ et plusieurs sont tenues par le schéma de la base ou par un test qui échoue si
 - **Aucune donnée réelle collectée n'entre dans le dépôt.** Les tests utilisent des fixtures HTML
   synthétiques écrites à la main.
 
-## Ce qui n'est pas encore mesuré
+## Ce que coûte un département, et ce qu'il rapporte
 
-À l'issue du lot 3, le pipeline n'a jamais tourné sur de vrais sites de mairie. Tout ce qui est
-vérifié l'est sur des fixtures écrites à la main — donc écrites en sachant ce que le code allait en
-faire. Trois réglages restent des paris jusqu'à la première mesure réelle :
+Le premier passage réel sur l'Ille-et-Vilaine a livré trois enseignements, consignés dans
+l'[ADR-013](docs/adr/013-ordre-de-parcours-et-budget.md).
 
-- les **poids du scoring** des liens et la liste des termes écartés ;
-- le **budget de 10 pages** par commune, posé comme point de départ ;
-- le **taux de rattachement** contact → association, qui est la mesure de qualité de la décision
-  d'attacher les contacts dès ce lot.
+**La durée a un plancher structurel.** Les 333 domaines de mairie du département se résolvent sur
+**93 sous-réseaux /24 seulement** — 85 % des domaines partagent le leur avec un autre, et les deux
+plus chargés hébergent 42 et 41 communes. Le throttling retenant la clé la plus contraignante,
+c'est le /24 le plus chargé qui fixe la durée minimale : environ **treize minutes**, quoi qu'on
+fasse. Augmenter la concurrence n'y change rien, le goulot n'étant pas le nombre de workers.
 
-Deux limites connues, documentées plutôt que contournées : le budget est consommé dans l'ordre de
-découverte des liens et non de leur mérite, et un même email peut exister à la fois rattaché à une
-association et au niveau de la commune — la déduplication est l'étape [7].
+**13 % des communes sont interdites par `robots.txt`** — 42 sur 332. On n'y collectera jamais rien.
+C'est une limite assumée du produit, affichée comme telle en fin de run.
+
+**Le taux de couverture de 1,5 % demande une réserve avant d'être lu comme un échec.** Le
+dénominateur compte les 31 273 associations non dissoutes du RNA, dont une part inconnue de
+structures dormantes. Aucun champ temporel n'est stocké aujourd'hui, alors que le RNA expose
+`date_decla`, la date de dernière déclaration en préfecture. Tant que la dormance n'est pas
+qualifiée, la métrique reste difficile à interpréter. Signal connexe : **170 associations sur
+36 170 déclarent un site web**, soit 0,5 % — le gisement n'est pas de ce côté-là.
+
+Une limite connue subsiste, documentée plutôt que contournée : un même email peut exister à la fois
+rattaché à une association et au niveau de la commune — la déduplication est l'étape [7].
 
 ## Documentation
 

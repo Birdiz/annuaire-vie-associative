@@ -797,8 +797,19 @@ function resumeRun(app: App, departement: string): void {
     return;
   }
 
+  // Detaille plutot qu'agrege : « sans collecte possible » melangeait trois causes de
+  // nature differente. Un site injoignable est un incident, un site interdit par
+  // robots.txt est une limite assumee du produit (§4.2), et une commune non tentee est
+  // un run inacheve. Les confondre empeche de savoir s'il faut relancer, corriger, ou
+  // ne rien faire.
+  const bloquees = compte(
+    "SELECT count(*) AS n FROM commune WHERE departement = ? AND crawl_statut = 'interdit_robots'",
+  );
   const injoignables = compte(
-    "SELECT count(*) AS n FROM commune WHERE departement = ? AND crawl_statut IN ('injoignable','interdit_robots','refuse')",
+    "SELECT count(*) AS n FROM commune WHERE departement = ? AND crawl_statut IN ('injoignable','refuse')",
+  );
+  const nonTentees = compte(
+    "SELECT count(*) AS n FROM commune WHERE departement = ? AND url_mairie IS NOT NULL AND crawl_statut = 'non_tente'",
   );
   const contacts = compte(
     "SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee " +
@@ -814,8 +825,15 @@ function resumeRun(app: App, departement: string): void {
   );
   const taux = associations === 0 ? 0 : (couvertes / associations) * 100;
 
+  const reste =
+    nonTentees === 0
+      ? ""
+      : `${nonTentees} communes restent a explorer : relancez la meme commande, rien ne sera refait.\n`;
+
   process.stdout.write(
-    `${pagesVisitees} pages explorees, ${injoignables} communes sans collecte possible.\n` +
+    `${pagesVisitees} pages explorees.\n` +
+      `${bloquees} communes interdites par robots.txt, ${injoignables} injoignables.\n` +
+      reste +
       `${contacts} contacts collectes. Couverture : ${couvertes} associations avec au moins ` +
       `un email, soit ${taux.toFixed(1)} %.\n` +
       `Detail : annuaire contacts --departement ${departement}\n`,

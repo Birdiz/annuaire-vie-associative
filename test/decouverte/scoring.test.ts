@@ -10,6 +10,7 @@ import {
   selectionner,
 } from "../../src/decouverte/scoring.ts";
 import type { Lien } from "../../src/parse/html.ts";
+import { prioritePage } from "../../src/decouverte/contexte.ts";
 
 const BASE = "https://exemple.fr/accueil";
 
@@ -126,4 +127,32 @@ test("les meilleurs liens passent devant, et leur nombre est borne", () => {
 
 test("la profondeur retenue est celle du brief", () => {
   assert.equal(PROFONDEUR_MAX, 2, "§6 : profondeur 2");
+});
+
+test("une racine passe avant tout lien decouvert, meme tres bien score", () => {
+  const racine = prioritePage(0);
+  const meilleurEnfant = prioritePage(1, 1000);
+  const meilleurPetitEnfant = prioritePage(2, 1000);
+
+  assert.ok(
+    racine < meilleurEnfant,
+    `une page d'accueil (${racine}) doit passer avant le meilleur lien de profondeur 1 ` +
+      `(${meilleurEnfant}) : sinon le crawl epuise une commune avant de toucher aux suivantes, ` +
+      "et concentre ses requetes sur un seul /24",
+  );
+  assert.ok(meilleurEnfant < meilleurPetitEnfant, "la profondeur 1 passe avant la profondeur 2");
+});
+
+test("a profondeur egale, le meilleur score passe devant", () => {
+  assert.ok(
+    prioritePage(1, 8) < prioritePage(1, 2),
+    "le score doit departager, mais seulement a profondeur egale",
+  );
+  assert.equal(prioritePage(1, 0) > prioritePage(1, 5), true);
+});
+
+test("un score aberrant ne fait jamais changer de bande de profondeur", () => {
+  // Sans bornage, un score enorme ferait repasser une page profonde devant une racine.
+  assert.ok(prioritePage(2, 10_000) > prioritePage(1, 0), "la profondeur 2 reste derriere la 1");
+  assert.ok(prioritePage(1, 10_000) > prioritePage(0, 0), "et la profondeur 1 derriere la racine");
 });

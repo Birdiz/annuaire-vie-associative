@@ -68,9 +68,40 @@ export function clePage(hash: string): string {
   return `page:${hash}`;
 }
 
-/** Les liens les mieux scores doivent etre pris en premier : le budget est fini. */
-export function prioriteDeScore(score: number): number {
-  return Math.max(1, Math.min(200, 100 - Math.round(score * 4)));
+/**
+ * Priorite d'une page a explorer. **La profondeur domine le score.**
+ *
+ * La premiere version faisait l'inverse : les racines partaient a la priorite par
+ * defaut (100) et tout lien au score positif passait devant. Mesure sur l'Ille-et-
+ * Vilaine, l'effet est double et les deux moities sont mauvaises.
+ *
+ * D'abord l'ordre : le crawl epuisait le sous-arbre des premieres communes avant de
+ * demander la page d'accueil des suivantes — 972 pages de profondeur 1 pour 149
+ * racines visitees sur 332. Un run interrompu laissait donc une couverture profonde
+ * d'une moitie du departement et rien du tout sur l'autre. Pour un annuaire, large et
+ * superficiel vaut mieux que profond et partiel.
+ *
+ * Ensuite le debit, moins evident : 85 % des domaines de mairie partagent leur /24
+ * avec un autre, et le throttle prend la cle la plus contraignante (ADR-004). En
+ * concentrant les workers sur un meme sous-arbre, donc un meme hote, on serialisait
+ * ce que la concurrence etait censee etaler. Traiter les racines d'abord repartit les
+ * requetes sur des sous-reseaux distincts, ce qui est le seul levier de debit qui
+ * reste une fois le delai de 2 s pose comme invariant.
+ *
+ * Les bandes ne se chevauchent pas : une page de profondeur n passe toujours avant
+ * une page de profondeur n+1, quel que soit son score. Le score ne departage qu'a
+ * profondeur egale.
+ */
+const BANDES_DE_PROFONDEUR = [10, 80, 150] as const;
+
+/** Largeur d'une bande. Bornee pour qu'un score ne fasse jamais changer de bande. */
+const AMPLITUDE_DU_SCORE = 39;
+
+export function prioritePage(profondeur: number, score = 0): number {
+  const rang = Math.max(0, Math.min(BANDES_DE_PROFONDEUR.length - 1, profondeur));
+  const bande = BANDES_DE_PROFONDEUR[rang] ?? 150;
+  const ajustement = Math.max(0, Math.min(AMPLITUDE_DU_SCORE, Math.round(score * 4)));
+  return bande + AMPLITUDE_DU_SCORE - ajustement;
 }
 
 export function lirePayloadDecouverte(payload: unknown): PayloadDecouverte | undefined {

@@ -24,7 +24,7 @@ import type { Database } from "../db/index.ts";
 import type { JobHandler } from "../jobs/worker.ts";
 import type { ContactExtrait } from "./extraction.ts";
 import type { ContexteDecouverte, PayloadPage } from "./contexte.ts";
-import { clePage, hashPage, lirePayloadPage, prioriteDeScore } from "./contexte.ts";
+import { clePage, hashPage, lirePayloadPage, prioritePage } from "./contexte.ts";
 import { extraireContacts } from "./extraction.ts";
 import { indexerAssociations, rattacher } from "./rattachement.ts";
 import { PROFONDEUR_MAX, estReseauSocial, selectionner } from "./scoring.ts";
@@ -428,7 +428,7 @@ function enfilerFilles(
         maxPages: payload.maxPages,
         avecMobiles: payload.avecMobiles,
       },
-      { runId: ctx.runId, priority: prioriteDeScore(lien.score) },
+      { runId: ctx.runId, priority: prioritePage(payload.profondeur + 1, lien.score) },
     );
     restant -= 1;
     retenus += 1;

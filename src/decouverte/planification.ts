@@ -14,7 +14,7 @@ import { ETAPE } from "../metrics/counters.ts";
 import type { Database } from "../db/index.ts";
 import type { JobHandler } from "../jobs/worker.ts";
 import type { ContexteDecouverte } from "./contexte.ts";
-import { clePage, hashPage, lirePayloadDecouverte } from "./contexte.ts";
+import { clePage, hashPage, lirePayloadDecouverte, prioritePage } from "./contexte.ts";
 import { PAGES_MAX_PAR_COMMUNE, estReseauSocial } from "./scoring.ts";
 
 type CommuneAVisiter = { code_insee: string; url_mairie: string };
@@ -88,7 +88,9 @@ export function handlerDecouverte(ctx: ContexteDecouverte): JobHandler {
               maxPages,
               avecMobiles: payload.avecMobiles,
             },
-            { runId: ctx.runId },
+            // Une racine passe avant tout lien decouvert, quel que soit le score de
+            // celui-ci : c'est ce qui etale les requetes sur des /24 distincts.
+            { runId: ctx.runId, priority: prioritePage(0) },
           );
           planifiees += 1;
         }

@@ -15,11 +15,19 @@ import type { Lien } from "../parse/html.ts";
 export const PROFONDEUR_MAX = 2;
 
 /**
- * Budget par commune, pilotable par `--max-pages`. Point de depart a affiner sur
- * mesure au lot 4 : c'est le rapport entre ce budget et le taux de couverture qui
- * dira ou le placer, pas une intuition.
+ * Budget par commune, pilotable par `--max-pages`.
+ *
+ * Passe de 10 a 20 apres la premiere mesure reelle sur l'Ille-et-Vilaine : 115 des
+ * 332 communes avaient sature le plafond de 10, donc celui-ci mordait sur un tiers du
+ * departement et bornait la recolte autant que la richesse des sites. Le doublement
+ * est un pas mesurable, pas un reglage definitif : c'est le rapport entre ce budget
+ * et le taux de couverture qui dira ou le placer.
+ *
+ * Le cout n'est pas proportionnel. Le plancher de duree d'un run tient au /24 le plus
+ * charge, pas au nombre total de pages : doubler le budget ne double le temps que si
+ * les pages supplementaires tombent sur les sous-reseaux deja saturants.
  */
-export const PAGES_MAX_PAR_COMMUNE = 10;
+export const PAGES_MAX_PAR_COMMUNE = 20;
 
 /** Au-dela, une page de menu ferait entrer tout un site d'un coup. */
 export const LIENS_MAX_PAR_PAGE = 8;
