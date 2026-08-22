@@ -31,8 +31,8 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 Mesure de bout en bout sur l'Ille-et-Vilaine. Lot 2 : **353 communes, dont 332 avec l'URL de leur
 mairie (94 %), et 31 273 associations actives, en 40 s.** Lot 3 : **2 591 pages explorées et 7 424
 contacts collectés** en une quarantaine de minutes, dont 1 674 rattachés à une association — soit
-**1,5 % de couverture**. Ce que ce chiffre veut dire, et ce qu'il ne veut pas dire, est détaillé
-plus bas.
+**1,5 % de couverture**. Lot 4 : la dormance des associations est
+désormais qualifiée, et **elle n'explique pas ce 1,5 %** — voir plus bas.
 
 Lot 4 : sur ces mêmes pages, **le pré-filtre ramène le volume qui appellerait une inférence de
 40,3 % à 6,5 %** — 160 pages au lieu de 997 — sans écarter une seule des 157 pages ayant produit
@@ -242,12 +242,26 @@ fasse. Augmenter la concurrence n'y change rien, le goulot n'étant pas le nombr
 **13 % des communes sont interdites par `robots.txt`** — 42 sur 332. On n'y collectera jamais rien.
 C'est une limite assumée du produit, affichée comme telle en fin de run.
 
-**Le taux de couverture de 1,5 % demande une réserve avant d'être lu comme un échec.** Le
-dénominateur compte les 31 273 associations non dissoutes du RNA, dont une part inconnue de
-structures dormantes. Aucun champ temporel n'est stocké aujourd'hui, alors que le RNA expose
-`date_decla`, la date de dernière déclaration en préfecture. Tant que la dormance n'est pas
-qualifiée, la métrique reste difficile à interpréter. Signal connexe : **170 associations sur
-36 170 déclarent un site web**, soit 0,5 % — le gisement n'est pas de ce côté-là.
+**Le taux de couverture de 1,5 % appelait une réserve. Le lot 4 l'a levée, et le résultat
+n'est pas celui qu'on espérait.** L'hypothèse était que le dénominateur — les 31 273
+associations non dissoutes — était gonflé par des structures dormantes. Les dates de
+déclaration du RNA sont maintenant stockées, et le champ est renseigné à 100 % :
+
+| Population retenue | Effectif | Couvertes | Taux |
+|---|---:|---:|---:|
+| Toutes actives | 31 273 | 478 | 1,53 % |
+| Déclaré depuis 5 ans | 16 094 | 325 | 2,02 % |
+| Déclaré depuis 1 an | 5 417 | 118 | 2,18 % |
+
+Se restreindre aux 17 % d'associations les plus récemment déclarantes ne gagne que 0,65 point.
+**La dormance n'explique pas la couverture basse** : celles qui déclarent encore sont presque
+aussi absentes des sites de mairie que celles qui ont cessé. Le plafond n'est pas un artefact
+de comptage, c'est un fait sur ce que les communes publient. Signal connexe qui va dans le même
+sens : **170 associations sur 36 170 déclarent un site web**, soit 0,5 %.
+
+La distribution ne désigne d'ailleurs aucun seuil : les déclarations croissent de façon lisse
+de 2006 à 2025, sans creux. Les cinq ans affichés sont une convention assumée, pas une
+frontière découverte ([ADR-015](docs/adr/015-temporalite-rna-et-dormance.md)).
 
 **Le pré-filtre borne le coût d'inférence à 6,5 % des pages**, contre 40,3 % sans lui, et le fait
 sans rien perdre de mesurable : les 157 pages ayant produit un contact rattaché à une association
