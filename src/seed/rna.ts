@@ -25,8 +25,12 @@ import { normaliserNom } from "../texte.ts";
 
 export type SourceRna = "rna_waldec" | "rna_import";
 
-/** Valeur employee par le RNA pour « non dissoute ». */
-const PAS_DE_DISSOLUTION = "0001-01-01";
+/**
+ * Valeur employee par le RNA pour une date absente. Elle vaut « non dissoute » sur
+ * `date_disso`, mais aussi « date inconnue » sur les autres champs temporels : la
+ * laisser entrer en base ferait passer une absence pour l'an 1.
+ */
+const DATE_ABSENTE = "0001-01-01";
 
 export type LigneAssociation = {
   rnaId: string;
@@ -38,6 +42,16 @@ export type LigneAssociation = {
   siteWeb: string | undefined;
   libelleCommune: string | undefined;
   dateDissolution: string | undefined;
+  /**
+   * Champs temporels reclames par l'ADR-013. Sans eux, le taux de couverture du §8 se
+   * calcule sur toutes les associations non dissoutes, dont une part inconnue de
+   * structures dormantes — et reste ininterpretable. Conserves bruts : le seuil de
+   * dormance se choisit sur la distribution observee, pas ici.
+   */
+  dateCreation: string | undefined;
+  dateDeclaration: string | undefined;
+  positionRna: string | undefined;
+  majRna: string | undefined;
 };
 
 /** Convertit une ligne du CSV RNA, ou rend `undefined` si elle est inexploitable. */
@@ -48,7 +62,6 @@ export function convertirLigne(champ: (nom: string) => string, departement: stri
   if (rnaId.length === 0 || nom.length === 0) return undefined;
   if (!appartientAuDepartement(codeInsee, departement)) return undefined;
 
-  const dissolution = champ("date_disso").trim();
   const site = champ("siteweb").trim();
   const objet = champ("objet").trim();
   const objetSocial = champ("objet_social1").trim();
@@ -63,8 +76,19 @@ export function convertirLigne(champ: (nom: string) => string, departement: stri
     codeObjetSocial: objetSocial.length > 0 ? objetSocial : undefined,
     siteWeb: normaliserSite(site),
     libelleCommune: commune.length > 0 ? commune : undefined,
-    dateDissolution: dissolution.length > 0 && dissolution !== PAS_DE_DISSOLUTION ? dissolution : undefined,
+    dateDissolution: valeurOuIndefini(champ("date_disso")),
+    dateCreation: valeurOuIndefini(champ("date_creat")),
+    dateDeclaration: valeurOuIndefini(champ("date_decla")),
+    positionRna: valeurOuIndefini(champ("position")),
+    majRna: valeurOuIndefini(champ("maj_time")),
   };
+}
+
+/** Vide et sentinelle du RNA sont la meme chose : une absence, et elle se dit `NULL`. */
+function valeurOuIndefini(brut: string): string | undefined {
+  const valeur = brut.trim();
+  if (valeur.length === 0 || valeur === DATE_ABSENTE) return undefined;
+  return valeur;
 }
 
 /** Le RNA note les sites tantot avec schema, tantot sans. */
@@ -79,8 +103,9 @@ function normaliserSite(valeur: string): string | undefined {
 
 const SQL_UPSERT_ASSOCIATION = `
 INSERT INTO association (rna_id, code_insee, nom, nom_normalise, objet, code_objet_social,
-                         site_web, source_creation, date_dissolution, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, 'rna', ?, ?, ?)
+                         site_web, source_creation, date_dissolution, date_creation,
+                         date_declaration, position_rna, maj_rna, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, 'rna', ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (rna_id) DO UPDATE SET
   code_insee = excluded.code_insee,
   nom = excluded.nom,
@@ -91,6 +116,12 @@ ON CONFLICT (rna_id) DO UPDATE SET
   -- Une association dissoute depuis le dernier passage doit le devenir en base, sinon
   -- l'annuaire continuerait de la presenter comme vivante.
   date_dissolution = excluded.date_dissolution,
+  -- Une declaration plus recente au dump suivant doit se voir en base : c'est elle qui
+  -- fait la difference entre une association vivante et une structure dormante.
+  date_creation = excluded.date_creation,
+  date_declaration = excluded.date_declaration,
+  position_rna = excluded.position_rna,
+  maj_rna = excluded.maj_rna,
   updated_at = excluded.updated_at`;
 
 /**
@@ -109,10 +140,19 @@ type Deltas = {
   dissoutes: number;
   communes_creees: number;
   hors_departement: number;
+  /** Part de lignes sur lesquelles le seuil de dormance ne pourra rien dire. */
+  sans_date_declaration: number;
 };
 
 function deltasVides(): Deltas {
-  return { lignes_lues: 0, associations_ecrites: 0, dissoutes: 0, communes_creees: 0, hors_departement: 0 };
+  return {
+    lignes_lues: 0,
+    associations_ecrites: 0,
+    dissoutes: 0,
+    communes_creees: 0,
+    hors_departement: 0,
+    sans_date_declaration: 0,
+  };
 }
 
 type SuiviDump = {
@@ -163,6 +203,7 @@ class Ecrivain {
   ajouter(ligne: LigneAssociation): void {
     this.#lignes.push(ligne);
     if (ligne.dateDissolution !== undefined) this.#deltas.dissoutes += 1;
+    if (ligne.dateDeclaration === undefined) this.#deltas.sans_date_declaration += 1;
   }
 
   /** Ecrit la tranche courante et, s'il y a lieu, l'offset atteint dans le dump. */
@@ -199,6 +240,10 @@ class Ecrivain {
           ligne.codeObjetSocial ?? null,
           ligne.siteWeb ?? null,
           ligne.dateDissolution ?? null,
+          ligne.dateCreation ?? null,
+          ligne.dateDeclaration ?? null,
+          ligne.positionRna ?? null,
+          ligne.majRna ?? null,
           maintenant,
           maintenant,
         );

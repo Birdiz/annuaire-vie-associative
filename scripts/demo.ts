@@ -6,6 +6,9 @@
  * ses associations sont deposees a la main comme le lot 2 les aurait ecrites, puis
  * les commandes reelles de la CLI sont appelees dessus.
  *
+ * Depuis le lot 4, elle montre aussi le tri de l'etape [4] : quelles pages vaudraient
+ * le cout d'une inference, et lesquelles seraient ecartees avant d'en payer une seule.
+ *
  * Ce fichier n'est pas du code de production. Il vit dans `scripts/` et n'est jamais
  * importe par `src/` : c'est aussi pourquoi il peut ouvrir un serveur HTTP, ce que la
  * regle de la porte de sortie reseau unique interdit ailleurs.
@@ -72,11 +75,17 @@ const PAGES: Record<string, [type: string, corps: string]> = {
   "/prive": ["text/html", "<html><body>Cette page ne doit jamais etre demandee.</body></html>"],
 };
 
-const ASSOCIATIONS = [
-  "Club de Sainte-Colombe",
-  "Amicale laique de Sainte-Colombe",
-  "Tennis club colombin",
-  "Comite des fetes de Sainte-Colombe",
+/**
+ * Les associations que le lot 2 aurait deposees, avec leur derniere declaration en
+ * prefecture. La date sert au calcul de dormance : le comite des fetes n'a plus
+ * declare depuis 2009, il ne compte donc pas dans le denominateur qualifie du taux de
+ * couverture, quand bien meme le RNA ne le dit pas dissous.
+ */
+const ASSOCIATIONS: readonly (readonly [nom: string, declaration: string])[] = [
+  ["Club de Sainte-Colombe", "2025-04-18"],
+  ["Amicale laique de Sainte-Colombe", "2024-09-02"],
+  ["Tennis club colombin", "2023-11-27"],
+  ["Comite des fetes de Sainte-Colombe", "2009-06-15"],
 ];
 
 async function demarrerFauxSite(): Promise<{ origin: string; arreter: () => Promise<void> }> {
@@ -121,13 +130,14 @@ function amorcer(dataDir: string, urlMairie: string): void {
 
     const inserer = app.db.prepare(
       `INSERT OR IGNORE INTO association
-         (rna_id, code_insee, nom, nom_normalise, source_creation, created_at, updated_at)
-       VALUES (?, '35999', ?, ?, 'rna', ?, ?)`,
+         (rna_id, code_insee, nom, nom_normalise, source_creation, date_declaration,
+          created_at, updated_at)
+       VALUES (?, '35999', ?, ?, 'rna', ?, ?, ?)`,
     );
     // Le nom normalise doit passer par la meme fonction que la decouverte, sans quoi
     // le rapprochement echoue sur un simple tiret.
-    ASSOCIATIONS.forEach((nom, i) => {
-      inserer.run(`W3599900${i}`, nom, normaliserNom(nom), maintenant, maintenant);
+    ASSOCIATIONS.forEach(([nom, declaration], i) => {
+      inserer.run(`W3599900${i}`, nom, normaliserNom(nom), declaration, maintenant, maintenant);
     });
   } finally {
     app.close();
@@ -158,6 +168,16 @@ try {
 
   titre("Contacts collectes");
   await main(["contacts", "--departement", "35", "--data-dir", dataDir]);
+
+  titre("Pre-filtre [4] : ce qui vaudrait le cout d'une inference");
+  await main(["pages", "--departement", "35", "--data-dir", dataDir]);
+
+  // Rejeu du filtre depuis le cache disque : aucune requete, pas meme locale. C'est
+  // ainsi qu'un seuil se regle sur un vrai corpus sans le recrawler.
+  await main(["prefiltrer", "--departement", "35", "--tout", "--data-dir", dataDir]);
+
+  titre("Dormance des associations");
+  await main(["dormance", "--departement", "35", "--data-dir", dataDir]);
 
   titre("Metriques");
   await main(["metrics", "--data-dir", dataDir]);

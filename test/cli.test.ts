@@ -45,7 +45,9 @@ test("sans commande, l'aide s'affiche et le code de sortie est non nul", async (
 test("l'aide documente chaque commande", async () => {
   const { stdout, code } = await annuaire(["--help"]);
   assert.equal(code, 0);
-  for (const commande of ["init", "run", "status", "metrics", "jobs", "purge", "fetch"]) {
+  for (const commande of [
+    "init", "run", "status", "metrics", "jobs", "purge", "fetch", "prefiltrer", "pages", "dormance",
+  ]) {
     assert.match(stdout, new RegExp(`\\b${commande}\\b`), `${commande} devrait etre documentee`);
   }
   assert.match(stdout, /ne sont pas configurables/, "l'aide doit dire que les invariants ne se reglent pas");
@@ -155,6 +157,76 @@ test("les commandes du jalon exigent un departement", async (t) => {
   await annuaire(["init", "--data-dir", dir]);
   assert.equal((await annuaire(["communes", "--data-dir", dir])).code, 2);
   assert.equal((await annuaire(["associations", "--data-dir", dir])).code, 2);
+  assert.equal((await annuaire(["pages", "--data-dir", dir])).code, 2);
+  assert.equal((await annuaire(["dormance", "--data-dir", dir])).code, 2);
+  assert.equal((await annuaire(["prefiltrer", "--data-dir", dir])).code, 2);
+});
+
+test("prefiltrer sur une base sans page dit quoi lancer, plutot que de ne rien dire", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const { code, stderr } = await annuaire(["prefiltrer", "--departement", "35", "--data-dir", dir]);
+  assert.equal(code, 2);
+  assert.match(stderr, /Aucune page exploree/);
+  assert.match(stderr, /annuaire decouvrir --departement 35/);
+});
+
+test("un seuil de pre-filtre non entier est une erreur d'usage, pas d'execution", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const { code, stderr } = await annuaire(
+    ["prefiltrer", "--departement", "35", "--seuil", "beaucoup", "--data-dir", dir],
+  );
+  assert.equal(code, 2);
+  assert.match(stderr, /--seuil attend un entier/);
+});
+
+test("pages refuse un verdict qui n'existe pas", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const { code, stderr } = await annuaire(
+    ["pages", "--departement", "35", "--verdict", "peut-etre", "--data-dir", dir],
+  );
+  assert.equal(code, 2);
+  assert.match(stderr, /retenue/);
+});
+
+test("pages et dormance sur une base vierge orientent vers la commande manquante", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const pages = await annuaire(["pages", "--departement", "35", "--data-dir", dir]);
+  assert.equal(pages.code, 0);
+  assert.match(pages.stdout, /annuaire decouvrir --departement 35/);
+
+  const dormance = await annuaire(["dormance", "--departement", "35", "--data-dir", dir]);
+  assert.equal(dormance.code, 0);
+  assert.match(dormance.stdout, /annuaire run --departement 35/);
+});
+
+test("dormance --json expose le critere avec le chiffre qu'il produit", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const { code, stdout } = await annuaire(["dormance", "--departement", "35", "--json", "--data-dir", dir]);
+  assert.equal(code, 0);
+
+  const document = JSON.parse(stdout) as {
+    seuilAnnees: number;
+    borne: string;
+    actives: number;
+    nonDormantes: number;
+    sansDate: number;
+  };
+  // Le seuil et la borne voyagent avec la mesure : un pourcentage de dormance sans son
+  // critere ne veut rien dire, et l'ADR-013 refuse precisement ce genre de chiffre nu.
+  assert.ok(document.seuilAnnees > 0);
+  assert.match(document.borne, /^\d{4}-\d{2}-\d{2}$/);
+  assert.equal(document.actives, 0);
+  assert.equal(document.sansDate, 0);
 });
 
 test("un fichier RNA inexistant est signale avant tout acces reseau", async (t) => {

@@ -53,3 +53,24 @@ export function rattacher(index: IndexAssociations, contextes: readonly string[]
   }
   return undefined;
 }
+
+/**
+ * Nombre d'associations connues de la commune dont le nom apparait dans le texte.
+ *
+ * C'est le signal que le §6 nomme « presence de noms d'associations connus (jointure
+ * RNA) ». Le comptage se fait sur le texte entier normalise une seule fois, et non bloc
+ * par bloc : a resultat egal, c'est une normalisation par page au lieu d'une par bloc,
+ * ce qui compte sur un departement entier.
+ *
+ * Les memes limites de mots et le meme seuil de longueur que `rattacher` s'appliquent,
+ * et pour la meme raison : « ACCA » ou « AS » apparaissent dans n'importe quel texte.
+ */
+export function compterNomsConnus(index: IndexAssociations, texte: string): number {
+  if (texte === "") return 0;
+  const normalise = ` ${normaliserNom(texte)} `;
+  let trouves = 0;
+  for (const association of index) {
+    if (normalise.includes(` ${association.nomNormalise} `)) trouves += 1;
+  }
+  return trouves;
+}

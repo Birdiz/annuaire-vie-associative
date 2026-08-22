@@ -14,7 +14,7 @@ tiers partent de la machine de l'utilisateur, jamais d'une infrastructure opér�
 
 ## État d'avancement
 
-Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Trois lots ont
+Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Quatre lots ont
 été livrés :
 
 | Étape | | Statut |
@@ -22,7 +22,7 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 | [1] Amorce RNA | associations du département | ✅ lot 2 |
 | [2] Résolution | URL du site de la mairie | ✅ lot 2 |
 | [3] Découverte | scoring des liens, crawl à profondeur 2 | ✅ lot 3 |
-| [4] Pré-filtre | écarter les pages avant tout coût d'inférence | ⬜ |
+| [4] Pré-filtre | écarter les pages avant tout coût d'inférence | ✅ lot 4 |
 | [5] Extraction | `mailto:`, `tel:`, listes et tableaux | ✅ lot 3 |
 | [6] Fallback LLM | uniquement si le DOM n'a pas suffi | ⬜ |
 | [7] Normalisation | déduplication, validation, classification | ⬜ |
@@ -33,6 +33,11 @@ mairie (94 %), et 31 273 associations actives, en 40 s.** Lot 3 : **2 591 pages 
 contacts collectés** en une quarantaine de minutes, dont 1 674 rattachés à une association — soit
 **1,5 % de couverture**. Ce que ce chiffre veut dire, et ce qu'il ne veut pas dire, est détaillé
 plus bas.
+
+Lot 4 : sur ces mêmes pages, **le pré-filtre ramène le volume qui appellerait une inférence de
+40,3 % à 6,5 %** — 160 pages au lieu de 997 — sans écarter une seule des 157 pages ayant produit
+un contact rattaché à une association. L'objectif du brief pour cet étage est « < 20 % » ; il est
+tenu avec une marge de trois, et **avant qu'une seule ligne d'inférence n'ait été écrite**.
 
 ## Prérequis
 
@@ -58,12 +63,12 @@ npm install
 npm run check
 ```
 
-Typecheck strict, puis 267 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
+Typecheck strict, puis 299 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
 un garde-fou qui refuse tout hôte hors de la boucle locale, sous-processus compris. Tout ce qui
 touche au réseau se teste contre un serveur HTTP local jetable, sur des fixtures HTML synthétiques
 écrites à la main.
 
-### 2. Voir la découverte fonctionner, hors ligne
+### 2. Voir le pipeline fonctionner, hors ligne
 
 ```bash
 npm run demo
@@ -105,8 +110,32 @@ Ce qu'il faut y lire :
 - le mobile `06 12 34 56 78` **n'apparaît pas**. Les numéros en 06/07 sont exclus par défaut : un
   mobile associatif est presque toujours la ligne personnelle d'un bénévole.
 
-Les métriques affichées ensuite donnent les volumes par étage de l'entonnoir. La base de
-démonstration est créée dans `data/demo`, ignorée par git, et recréée à chaque exécution.
+La démonstration enchaîne ensuite sur le **pré-filtre de l'étape [4]**, qui décide quelles pages
+vaudraient le coût d'une inférence :
+
+```
+ 35.0 retenue   liste          5 contacts
+    http://127.0.0.1:53905/vie-associative
+ 15.0 retenue   liste          1 contacts
+    http://127.0.0.1:53905/annuaire-des-associations
+  4.0 ecartee   insuffisant    1 contacts
+    http://127.0.0.1:53905/
+```
+
+Ce qu'il faut y lire :
+
+- **la page d'accueil est écartée alors qu'elle a livré un contact.** Le verdict est consultatif :
+  il ne gouverne que le coût de l'étape [6], jamais ce que l'extraction a déjà obtenu ;
+- **`/annuaire-des-associations` est la seule candidate au fallback LLM** : elle nomme une
+  association et n'a livré qu'un contact. C'est l'asymétrie qui donne son sens à l'étape [4] — une
+  page pleine de noms sans adresses est une cible, une page vide de tout est du bruit ;
+- **le motif dit pourquoi**, dans un sens comme dans l'autre. Un « écartée » sans raison ne serait
+  ni discutable en revue, ni réglable.
+
+Le rejeu qui suit relit ces mêmes pages **depuis le cache disque**, sans une requête : c'est ainsi
+qu'un seuil se règle sur un vrai corpus sans le recrawler. Les métriques affichées ensuite donnent
+les volumes par étage de l'entonnoir. La base de démonstration est créée dans `data/demo`, ignorée
+par git, et recréée à chaque exécution.
 
 ### 3. Pour de vrai, sur un département
 
@@ -167,6 +196,9 @@ npm run annuaire -- --help
 | `communes --departement <dd>` | Communes et URL de leur mairie |
 | `associations --departement <dd>` | Associations amorcées, avec leur commune |
 | `contacts --departement <dd>` | Contacts collectés, avec leur provenance |
+| `pages --departement <dd>` | Pages explorées et verdict du pré-filtre |
+| `prefiltrer --departement <dd>` | Rejoue le pré-filtre depuis le cache, sans réseau |
+| `dormance --departement <dd>` | Ancienneté de déclaration des associations |
 | `metrics [--json]` | Compteurs de l'entonnoir |
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |
 | `purge` | Force la purge des données de plus de trois ans |
@@ -216,6 +248,16 @@ structures dormantes. Aucun champ temporel n'est stocké aujourd'hui, alors que 
 `date_decla`, la date de dernière déclaration en préfecture. Tant que la dormance n'est pas
 qualifiée, la métrique reste difficile à interpréter. Signal connexe : **170 associations sur
 36 170 déclarent un site web**, soit 0,5 % — le gisement n'est pas de ce côté-là.
+
+**Le pré-filtre borne le coût d'inférence à 6,5 % des pages**, contre 40,3 % sans lui, et le fait
+sans rien perdre de mesurable : les 157 pages ayant produit un contact rattaché à une association
+sont toutes retenues, et les 2 003 contacts rattachés du département avec elles
+([ADR-014](docs/adr/014-prefiltre-consultatif.md)). Le seuil n'a pas été choisi puis justifié : il
+est le dernier point de la courbe où le filtre retient plus de pages prometteuses qu'il n'en écarte.
+
+Ce que ce chiffre ne dit pas encore : le vrai taux de rappel. Savoir si les 86 pages écartées qui
+nommaient pourtant une association contenaient des contacts exploitables suppose de les soumettre
+au LLM. Elles sont l'échantillon désigné pour le mesurer dès que l'étape [6] existera.
 
 Une limite connue subsiste, documentée plutôt que contournée : un même email peut exister à la fois
 rattaché à une association et au niveau de la commune — la déduplication est l'étape [7].

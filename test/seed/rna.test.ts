@@ -25,16 +25,23 @@ const lookupLocal: LookupFn = async () => ({ address: "127.0.0.1", family: 4 });
 const T0 = Date.parse("2026-08-18T10:00:00.000Z");
 
 const ENTETE =
-  "id,titre,objet,objet_social1,adrs_codeinsee,adrs_libcommune,siteweb,date_disso";
+  "id,titre,objet,objet_social1,adrs_codeinsee,adrs_libcommune,siteweb,date_disso," +
+  "date_creat,date_decla,position,maj_time";
 
-/** Fixture synthetique, ecrite a la main : aucune donnee reelle n'entre dans le depot. */
+/**
+ * Fixture synthetique, ecrite a la main : aucune donnee reelle n'entre dans le depot.
+ *
+ * Les quatre dernieres colonnes sont celles que l'ADR-013 reclamait. `W351000004` n'a
+ * pas de date de declaration : c'est le cas que le seuil de dormance ne pourra pas
+ * trancher, et il doit rester visible plutot que d'etre range d'un cote par defaut.
+ */
 const CSV =
   `${ENTETE}\n` +
-  `W351000001,Club de Bruz,"Sport, loisirs et culture",006090,35047,Bruz,https://club-bruz.example,0001-01-01\n` +
-  `W351000002,Amicale du Ferré,Entraide,023000,35111,Le Ferré,,0001-01-01\n` +
-  `W291000003,Club de Quimper,Voile,006090,29232,Quimper,,0001-01-01\n` +
-  `W351000004,Comité dissous,Ancien comité,006090,35047,Bruz,,2019-06-30\n` +
-  `W351000005,Association sans commune connue,Divers,023000,35999,Lieu-Inconnu,exemple-asso.fr,0001-01-01\n`;
+  `W351000001,Club de Bruz,"Sport, loisirs et culture",006090,35047,Bruz,https://club-bruz.example,0001-01-01,1998-03-02,2024-06-14,A,2024-06-14T09:00:00\n` +
+  `W351000002,Amicale du Ferré,Entraide,023000,35111,Le Ferré,,0001-01-01,2005-09-01,2011-02-03,A,2011-02-03T14:20:00\n` +
+  `W291000003,Club de Quimper,Voile,006090,29232,Quimper,,0001-01-01,2001-04-04,2020-01-09,A,2020-01-09T08:00:00\n` +
+  `W351000004,Comité dissous,Ancien comité,006090,35047,Bruz,,2019-06-30,1990-01-01,0001-01-01,D,2019-06-30T00:00:00\n` +
+  `W351000005,Association sans commune connue,Divers,023000,35999,Lieu-Inconnu,exemple-asso.fr,0001-01-01,2015-01-01,2023-05-05,A,2023-05-05T11:00:00\n`;
 
 function servirCsv(corps: string): Handler {
   const octets = Buffer.from(corps, "utf8");
@@ -95,7 +102,10 @@ test("normalise les noms pour le rapprochement ulterieur", () => {
 
 test("convertit une ligne du departement", () => {
   const lire = indexerColonnes(ENTETE.split(","));
-  const ligne = convertirLigne(lire(["W351000001", "Club", "Objet", "006090", "35047", "Bruz", "", "0001-01-01"]), "35");
+  const ligne = convertirLigne(
+    lire(["W351000001", "Club", "Objet", "006090", "35047", "Bruz", "", "0001-01-01", "1998-03-02", "2024-06-14", "A", "2024-06-14T09:00:00"]),
+    "35",
+  );
   assert.equal(ligne?.rnaId, "W351000001");
   assert.equal(ligne?.codeInsee, "35047");
   assert.equal(ligne?.dateDissolution, undefined);
@@ -103,19 +113,45 @@ test("convertit une ligne du departement", () => {
 
 test("ecarte une ligne d'un autre departement", () => {
   const lire = indexerColonnes(ENTETE.split(","));
-  assert.equal(convertirLigne(lire(["W29", "Club", "", "", "29232", "Quimper", "", "0001-01-01"]), "35"), undefined);
+  assert.equal(convertirLigne(lire(["W29", "Club", "", "", "29232", "Quimper", "", "0001-01-01", "", "", "", ""]), "35"), undefined);
 });
 
 test("retient la date de dissolution reelle", () => {
   const lire = indexerColonnes(ENTETE.split(","));
-  const ligne = convertirLigne(lire(["W35", "Ancien", "", "", "35047", "Bruz", "", "2019-06-30"]), "35");
+  const ligne = convertirLigne(lire(["W35", "Ancien", "", "", "35047", "Bruz", "", "2019-06-30", "", "", "", ""]), "35");
   assert.equal(ligne?.dateDissolution, "2019-06-30");
 });
 
 test("complete un site web declare sans schema", () => {
   const lire = indexerColonnes(ENTETE.split(","));
-  const ligne = convertirLigne(lire(["W35", "X", "", "", "35047", "Bruz", "exemple-asso.fr", "0001-01-01"]), "35");
+  const ligne = convertirLigne(lire(["W35", "X", "", "", "35047", "Bruz", "exemple-asso.fr", "0001-01-01", "", "", "", ""]), "35");
   assert.equal(ligne?.siteWeb, "https://exemple-asso.fr");
+});
+
+test("les champs temporels du RNA sont retenus (ADR-013)", () => {
+  const lire = indexerColonnes(ENTETE.split(","));
+  const ligne = convertirLigne(
+    lire(["W35", "Club", "", "", "35047", "Bruz", "", "0001-01-01", "1998-03-02", "2024-06-14", "A", "2024-06-14T09:00:00"]),
+    "35",
+  );
+  assert.equal(ligne?.dateCreation, "1998-03-02");
+  assert.equal(ligne?.dateDeclaration, "2024-06-14");
+  assert.equal(ligne?.positionRna, "A");
+  assert.equal(ligne?.majRna, "2024-06-14T09:00:00");
+});
+
+test("la sentinelle du RNA et la chaine vide disent la meme absence", () => {
+  const lire = indexerColonnes(ENTETE.split(","));
+  // « 0001-01-01 » n'est pas une date : la laisser entrer ferait passer une absence
+  // pour l'an 1, et le seuil de dormance rangerait ces lignes du mauvais cote.
+  const sentinelle = convertirLigne(
+    lire(["W35", "Club", "", "", "35047", "Bruz", "", "0001-01-01", "0001-01-01", "0001-01-01", "", ""]),
+    "35",
+  );
+  assert.equal(sentinelle?.dateCreation, undefined);
+  assert.equal(sentinelle?.dateDeclaration, undefined);
+  assert.equal(sentinelle?.positionRna, undefined);
+  assert.equal(sentinelle?.majRna, undefined);
 });
 
 test("amorce les associations du departement depuis le miroir", async (t) => {

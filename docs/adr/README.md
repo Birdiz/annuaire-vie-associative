@@ -20,3 +20,5 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [011](011-premiere-dependance-runtime.md) | Première dépendance runtime : `node-html-parser` | Acceptée |
 | [012](012-rattachement-et-regime-des-contacts.md) | Rattachement déterministe, et régime des contacts | Acceptée |
 | [013](013-ordre-de-parcours-et-budget.md) | Ordre de parcours du crawl, et budget a 20 pages | Acceptée |
+| [014](014-prefiltre-consultatif.md) | Pré-filtre consultatif, et portillon à deux conditions | Acceptée |
+| [015](015-temporalite-rna-et-dormance.md) | Champs temporels du RNA, et qualification de la dormance | Acceptée |

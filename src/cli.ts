@@ -15,6 +15,9 @@ import type { ContexteSeed } from "./seed/index.ts";
 import { creerHandlersDecouverte, campagneDuJour, cleDecouverte } from "./decouverte/index.ts";
 import type { ContexteDecouverte } from "./decouverte/index.ts";
 import { PAGES_MAX_PAR_COMMUNE } from "./decouverte/scoring.ts";
+import { SEUIL_EXTRACTION, SEUIL_PAR_DEFAUT } from "./decouverte/prefiltre.ts";
+import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./decouverte/rejeu.ts";
+import { mesurerDormance } from "./metrics/dormance.ts";
 
 const USAGE = `annuaire ${VERSION} — annuaire de la vie associative locale
 
@@ -25,8 +28,11 @@ Commandes
   run --departement <dd>  Execute un run complet : amorce, resolution, puis decouverte
   decouvrir --departement <dd>  Rejoue la seule decouverte sur une base deja amorcee
   communes --departement <dd>   Communes du departement et URL de leur mairie
+  prefiltrer --departement <dd> Rejoue le pre-filtre [4] depuis le cache, sans reseau
   contacts --departement <dd>   Contacts collectes, avec leur provenance
+  pages --departement <dd>      Pages explorees et verdict du pre-filtre
   associations --departement <dd>  Associations amorcees, avec leur commune
+  dormance --departement <dd>   Anciennete de declaration des associations
   dumps                   Etat des dumps ouverts et de leur reprise
   status                  Etat de l'installation et de la file de jobs
   metrics [--json]        Compteurs du §8
@@ -47,6 +53,12 @@ Options de decouverte
                           par defaut (§4.6) : un mobile associatif est presque toujours
                           la ligne personnelle d'un benevole. A n'activer qu'en
                           connaissance du regime applicable.
+
+Options de pre-filtre
+  --seuil <n>             Score a partir duquel une page est retenue (defaut : ${SEUIL_PAR_DEFAUT})
+  --campagne <aaaa-mm-jj> Campagne rejouee (defaut : la derniere connue)
+  --tout                  Recalcule aussi les verdicts deja a jour
+  --verdict <r>           Filtre la liste des pages : retenue ou ecartee
 
 Options communes
   --data-dir <chemin>     Repertoire de donnees (defaut : emplacement systeme)
@@ -76,6 +88,10 @@ export async function main(argv: readonly string[]): Promise<number> {
         "sans-decouverte": { type: "boolean", default: false },
         "avec-mobiles": { type: "boolean", default: false },
         "max-pages": { type: "string" },
+        campagne: { type: "string" },
+        seuil: { type: "string" },
+        verdict: { type: "string" },
+        tout: { type: "boolean", default: false },
         limit: { type: "string" },
         json: { type: "boolean", default: false },
         verbose: { type: "boolean", default: false },
@@ -135,8 +151,20 @@ export async function main(argv: readonly string[]): Promise<number> {
         });
       case "decouvrir":
         return await commandeDecouvrir(ouvrir, values.departement, decouverte);
+      case "prefiltrer":
+        return commandePrefiltrer(ouvrir, values.departement, {
+          campagne: values.campagne,
+          seuil: values.seuil,
+          tout: values.tout === true,
+          avecMobiles: values["avec-mobiles"] === true,
+          json: values.json === true,
+        });
       case "contacts":
         return commandeContacts(ouvrir, values.departement, values.json === true, values.limit);
+      case "pages":
+        return commandePages(ouvrir, values.departement, values.verdict, values.json === true, values.limit);
+      case "dormance":
+        return commandeDormance(ouvrir, values.departement, values.json === true);
       case "communes":
         return commandeCommunes(ouvrir, values.departement, values.json === true, values.limit);
       case "associations":
@@ -766,6 +794,225 @@ function commandeContacts(
   }
 }
 
+/**
+ * Rejeu de l'etape [4]. Ne sort jamais sur le reseau : les corps sont relus dans le
+ * cache disque. C'est ce qui permet de regler un seuil en quelques secondes plutot
+ * qu'en recrawlant un departement — treize minutes plancher, et autant de requetes
+ * vers de vraies mairies pour un resultat qu'on possede deja.
+ */
+function commandePrefiltrer(
+  ouvrir: () => App,
+  departement: string | undefined,
+  options: {
+    campagne: string | undefined;
+    seuil: string | undefined;
+    tout: boolean;
+    avecMobiles: boolean;
+    json: boolean;
+  },
+): number {
+  if (!exigerDepartement(departement, "prefiltrer")) return 2;
+
+  const seuil = lireSeuil(options.seuil);
+  if (seuil === undefined) {
+    process.stderr.write(`--seuil attend un entier, recu « ${options.seuil} »\n`);
+    return 2;
+  }
+
+  const app = ouvrir();
+  try {
+    startupPurge(app);
+
+    const campagne = options.campagne ?? derniereCampagne(app.db, departement);
+    if (campagne === undefined) {
+      process.stderr.write(
+        `Aucune page exploree pour le departement ${departement}.\n` +
+          `Lancez d'abord la decouverte : annuaire decouvrir --departement ${departement}\n`,
+      );
+      return 2;
+    }
+
+    const resultat = rejouerPrefiltre(app.db, app.cache, app.clock, {
+      departement,
+      campagne,
+      tout: options.tout,
+      avecMobiles: options.avecMobiles,
+      ...(seuil === null ? {} : { seuil }),
+    });
+    const distribution = distributionPrefiltre(app.db, departement, campagne);
+
+    if (options.json) {
+      process.stdout.write(
+        `${JSON.stringify({ departement, seuil: seuil ?? SEUIL_PAR_DEFAUT, rejeu: resultat, distribution }, null, 2)}\n`,
+      );
+      return 0;
+    }
+
+    const part = (n: number): string =>
+      distribution.jugees === 0 ? "—" : `${((n / distribution.jugees) * 100).toFixed(1)} %`;
+
+    process.stdout.write(
+      `Campagne ${campagne}, seuil ${seuil ?? SEUIL_PAR_DEFAUT}.\n` +
+        `${resultat.evaluees} pages evaluees, ${resultat.aJour} deja a jour, ` +
+        `${resultat.sansCache} sans corps en cache.\n\n` +
+        `${distribution.retenues} pages retenues (${part(distribution.retenues)}), ` +
+        `${distribution.ecartees} ecartees (${part(distribution.ecartees)}) sur ${distribution.jugees} jugees.\n` +
+        `${distribution.candidatesLlm} atteindraient le fallback [6] : retenues et sous ` +
+        `${SEUIL_EXTRACTION} contacts extraits.\n`,
+    );
+
+    if (distribution.parMotif.length > 0) {
+      process.stdout.write("\nMotif dominant :\n");
+      for (const ligne of distribution.parMotif) {
+        process.stdout.write(`  ${ligne.motif.padEnd(14)} ${String(ligne.pages).padStart(6)}\n`);
+      }
+    }
+
+    // L'histogramme est la sortie utile de cette commande : c'est lui, et non une
+    // opinion, qui doit fixer le seuil (meme discipline que l'ADR-013 pour la dormance).
+    if (distribution.histogramme.length > 0) {
+      const maximum = Math.max(...distribution.histogramme.map((ligne) => ligne.pages));
+      process.stdout.write("\nDistribution des scores :\n");
+      for (const ligne of distribution.histogramme) {
+        const barre = "#".repeat(Math.max(1, Math.round((ligne.pages / maximum) * 40)));
+        process.stdout.write(
+          `  ${String(ligne.borne).padStart(4)} ${String(ligne.pages).padStart(6)}  ${barre}\n`,
+        );
+      }
+    }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
+/** `null` signifie « non precise » ; `undefined`, « valeur invalide ». */
+function lireSeuil(brut: string | undefined): number | null | undefined {
+  if (brut === undefined) return null;
+  const valeur = Number.parseInt(brut, 10);
+  if (!Number.isInteger(valeur) || String(valeur) !== brut.trim()) return undefined;
+  return valeur;
+}
+
+type LignePage = {
+  commune: string;
+  url: string;
+  prefiltre_score: number | null;
+  prefiltre_verdict: string | null;
+  prefiltre_motif: string | null;
+  contacts_extraits: number | null;
+  profondeur: number;
+};
+
+/** Les pages explorees et ce que le pre-filtre en dit — l'etage [4] de l'entonnoir. */
+function commandePages(
+  ouvrir: () => App,
+  departement: string | undefined,
+  verdict: string | undefined,
+  json: boolean,
+  limite: string | undefined,
+): number {
+  if (!exigerDepartement(departement, "pages")) return 2;
+  if (verdict !== undefined && verdict !== "retenue" && verdict !== "ecartee") {
+    process.stderr.write(`--verdict attend « retenue » ou « ecartee », recu « ${verdict} »\n`);
+    return 2;
+  }
+
+  const app = ouvrir();
+  try {
+    const filtreVerdict = verdict === undefined ? "" : "AND p.prefiltre_verdict = ? ";
+    const params: (string | number)[] = verdict === undefined ? [] : [verdict];
+
+    const lignes = app.db
+      .prepare(
+        `SELECT c.nom AS commune, p.url, p.prefiltre_score, p.prefiltre_verdict,
+                p.prefiltre_motif, p.contacts_extraits, p.profondeur
+           FROM page p
+           JOIN commune c ON c.code_insee = p.code_insee
+          WHERE c.departement = ? AND p.statut = 'visitee' ${filtreVerdict}
+          ORDER BY p.prefiltre_score DESC, p.url
+          LIMIT ?`,
+      )
+      .all(departement, ...params, lireLimite(limite)) as unknown as LignePage[];
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify({ departement, pages: lignes }, null, 2)}\n`);
+      return 0;
+    }
+
+    if (lignes.length === 0) {
+      process.stdout.write(
+        `Aucune page exploree pour le departement ${departement}.\n` +
+          `Lancez la decouverte : annuaire decouvrir --departement ${departement}\n`,
+      );
+      return 0;
+    }
+
+    for (const ligne of lignes) {
+      const score = ligne.prefiltre_score === null ? "  —  " : ligne.prefiltre_score.toFixed(1).padStart(5);
+      const verdictAffiche = (ligne.prefiltre_verdict ?? "non juge").padEnd(9);
+      const motif = (ligne.prefiltre_motif ?? "—").padEnd(12);
+      process.stdout.write(
+        `${score} ${verdictAffiche} ${motif} ${String(ligne.contacts_extraits ?? 0).padStart(3)} contacts\n` +
+          `    ${ligne.url}\n`,
+      );
+    }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
+/**
+ * Anciennete de declaration des associations. C'est la mesure que l'ADR-013 reclame
+ * avant de pouvoir lire le taux de couverture : le seuil de dormance doit sortir de
+ * cette distribution, pas d'une intuition.
+ */
+function commandeDormance(ouvrir: () => App, departement: string | undefined, json: boolean): number {
+  if (!exigerDepartement(departement, "dormance")) return 2;
+
+  const app = ouvrir();
+  try {
+    const mesure = mesurerDormance(app.db, departement, app.clock.now());
+
+    if (json) {
+      process.stdout.write(`${JSON.stringify(mesure, null, 2)}\n`);
+      return 0;
+    }
+
+    if (mesure.actives === 0) {
+      process.stdout.write(
+        `Aucune association amorcee pour le departement ${departement}.\n` +
+          `Lancez : annuaire run --departement ${departement}\n`,
+      );
+      return 0;
+    }
+
+    const part = (n: number): string => `${((n / mesure.actives) * 100).toFixed(1)} %`;
+    process.stdout.write(
+      `${mesure.actives} associations actives.\n` +
+        `${mesure.nonDormantes} ont declare depuis le ${mesure.borne} (${part(mesure.nonDormantes)}), ` +
+        `${mesure.dormantes} avant (${part(mesure.dormantes)}), ` +
+        `${mesure.sansDate} sans date de declaration (${part(mesure.sansDate)}).\n` +
+        `Seuil applique : ${mesure.seuilAnnees} ans.\n`,
+    );
+
+    if (mesure.parAnnee.length > 0) {
+      const maximum = Math.max(...mesure.parAnnee.map((ligne) => ligne.associations));
+      process.stdout.write("\nDeclarations par annee :\n");
+      for (const ligne of mesure.parAnnee) {
+        const barre = "#".repeat(Math.max(1, Math.round((ligne.associations / maximum) * 40)));
+        process.stdout.write(
+          `  ${ligne.annee} ${String(ligne.associations).padStart(6)}  ${barre}\n`,
+        );
+      }
+    }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
 function resumeRun(app: App, departement: string): void {
   const compte = (sql: string): number =>
     Number((app.db.prepare(sql).get(departement) as { n?: number })?.n ?? 0);
@@ -823,7 +1070,28 @@ function resumeRun(app: App, departement: string): void {
       "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
       "WHERE c.departement = ? AND a.date_dissolution IS NULL",
   );
+
+  // Les deux denominateurs sont affiches ensemble (ADR-013). Ne montrer que le second,
+  // plus favorable, reviendrait a ameliorer le chiffre en changeant la question : le
+  // taux sur les actives reste donc en premier, et le critere qui produit l'autre est
+  // ecrit en toutes lettres.
+  const dormance = mesurerDormance(app.db, departement, app.clock.now());
+  const couvertesNonDormantes = Number(
+    (
+      app.db
+        .prepare(
+          "SELECT count(DISTINCT a.id) AS n FROM association a " +
+            "JOIN commune c ON c.code_insee = a.code_insee " +
+            "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
+            "WHERE c.departement = ? AND a.date_dissolution IS NULL AND a.date_declaration >= ?",
+        )
+        .get(departement, dormance.borne) as { n?: number } | undefined
+    )?.n ?? 0,
+  );
+
   const taux = associations === 0 ? 0 : (couvertes / associations) * 100;
+  const tauxQualifie =
+    dormance.nonDormantes === 0 ? undefined : (couvertesNonDormantes / dormance.nonDormantes) * 100;
 
   const reste =
     nonTentees === 0
@@ -831,13 +1099,40 @@ function resumeRun(app: App, departement: string): void {
       : `${nonTentees} communes restent a explorer : relancez la meme commande, rien ne sera refait.\n`;
 
   process.stdout.write(
-    `${pagesVisitees} pages explorees.\n` +
+    `${pagesVisitees} pages explorees.${resumePrefiltre(app, departement)}\n` +
       `${bloquees} communes interdites par robots.txt, ${injoignables} injoignables.\n` +
       reste +
       `${contacts} contacts collectes. Couverture : ${couvertes} associations avec au moins ` +
-      `un email, soit ${taux.toFixed(1)} %.\n` +
+      `un email, soit ${taux.toFixed(1)} % des ${associations} actives` +
+      (tauxQualifie === undefined
+        ? ".\n"
+        : ` — ${tauxQualifie.toFixed(1)} % des ${dormance.nonDormantes} ayant declare ` +
+          `depuis moins de ${dormance.seuilAnnees} ans.\n`) +
       `Detail : annuaire contacts --departement ${departement}\n`,
   );
+}
+
+/**
+ * L'etage [4] de l'entonnoir, en une phrase. Le ratio de pages qui atteindraient le
+ * fallback LLM est la metrique que le §8 reclame — et ce lot la rend lisible sans
+ * qu'une seule ligne d'inference ait ete ecrite.
+ */
+function resumePrefiltre(app: App, departement: string): string {
+  const campagne = derniereCampagne(app.db, departement);
+  if (campagne === undefined) return "";
+  const d = distributionPrefiltre(app.db, departement, campagne);
+  if (d.jugees === 0) return "";
+  const part = ((d.retenues / d.jugees) * 100).toFixed(1);
+  return (
+    `\n${d.retenues} ${pluriel(d.retenues, "page retenue", "pages retenues")} par le pre-filtre ` +
+    `(${part} %), ${d.ecartees} ${pluriel(d.ecartees, "ecartee", "ecartees")} ; ` +
+    `${d.candidatesLlm} ${pluriel(d.candidatesLlm, "atteindrait", "atteindraient")} le fallback LLM.`
+  );
+}
+
+/** Zero prend le pluriel en francais, un prend le singulier. */
+function pluriel(nombre: number, singulier: string, pluriels: string): string {
+  return nombre === 1 ? singulier : pluriels;
 }
 
 const estPointDEntree = process.argv[1] !== undefined && import.meta.filename === process.argv[1];

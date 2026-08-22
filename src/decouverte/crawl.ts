@@ -26,6 +26,8 @@ import type { ContactExtrait } from "./extraction.ts";
 import type { ContexteDecouverte, PayloadPage } from "./contexte.ts";
 import { clePage, hashPage, lirePayloadPage, prioritePage } from "./contexte.ts";
 import { extraireContacts } from "./extraction.ts";
+import { evaluerPage } from "./prefiltre.ts";
+import type { VerdictPrefiltre } from "./prefiltre.ts";
 import { indexerAssociations, rattacher } from "./rattachement.ts";
 import { PROFONDEUR_MAX, estReseauSocial, selectionner } from "./scoring.ts";
 import type { LienScore } from "./scoring.ts";
@@ -63,6 +65,19 @@ const SQL_INSERER_PAGE = `
     (url_hash, campagne, url, domaine, code_insee, planifiee_at, profondeur, statut,
      score_candidat, url_source)
   VALUES (?, ?, ?, ?, ?, ?, ?, 'a_visiter', ?, ?)
+`;
+
+/**
+ * Le verdict s'ecrit a part de SQL_MAJ_PAGE, qui sert aussi aux pages sans contenu :
+ * une page bloquee ou absente n'a pas de verdict, et lui en donner un — fut-il nul —
+ * la ferait compter dans le denominateur de l'entonnoir alors qu'elle n'a jamais ete
+ * soumise au filtre.
+ */
+const SQL_MAJ_PREFILTRE = `
+  UPDATE page
+     SET prefiltre_score = ?, prefiltre_verdict = ?, prefiltre_motif = ?,
+         prefiltre_at = ?, prefiltre_version = ?, contacts_extraits = ?
+   WHERE url_hash = ?
 `;
 
 const SQL_ASSOCIATIONS = `
@@ -164,6 +179,18 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
       nomAssociation: rattacher(index, contact.contextes)?.nomNormalise,
     }));
 
+    // Etape [4]. Elle vient apres [5] dans le code et avant elle dans l'entonnoir :
+    // l'extraction DOM est bon marche, et son resultat est justement l'un des signaux
+    // qui disent si la page merite le cout de l'etape [6]. L'ordre du §6 est un ordre
+    // de cout, pas un ordre d'execution.
+    const verdict = evaluerPage({
+      url: resultat.meta.finalUrl,
+      doc,
+      index,
+      contacts: extraction.contacts,
+      contactsRattaches: contacts.filter((entree) => entree.nomAssociation !== undefined).length,
+    });
+
     const selection =
       payload.profondeur < PROFONDEUR_MAX
         ? selectionner(doc.liens, resultat.meta.finalUrl)
@@ -179,6 +206,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
           httpStatus: resultat.meta.status,
           cachePath: ctx.client.cachePathFor(payload.url),
           contacts,
+          verdict,
           selection: selection.retenus,
           horsDomaine: selection.horsDomaine,
           mobilesExclus: extraction.mobilesExclus,
@@ -252,6 +280,7 @@ type Succes = {
   httpStatus: number;
   cachePath: string;
   contacts: readonly ContactRattache[];
+  verdict: VerdictPrefiltre;
   selection: readonly LienScore[];
   horsDomaine: number;
   mobilesExclus: number;
@@ -281,6 +310,11 @@ function persister(
   ctx.counters.inc(ETAPE.decouverte, "liens_hors_domaine", succes.horsDomaine);
   ctx.counters.inc(ETAPE.extraction, "mobiles_exclus", succes.mobilesExclus);
 
+  // Avant la sortie sur page dupliquee : une page dupliquee a bien ete visitee et
+  // jugee, ce qu'elle n'a pas, c'est le droit de reconsommer du budget. L'ecarter du
+  // denominateur de l'entonnoir ferait mentir le volume mesure a l'etape [4].
+  ecrirePrefiltre(ctx, db, hash, succes.verdict, maintenant);
+
   // Une commune sert souvent la meme page sous plusieurs URL (« / », « /accueil »,
   // une pagination qui boucle). Reextraire n'ajouterait aucun contact, mais suivre a
   // nouveau ses liens consommerait le budget pour rien.
@@ -296,6 +330,38 @@ function persister(
 
   ecrireContacts(ctx, db, payload, succes.contacts, maintenant);
   enfilerFilles(ctx, db, payload, succes.selection, maintenant);
+}
+
+/**
+ * Verdict de l'etape [4]. Consultatif : rien de ce qui suit ne le lit. Il alimente les
+ * compteurs du §8 — dont le ratio de pages qui atteindraient le fallback LLM, mesurable
+ * ainsi avant qu'une seule ligne d'inference ne soit ecrite.
+ */
+function ecrirePrefiltre(
+  ctx: ContexteDecouverte,
+  db: Database,
+  hash: string,
+  verdict: VerdictPrefiltre,
+  maintenant: string,
+): void {
+  db.prepare(SQL_MAJ_PREFILTRE).run(
+    verdict.score,
+    verdict.verdict,
+    verdict.motif,
+    maintenant,
+    verdict.version,
+    verdict.signaux.contacts,
+    hash,
+  );
+
+  ctx.counters.inc(ETAPE.prefiltre, "pages_evaluees");
+  ctx.counters.inc(
+    ETAPE.prefiltre,
+    verdict.verdict === "retenue" ? "pages_retenues" : "pages_ecartees",
+  );
+  if (verdict.motif === "vide") ctx.counters.inc(ETAPE.prefiltre, "pages_sans_texte");
+  if (verdict.candidateLlm) ctx.counters.inc(ETAPE.prefiltre, "candidates_llm");
+  ctx.counters.inc(ETAPE.prefiltre, "noms_connus_vus", verdict.signaux.nomsConnus);
 }
 
 function ecrireContacts(

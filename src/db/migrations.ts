@@ -369,4 +369,62 @@ CREATE INDEX idx_page_budget ON page (campagne, code_insee);
 CREATE INDEX idx_page_planifiee_at ON page (planifiee_at);
 `,
   },
+  {
+    version: 4,
+    name: "prefiltre-et-temporalite-rna",
+    sql: `
+--------------------------------------------------------------------------------
+-- Pages : verdict de l'etape [4]
+--------------------------------------------------------------------------------
+
+-- Le verdict du pre-filtre est une **derivee**, pas une donnee collectee : il ne
+-- porte donc pas de contrainte de provenance comme en porte 'contact'. Sa provenance
+-- est la ligne 'page' elle-meme — url, fetched_at — completee par les deux colonnes
+-- ci-dessous : le motif dit la methode, la version dit la regle appliquee.
+ALTER TABLE page ADD COLUMN prefiltre_score REAL;
+
+ALTER TABLE page ADD COLUMN prefiltre_verdict TEXT
+  CHECK (prefiltre_verdict IN ('retenue','ecartee'));
+
+-- Signal dominant ayant emporte la decision. « Ecartee » sans raison n'est pas
+-- auditable, et l'etape [8] devra pouvoir presenter ce verdict a un humain.
+ALTER TABLE page ADD COLUMN prefiltre_motif TEXT;
+
+ALTER TABLE page ADD COLUMN prefiltre_at TEXT;
+
+-- Constante du code, incrementee des que l'heuristique change. C'est elle qui rend
+-- repondable « quels verdicts sont perimes » : sans elle, un reglage de seuil
+-- laisserait en base un melange indiscernable d'anciens et de nouveaux verdicts.
+ALTER TABLE page ADD COLUMN prefiltre_version INTEGER;
+
+-- Ce que l'etape [5] a trouve sur la page. Le §6 ouvre le fallback LLM « UNIQUEMENT
+-- si pre-filtre positif ET extraction DOM sous seuil » : sans ce compte, la seconde
+-- condition ne serait pas evaluable apres coup, donc pas mesurable avant d'ecrire
+-- la moindre ligne d'inference.
+ALTER TABLE page ADD COLUMN contacts_extraits INTEGER;
+
+CREATE INDEX idx_page_prefiltre ON page (campagne, prefiltre_verdict);
+
+--------------------------------------------------------------------------------
+-- Associations : temporalite du RNA (ADR-013)
+--------------------------------------------------------------------------------
+
+-- L'ADR-013 laisse le taux de couverture ininterpretable : son denominateur compte
+-- toutes les associations non dissoutes, dont une part inconnue de structures
+-- dormantes, et aucun champ temporel n'etait stocke. Les quatre colonnes sont
+-- ajoutees d'un coup : elles coutent quatre ALTER et evitent une seconde migration
+-- quand le seuil de dormance se raffinera.
+ALTER TABLE association ADD COLUMN date_creation TEXT;
+ALTER TABLE association ADD COLUMN date_declaration TEXT;
+
+-- 'position' et 'maj_time' du RNA : etat declare de la structure, et date de
+-- derniere mise a jour de la fiche. Conserves bruts, sans interpretation ici.
+ALTER TABLE association ADD COLUMN position_rna TEXT;
+ALTER TABLE association ADD COLUMN maj_rna TEXT;
+
+-- Sert l'histogramme de 'annuaire dormance' et, une fois le seuil fige, le
+-- denominateur « non dormantes » du taux de couverture.
+CREATE INDEX idx_association_declaration ON association (date_declaration);
+`,
+  },
 ];

@@ -88,6 +88,8 @@ export const ETAPE = {
   rna: "rna",
   /** Etape [3] : parcours des sites de mairie et selection des pages candidates. */
   decouverte: "decouverte",
+  /** Etape [4] : verdict du pre-filtre, avant tout cout d'inference. */
+  prefiltre: "prefiltre",
   /** Etape [5] : contacts tires du DOM. */
   extraction: "extraction",
 } as const;
