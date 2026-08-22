@@ -71,15 +71,25 @@ test("un handler qui echoue laisse l'effet non ecrit", async (t) => {
   assert.match(queue.list("dead")[0]?.lastError ?? "", /ne repond pas/);
 });
 
-test("un type de job sans handler est mis en echec, pas ignore", async (t) => {
+test("un type de job sans handler est laisse en attente, pas mis en echec", async (t) => {
   const { queue } = setup(t);
   queue.enqueue("inconnu", "j", null, { maxAttempts: 1 });
 
   const stats = await new Worker(queue, {}, { concurrency: 1 }).run();
 
-  assert.equal(stats.failed, 1);
-  assert.equal(queue.counts().dead, 1);
-  assert.match(queue.list("dead")[0]?.lastError ?? "", /Type de job inconnu/);
+  // Ce test disait l'inverse jusqu'au lot 4, et c'etait une erreur. Le raisonnement
+  // — « un job que personne ne sait traiter ne doit pas dormir dans la file » — ne
+  // tient pas dans une conception ou la file est deliberement partagee par deux
+  // passes aux handlers distincts : l'amorce, puis la decouverte. Mettre en echec ce
+  // qu'on ne reconnait pas revenait a faire tuer les jobs de l'autre passe.
+  assert.equal(stats.failed, 0);
+  assert.equal(queue.counts().dead, 0);
+  assert.equal(queue.counts().pending, 1);
+
+  // Un job qu'aucun worker ne reclame reste visible dans `annuaire status` et
+  // `annuaire jobs --state pending`. C'est une anomalie qu'on constate, plutot qu'une
+  // disparition silencieuse qu'on ne constate jamais.
+  assert.equal(queue.list("pending")[0]?.attempts, 0);
 });
 
 test("un resultat ecarte enregistre son motif sans effet", async (t) => {
@@ -154,4 +164,45 @@ test("l'effet et la completion sont commites ensemble", async (t) => {
   assert.equal((db.prepare("SELECT count(*) AS n FROM effet").get() as { n: number }).n, 0);
   assert.equal(queue.counts().done, 0);
   assert.equal(queue.counts().dead, 1);
+});
+
+test("un worker ne touche pas aux jobs qu'il ne sait pas traiter", async (t) => {
+  const { db, queue } = setup(t);
+  queue.enqueue("amorce", "amorce:35", { cle: "amorce" });
+  // Ce que la decouverte interrompue avait laisse derriere elle.
+  queue.enqueue("page_crawl", "page:1", { cle: "p1" });
+  queue.enqueue("page_crawl", "page:2", { cle: "p2" });
+
+  const worker = new Worker(
+    queue,
+    {
+      async amorce(job): Promise<JobOutcome> {
+        const cle = (job.payload as { cle: string }).cle;
+        return {
+          kind: "done",
+          commit: (database) => {
+            database.prepare("INSERT INTO effet (cle) VALUES (?)").run(cle);
+          },
+        };
+      },
+    },
+    { concurrency: 2 },
+  );
+
+  const stats = await worker.run();
+  assert.equal(stats.done, 1);
+  assert.equal(stats.failed, 0, "les jobs d'un autre type ne sont pas des echecs");
+
+  // `attempts` est incremente a la prise : un worker qui les prendrait avant de
+  // constater qu'il n'a pas de handler aurait deja consomme une vie. C'est ainsi que
+  // relancer l'amorce tuait, en cinq passages, les pages restant a explorer.
+  const restants = (
+    db
+      .prepare("SELECT dedup_key, state, attempts FROM job WHERE type = 'page_crawl' ORDER BY dedup_key")
+      .all() as unknown as { dedup_key: string; state: string; attempts: number }[]
+  ).map((ligne) => ({ dedup_key: ligne.dedup_key, state: ligne.state, attempts: Number(ligne.attempts) }));
+  assert.deepEqual(restants, [
+    { dedup_key: "page:1", state: "pending", attempts: 0 },
+    { dedup_key: "page:2", state: "pending", attempts: 0 },
+  ]);
 });

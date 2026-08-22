@@ -112,12 +112,26 @@ export class JobQueue {
    * `attempts` est incremente a la prise, pas a l'echec. Un job qui fait tomber le
    * process consomme donc une tentative : sans cela, un job qui provoque un crash
    * serait repris indefiniment et bloquerait la file a chaque redemarrage.
+   *
+   * C'est aussi pourquoi `types` existe. La file est partagee par des workers qui
+   * n'ont pas les memes handlers — l'amorce et la decouverte tournent en deux passes
+   * distinctes (cf. `commandeRun`). Un worker qui prendrait un job d'un type qu'il ne
+   * sait pas traiter aurait deja consomme une tentative au moment de s'en apercevoir :
+   * relancer l'amorce tuait ainsi, par tranches de cinq passages, les pages qu'une
+   * decouverte interrompue avait laissees en attente. Le filtre est donc pose ici, a
+   * la prise, et non dans le worker : c'est le seul endroit ou il arrive a temps.
    */
-  lease(leaseDurationMs: number): Job | undefined {
+  lease(leaseDurationMs: number, types?: readonly string[]): Job | undefined {
+    // Un worker sans handler ne peut rien prendre. `IN ()` n'est pas du SQL valide,
+    // et le cas se produit des qu'on instancie un worker vide.
+    if (types !== undefined && types.length === 0) return undefined;
+
     const now = this.#clock.now();
     const nowIso = toIso(now);
 
     this.#reapExhausted(nowIso);
+
+    const filtreType = types === undefined ? "" : `AND type IN (${types.map(() => "?").join(", ")})`;
 
     const row = this.#db
       .prepare(
@@ -131,12 +145,13 @@ export class JobQueue {
              WHERE ((state = 'pending' AND available_at <= ?)
                  OR (state = 'leased' AND lease_expires_at <= ?))
                AND attempts < max_attempts
+               ${filtreType}
              ORDER BY priority, id
              LIMIT 1
           )
       RETURNING id, run_id, type, dedup_key, payload, attempts, max_attempts`,
       )
-      .get(toIso(now + leaseDurationMs), nowIso, nowIso, nowIso) as JobRow | undefined;
+      .get(toIso(now + leaseDurationMs), nowIso, nowIso, nowIso, ...(types ?? [])) as JobRow | undefined;
 
     if (row === undefined) return undefined;
     return toJob(row);

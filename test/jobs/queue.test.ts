@@ -170,3 +170,24 @@ test("le payload fait l'aller-retour intact", (t) => {
   queue.enqueue("fetch", "payload", payload);
   assert.deepEqual(queue.lease(LEASE_MS)?.payload, payload);
 });
+
+test("la prise peut se restreindre aux types qu'un worker sait traiter", (t) => {
+  const { queue } = setup(t);
+  queue.enqueue("page_crawl", "page:1", {}, { priority: 1 });
+  queue.enqueue("amorce", "amorce:35", {}, { priority: 2 });
+
+  // `page_crawl` est prioritaire, et pourtant il n'est pas propose : la file ne rend
+  // que ce que l'appelant a declare savoir traiter.
+  assert.equal(queue.lease(LEASE_MS, ["amorce"])?.dedupKey, "amorce:35");
+  assert.equal(queue.lease(LEASE_MS, ["amorce"]), undefined);
+
+  // Le job ecarte est intact : ni pris, ni penalise.
+  assert.equal(queue.lease(LEASE_MS, ["page_crawl"])?.dedupKey, "page:1");
+});
+
+test("un worker sans aucun handler ne prend rien", (t) => {
+  const { queue } = setup(t);
+  queue.enqueue("travail", "j1", {});
+  assert.equal(queue.lease(LEASE_MS, []), undefined);
+  assert.equal(queue.lease(LEASE_MS)?.dedupKey, "j1", "et le job reste disponible");
+});

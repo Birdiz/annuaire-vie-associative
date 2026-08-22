@@ -45,6 +45,8 @@ const DEFAULT_IDLE_POLL_MS = 250;
 export class Worker {
   readonly #queue: JobQueue;
   readonly #handlers: Readonly<Record<string, JobHandler>>;
+  /** Types que ce worker sait traiter. La file ne lui proposera rien d'autre. */
+  readonly #types: readonly string[];
   readonly #concurrency: number;
   readonly #leaseMs: number;
   readonly #idlePollMs: number;
@@ -53,6 +55,7 @@ export class Worker {
   constructor(queue: JobQueue, handlers: Readonly<Record<string, JobHandler>>, options: WorkerOptions) {
     this.#queue = queue;
     this.#handlers = handlers;
+    this.#types = Object.keys(handlers);
     this.#concurrency = Math.max(1, options.concurrency);
     this.#leaseMs = options.leaseDurationMs ?? DEFAULT_LEASE_MS;
     this.#idlePollMs = options.idlePollMs ?? DEFAULT_IDLE_POLL_MS;
@@ -73,7 +76,7 @@ export class Worker {
     while (true) {
       let leasedThisTurn = 0;
       while (!signal.aborted && inFlight.size < this.#concurrency) {
-        const job = this.#queue.lease(this.#leaseMs);
+        const job = this.#queue.lease(this.#leaseMs, this.#types);
         if (job === undefined) break;
         leasedThisTurn += 1;
         const promise = this.#process(job, signal, stats).finally(() => {
@@ -102,6 +105,8 @@ export class Worker {
   async #process(job: Job, signal: AbortSignal, stats: WorkerStats): Promise<void> {
     const handler = this.#handlers[job.type];
     if (handler === undefined) {
+      // Inatteignable depuis `run` : la file filtre desormais sur `#types`. Reste comme
+      // garde pour un appelant qui prendrait un job lui-meme, sans passer par le worker.
       this.#queue.fail(job.id, new Error(`Type de job inconnu : ${job.type}`));
       stats.failed += 1;
       return;
