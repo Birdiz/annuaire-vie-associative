@@ -47,7 +47,7 @@ test("l'aide documente chaque commande", async () => {
   assert.equal(code, 0);
   for (const commande of [
     "init", "run", "status", "metrics", "jobs", "purge", "fetch", "prefiltrer", "pages", "dormance",
-    "requeue",
+    "requeue", "normaliser", "exporter",
   ]) {
     assert.match(stdout, new RegExp(`\\b${commande}\\b`), `${commande} devrait etre documentee`);
   }
@@ -228,6 +228,41 @@ test("dormance --json expose le critere avec le chiffre qu'il produit", async (t
   assert.match(document.borne, /^\d{4}-\d{2}-\d{2}$/);
   assert.equal(document.actives, 0);
   assert.equal(document.sansDate, 0);
+});
+
+test("normaliser sur une base sans contact dit quoi lancer, plutot que de ne rien dire", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const resultat = await annuaire(["normaliser", "--departement", "35", "--data-dir", dir]);
+  assert.equal(resultat.code, 2);
+  assert.match(resultat.stderr, /Aucun contact collecte/);
+  assert.match(resultat.stderr, /annuaire decouvrir --departement 35/);
+});
+
+test("exporter sur une base vide n'ecrit pas un fichier trompeur", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const fichier = join(dir, "annuaire-35.csv");
+  const resultat = await annuaire([
+    "exporter", "--departement", "35", "--data-dir", dir, "--fichier", fichier,
+  ]);
+  assert.equal(resultat.code, 1);
+  assert.match(resultat.stderr, /Aucun contact a exporter/);
+  assert.equal(existsSync(fichier), false, "un CSV vide vaudrait un annuaire vide livre sans le dire");
+});
+
+test("un score minimal hors de [0, 1] est une erreur d'usage, pas d'execution", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  // Forme collee : `--score-min -1` est refuse par parseArgs lui-meme, qui y voit une
+  // option. C'est deja une erreur d'usage, mais pas celle qu'on veut verifier ici.
+  for (const valeur of ["2", "-1", "beaucoup"]) {
+    const resultat = await annuaire([
+      "exporter", "--departement", "35", "--data-dir", dir, `--score-min=${valeur}`,
+    ]);
+    assert.equal(resultat.code, 2, `--score-min ${valeur}`);
+    assert.match(resultat.stderr, /--score-min attend un nombre entre 0 et 1/);
+  }
 });
 
 test("un fichier RNA inexistant est signale avant tout acces reseau", async (t) => {

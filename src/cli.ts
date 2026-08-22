@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from "node:util";
-import { existsSync } from "node:fs";
+import { existsSync, writeFileSync } from "node:fs";
 import { openApp, requireClient, startupPurge } from "./app.ts";
 import type { App } from "./app.ts";
 import { writeConfigTemplate, ConfigError } from "./config.ts";
@@ -17,6 +17,11 @@ import type { ContexteDecouverte } from "./decouverte/index.ts";
 import { PAGES_MAX_PAR_COMMUNE } from "./decouverte/scoring.ts";
 import { SEUIL_EXTRACTION, SEUIL_PAR_DEFAUT } from "./decouverte/prefiltre.ts";
 import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./decouverte/rejeu.ts";
+import { creerHandlersNormalisation, cleNormalisation } from "./normalisation/index.ts";
+import type { ContexteNormalisation } from "./normalisation/index.ts";
+import { distributionNormalisation } from "./normalisation/rejeu.ts";
+import { normaliser } from "./normalisation/rejeu.ts";
+import { compterLignes, lignesCsv } from "./export/csv.ts";
 import { mesurerDormance } from "./metrics/dormance.ts";
 
 const USAGE = `annuaire ${VERSION} — annuaire de la vie associative locale
@@ -29,6 +34,8 @@ Commandes
   decouvrir --departement <dd>  Rejoue la seule decouverte sur une base deja amorcee
   communes --departement <dd>   Communes du departement et URL de leur mairie
   prefiltrer --departement <dd> Rejoue le pre-filtre [4] depuis le cache, sans reseau
+  normaliser --departement <dd> Rejoue la normalisation [7] et le scoring [8]
+  exporter --departement <dd>   Exporte l'annuaire en CSV
   contacts --departement <dd>   Contacts collectes, avec leur provenance
   pages --departement <dd>      Pages explorees et verdict du pre-filtre
   associations --departement <dd>  Associations amorcees, avec leur commune
@@ -62,6 +69,15 @@ Options de pre-filtre
   --tout                  Recalcule aussi les verdicts deja a jour
   --verdict <r>           Filtre la liste des pages : retenue ou ecartee
 
+Options de normalisation
+  --tout                  Reclasse et renote aussi ce qui est deja a jour, et
+                          reinterroge les verdicts MX encore frais
+
+Options d'export
+  --fichier <chemin>      Ecrit dans un fichier plutot que sur la sortie standard
+  --score-min <n>         Ne retient que les contacts notes au moins a cette valeur
+                          (entre 0 et 1, par exemple 0.6)
+
 Options communes
   --data-dir <chemin>     Repertoire de donnees (defaut : emplacement systeme)
   --limit <n>             Nombre de lignes listees (defaut : 50)
@@ -93,6 +109,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         campagne: { type: "string" },
         seuil: { type: "string" },
         verdict: { type: "string" },
+        fichier: { type: "string" },
+        "score-min": { type: "string" },
         tout: { type: "boolean", default: false },
         limit: { type: "string" },
         json: { type: "boolean", default: false },
@@ -162,6 +180,16 @@ export async function main(argv: readonly string[]): Promise<number> {
           tout: values.tout === true,
           avecMobiles: values["avec-mobiles"] === true,
           json: values.json === true,
+        });
+      case "normaliser":
+        return await commandeNormaliser(ouvrir, values.departement, {
+          tout: values.tout === true,
+          json: values.json === true,
+        });
+      case "exporter":
+        return commandeExporter(ouvrir, values.departement, {
+          fichier: values.fichier,
+          scoreMin: values["score-min"],
         });
       case "contacts":
         return commandeContacts(ouvrir, values.departement, values.json === true, values.limit);
@@ -373,7 +401,7 @@ function commandePurge(ouvrir: () => App): number {
     const resultat = startupPurge(app);
     process.stdout.write(
       `Purge jusqu'au ${resultat.cutoff} : ${resultat.contacts} contacts, ${resultat.pages} pages, ` +
-        `${resultat.runs} runs, ${resultat.entreesCache} entrees de cache.\n`,
+        `${resultat.runs} runs, ${resultat.domaines} verdicts MX, ${resultat.entreesCache} entrees de cache.\n`,
     );
     return 0;
   } finally {
@@ -459,6 +487,12 @@ async function commandeRun(
     // rattachements que rien ne viendrait corriger ensuite.
     if (!options.sansDecouverte && !controller.signal.aborted) {
       await lancerDecouverte(app, runId, logger, departement, options.decouverte, controller.signal);
+    }
+
+    // Les etapes [7] et [8] closent le run : sans elles, les contacts sortent du crawl
+    // dedupliques a moitie et sans score, donc inexploitables par l'export.
+    if (!controller.signal.aborted) {
+      await lancerNormalisation(app, runId, logger, departement, controller.signal);
     }
 
     const interrompu = controller.signal.aborted;
@@ -602,7 +636,10 @@ function commandeAssociations(
       "FROM association a JOIN commune c ON c.code_insee = a.code_insee " +
       "WHERE c.departement = ? AND a.date_dissolution IS NULL";
     const lignes = app.db
-      .prepare(`SELECT a.rna_id, a.nom, c.nom AS commune, c.url_mairie ${filtre} ORDER BY c.nom, a.nom LIMIT ?`)
+      .prepare(
+        `SELECT a.rna_id, a.nom, a.type_classifie, c.nom AS commune, c.url_mairie ${filtre} ` +
+          "ORDER BY c.nom, a.nom LIMIT ?",
+      )
       .all(departement, lireLimite(limite));
     const total = Number(
       (app.db.prepare(`SELECT count(*) AS n ${filtre}`).get(departement) as { n?: number })?.n ?? 0,
@@ -632,8 +669,10 @@ function commandeAssociations(
     }
 
     for (const ligne of lignes) {
+      const type = ligne.type_classifie === null ? "non classee" : String(ligne.type_classifie);
       process.stdout.write(
-        `${String(ligne.rna_id).padEnd(11)} ${String(ligne.nom).slice(0, 44).padEnd(46)} ${String(ligne.commune)}\n`,
+        `${String(ligne.rna_id).padEnd(11)} ${String(ligne.nom).slice(0, 40).padEnd(42)} ` +
+          `${type.padEnd(18)} ${String(ligne.commune)}\n`,
       );
     }
     process.stdout.write(`\n${total} associations actives, dont ${rattachees} dans une commune dont l'URL est connue.\n`);
@@ -740,6 +779,43 @@ async function lancerDecouverte(
   logger.info("Fin de la decouverte", stats);
 }
 
+/**
+ * Enfile les etapes [7] et [8] et draine la file. Lancee apres que la decouverte soit
+ * entierement drainee : la deduplication et la notation lisent les contacts que celle-ci
+ * produit, et les faire tourner en parallele noterait un corpus encore incomplet.
+ */
+async function lancerNormalisation(
+  app: App,
+  runId: number,
+  logger: Logger,
+  departement: string,
+  signal: AbortSignal,
+): Promise<void> {
+  const contexte: ContexteNormalisation = {
+    db: app.db,
+    resolveur: app.resolveurMx,
+    counters: app.counters.forRun(runId),
+    clock: app.clock,
+    logger,
+    queue: app.queue,
+    runId,
+  };
+
+  const jour = toIso(app.clock.now()).slice(0, 10);
+  app.queue.enqueue(
+    "normalisation_departement",
+    cleNormalisation(departement, jour),
+    { departement, tout: false },
+    { runId },
+  );
+
+  const worker = new Worker(app.queue, creerHandlersNormalisation(contexte), {
+    concurrency: app.config.concurrency,
+  });
+  const stats = await worker.run(signal);
+  logger.info("Fin de la normalisation", stats);
+}
+
 async function commandeDecouvrir(
   ouvrir: () => App,
   departement: string | undefined,
@@ -776,6 +852,9 @@ async function commandeDecouvrir(
     });
 
     await lancerDecouverte(app, runId, logger, departement, options, controller.signal);
+    if (!controller.signal.aborted) {
+      await lancerNormalisation(app, runId, logger, departement, controller.signal);
+    }
 
     const interrompu = controller.signal.aborted;
     app.db
@@ -797,6 +876,7 @@ type LigneContact = {
   is_generique: number | null;
   methode_extraction: string;
   confiance: number;
+  score: number | null;
   source_url: string;
   review_statut: string;
 };
@@ -814,12 +894,12 @@ function commandeContacts(
     const lignes = app.db
       .prepare(
         `SELECT c.nom AS commune, a.nom AS association, ct.kind, ct.valeur, ct.is_generique,
-                ct.methode_extraction, ct.confiance, ct.source_url, ct.review_statut
+                ct.methode_extraction, ct.confiance, ct.score, ct.source_url, ct.review_statut
            FROM contact ct
            JOIN commune c ON c.code_insee = ct.code_insee
            LEFT JOIN association a ON a.id = ct.association_id
           WHERE c.departement = ?
-          ORDER BY ct.confiance DESC, c.nom, ct.valeur
+          ORDER BY coalesce(ct.score, ct.confiance) DESC, c.nom, ct.valeur
           LIMIT ?`,
       )
       .all(departement, lireLimite(limite)) as unknown as LigneContact[];
@@ -840,9 +920,12 @@ function commandeContacts(
     for (const ligne of lignes) {
       const regime = ligne.kind !== "email" ? "" : ligne.is_generique === 1 ? " [generique]" : ligne.is_generique === 0 ? " [nominatif]" : " [indetermine]";
       const cible = ligne.association ?? `${ligne.commune} (commune)`;
+      // Les deux chiffres sont montres ensemble, et jamais l'un a la place de l'autre :
+      // la confiance dit comment le contact a ete lu, le score s'il vaut d'etre publie.
+      const score = ligne.score === null ? "  —  " : ligne.score.toFixed(2).padStart(5);
       process.stdout.write(
-        `${ligne.valeur.padEnd(38)} ${ligne.confiance.toFixed(2)} ${ligne.methode_extraction.padEnd(18)}` +
-          `${regime}\n    ${cible}\n    source : ${ligne.source_url}\n`,
+        `${ligne.valeur.padEnd(38)} score ${score} lu ${ligne.confiance.toFixed(2)} ` +
+          `${ligne.methode_extraction.padEnd(18)}${regime}\n    ${cible}\n    source : ${ligne.source_url}\n`,
       );
     }
     return 0;
@@ -949,6 +1032,153 @@ function lireSeuil(brut: string | undefined): number | null | undefined {
   if (brut === undefined) return null;
   const valeur = Number.parseInt(brut, 10);
   if (!Number.isInteger(valeur) || String(valeur) !== brut.trim()) return undefined;
+  return valeur;
+}
+
+/**
+ * Rejeu des etapes [7] et [8]. Contrairement a `prefiltrer`, cette commande peut sortir
+ * sur le reseau : les domaines de messagerie dont le verdict MX n'est pas encore connu
+ * sont resolus (ADR-017). Tout le reste — deduplication, classification, notation — est
+ * un recalcul local.
+ */
+async function commandeNormaliser(
+  ouvrir: () => App,
+  departement: string | undefined,
+  options: { tout: boolean; json: boolean },
+): Promise<number> {
+  if (!exigerDepartement(departement, "normaliser")) return 2;
+
+  const app = ouvrir();
+  try {
+    startupPurge(app);
+
+    const contacts = Number(
+      (
+        app.db
+          .prepare(
+            "SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee " +
+              "WHERE c.departement = ?",
+          )
+          .get(departement) as { n?: number } | undefined
+      )?.n ?? 0,
+    );
+    if (contacts === 0) {
+      process.stderr.write(
+        `Aucun contact collecte pour le departement ${departement}.\n` +
+          `Lancez d'abord la decouverte : annuaire decouvrir --departement ${departement}\n`,
+      );
+      return 2;
+    }
+
+    const controller = installShutdownHandlers(() => {
+      app.logger.warn("Arret demande : la tranche en cours va finir");
+    });
+
+    const resultat = await normaliser(app.db, app.clock, app.resolveurMx, {
+      departement,
+      tout: options.tout,
+      counters: app.counters,
+      signal: controller.signal,
+      onTranche: (passe, ecrites) =>
+        app.logger.debug("Tranche de normalisation ecrite", { passe, ecrites }),
+    });
+    const distribution = distributionNormalisation(app.db, departement);
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({ rejeu: resultat, distribution }, null, 2)}\n`);
+      return controller.signal.aborted ? 130 : 0;
+    }
+
+    process.stdout.write(
+      `${resultat.doublonsSupprimes} doublons commune/association supprimes.\n` +
+        `${resultat.associationsClassees} associations classees, ${resultat.associationsAJour} deja a jour.\n` +
+        `${resultat.mx.distincts} domaines de messagerie distincts : ${resultat.mx.verifies} verifies, ` +
+        `${resultat.mx.deja} deja connus.\n` +
+        `${resultat.contactsNotes} contacts notes, ${resultat.contactsAJour} deja a jour.\n` +
+        `${distribution.invalides} contacts notes a zero : leur valeur n'a pas la forme ` +
+        "d'une adresse\nni d'un numero. Ils restent en base pour la trace, et tout seuil " +
+        "d'export les ecarte.\n\n" +
+        `Emails : ${distribution.emailsAvecMx} sur un domaine qui annonce un MX, ` +
+        `${distribution.emailsSansMx} sans, ${distribution.emailsMxInconnu} indetermines.\n` +
+        "Le MX est un fait de domaine : il dit que le domaine sait recevoir du courrier,\n" +
+        "pas que la boite existe.\n",
+    );
+
+    if (distribution.parType.length > 0) {
+      process.stdout.write("\nTypes classifies :\n");
+      for (const ligne of distribution.parType) {
+        const part = ((ligne.associations / distribution.associations) * 100).toFixed(1);
+        process.stdout.write(
+          `  ${ligne.type.padEnd(18)} ${String(ligne.associations).padStart(6)}  ${part} %\n`,
+        );
+      }
+    }
+
+    // Meme discipline qu'au lot 4 : c'est la distribution, et non une opinion, qui doit
+    // dire ou placer un seuil de publication.
+    if (distribution.histogramme.length > 0) {
+      const maximum = Math.max(...distribution.histogramme.map((ligne) => ligne.contacts));
+      process.stdout.write("\nDistribution des scores :\n");
+      for (const ligne of distribution.histogramme) {
+        const barre = "#".repeat(Math.max(1, Math.round((ligne.contacts / maximum) * 40)));
+        process.stdout.write(
+          `  ${(ligne.borne / 10).toFixed(1)} ${String(ligne.contacts).padStart(6)}  ${barre}\n`,
+        );
+      }
+    }
+
+    return controller.signal.aborted ? 130 : 0;
+  } finally {
+    app.close();
+  }
+}
+
+/** L'artefact que l'outil produit : un CSV avec la provenance de chaque ligne. */
+function commandeExporter(
+  ouvrir: () => App,
+  departement: string | undefined,
+  options: { fichier: string | undefined; scoreMin: string | undefined },
+): number {
+  if (!exigerDepartement(departement, "exporter")) return 2;
+
+  const scoreMin = lireScoreMin(options.scoreMin);
+  if (scoreMin === undefined) {
+    process.stderr.write(`--score-min attend un nombre entre 0 et 1, recu « ${options.scoreMin} »\n`);
+    return 2;
+  }
+
+  const app = ouvrir();
+  try {
+    const parametres = { departement, ...(scoreMin === null ? {} : { scoreMin }) };
+    const total = compterLignes(app.db, parametres);
+    if (total === 0) {
+      process.stderr.write(
+        `Aucun contact a exporter pour le departement ${departement}.\n` +
+          `Lancez la decouverte puis la normalisation : annuaire normaliser --departement ${departement}\n`,
+      );
+      return 1;
+    }
+
+    if (options.fichier === undefined) {
+      for (const ligne of lignesCsv(app.db, parametres)) process.stdout.write(ligne);
+      return 0;
+    }
+
+    let contenu = "";
+    for (const ligne of lignesCsv(app.db, parametres)) contenu += ligne;
+    writeFileSync(options.fichier, contenu, "utf8");
+    process.stdout.write(`${total} contacts exportes dans ${options.fichier}.\n`);
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
+/** `null` signifie « non precise » ; `undefined`, « valeur invalide ». */
+function lireScoreMin(brut: string | undefined): number | null | undefined {
+  if (brut === undefined) return null;
+  const valeur = Number(brut);
+  if (!Number.isFinite(valeur) || valeur < 0 || valeur > 1) return undefined;
   return valeur;
 }
 
@@ -1166,7 +1396,9 @@ function resumeRun(app: App, departement: string): void {
         ? ".\n"
         : ` — ${tauxQualifie.toFixed(1)} % des ${dormance.nonDormantes} ayant declare ` +
           `depuis moins de ${dormance.seuilAnnees} ans.\n`) +
-      `Detail : annuaire contacts --departement ${departement}\n`,
+      resumeNormalisation(app, departement, associations) +
+      `Detail : annuaire contacts --departement ${departement}\n` +
+      `Export : annuaire exporter --departement ${departement} --fichier annuaire-${departement}.csv\n`,
   );
 }
 
@@ -1185,6 +1417,43 @@ function resumePrefiltre(app: App, departement: string): string {
     `\n${d.retenues} ${pluriel(d.retenues, "page retenue", "pages retenues")} par le pre-filtre ` +
     `(${part} %), ${d.ecartees} ${pluriel(d.ecartees, "ecartee", "ecartees")} ; ` +
     `${d.candidatesLlm} ${pluriel(d.candidatesLlm, "atteindrait", "atteindraient")} le fallback LLM.`
+  );
+}
+
+/**
+ * Les etages [7] et [8], en deux phrases. Le second chiffre de couverture est celui qui
+ * compte vraiment : une association dont le seul email est sur un domaine qui n'annonce
+ * aucun MX n'est pas joignable, et la compter comme couverte flatterait la mesure.
+ */
+function resumeNormalisation(app: App, departement: string, associations: number): string {
+  const d = distributionNormalisation(app.db, departement);
+  if (d.notes === 0) {
+    return (
+      `Contacts non notes : lancez annuaire normaliser --departement ${departement} ` +
+      "pour l'etage [7]/[8].\n"
+    );
+  }
+
+  const joignables = Number(
+    (
+      app.db
+        .prepare(
+          "SELECT count(DISTINCT a.id) AS n FROM association a " +
+            "JOIN commune c ON c.code_insee = a.code_insee " +
+            "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
+            "JOIN domaine_mail dm ON dm.domaine = substr(ct.valeur_normalisee, instr(ct.valeur_normalisee, '@') + 1) " +
+            "WHERE c.departement = ? AND a.date_dissolution IS NULL AND dm.mx = 1",
+        )
+        .get(departement) as { n?: number } | undefined
+    )?.n ?? 0,
+  );
+  const part = associations === 0 ? 0 : (joignables / associations) * 100;
+  const types = d.parType.map((ligne) => `${ligne.type} ${ligne.associations}`).join(", ");
+
+  return (
+    `${joignables} de ces associations ont un email dont le domaine annonce un MX, ` +
+    `soit ${part.toFixed(1)} % des actives.\n` +
+    `${d.notes} contacts notes. Types classifies : ${types === "" ? "aucun" : types}.\n`
   );
 }
 

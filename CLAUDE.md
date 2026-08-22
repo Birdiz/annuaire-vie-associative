@@ -93,9 +93,15 @@ ce qui peut fabriquer un numero de telephone inexistant.
 ## Une seule porte de sortie reseau
 
 Tout appel reseau passe par `src/http/`. Aucun autre module ne doit importer `fetch`,
-`node:http`, `node:https` ou `undici` — un test verifie cette regle et echoue sinon.
-C'est ce qui rend les invariants 2, 3 et 4 vrais par construction plutot que par
-discipline.
+`node:http`, `node:https`, `node:dns` ou `undici` — un test verifie cette regle et
+echoue sinon. C'est ce qui rend les invariants 2, 3 et 4 vrais par construction plutot
+que par discipline.
+
+Deux portes y cohabitent depuis le lot 5 : le client HTTP, et le resolveur MX de
+`src/http/dns.ts` (ADR-017). Ce dernier doit importer **l'objet** du module —
+`import dns from "node:dns/promises"` — et non la fonction nue : `resolveMx` se sert de
+cet objet par `this`, et un binding nomme echappe a `setServers`, donc au garde-fou
+anti-reseau de la suite de tests. Un test d'architecture verifie cette ligne.
 
 ## Definition du « fait »
 

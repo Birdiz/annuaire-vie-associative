@@ -51,7 +51,13 @@ test("une base au schema 3 se migre sans perdre ses lignes", (t) => {
       "VALUES ('W351', '35047', 'Club de Bruz', 'club de bruz', 'rna', 't', 't')",
   ).run();
 
-  assert.equal(migrate(db, undefined, MIGRATIONS), 1, "seule la migration 4 reste a appliquer");
+  // Compte relatif plutot qu'absolu : chaque lot ajoute une migration, et un 1 en dur
+  // ferait echouer ce test a chaque fois sans rien dire de la migration 4.
+  assert.equal(
+    migrate(db, undefined, MIGRATIONS),
+    MIGRATIONS.length - 3,
+    "toutes les migrations posterieures au schema 3 restent a appliquer",
+  );
 
   const page = db.prepare("SELECT url, prefiltre_verdict FROM page WHERE url_hash = 'abc'").get() as {
     url: string;

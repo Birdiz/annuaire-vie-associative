@@ -23,3 +23,6 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [014](014-prefiltre-consultatif.md) | Pré-filtre consultatif, et portillon à deux conditions | Acceptée |
 | [015](015-temporalite-rna-et-dormance.md) | Champs temporels du RNA, et qualification de la dormance | Acceptée |
 | [016](016-reenfilement-et-fraicheur-des-index.md) | Réenfiler un job, et ne pas mettre un index en cache | Acceptée |
+| [017](017-validation-mx.md) | Validation MX : une porte DNS, et un fait de domaine | Acceptée |
+| [018](018-classification-en-six-types.md) | Six types : ce que le code RNA porte, et ce qu'il ne porte pas | Acceptée |
+| [019](019-deduplication-et-score-de-revue.md) | Déduplication, et un score distinct de la confiance de lecture | Acceptée |

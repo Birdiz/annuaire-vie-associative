@@ -427,4 +427,91 @@ ALTER TABLE association ADD COLUMN maj_rna TEXT;
 CREATE INDEX idx_association_declaration ON association (date_declaration);
 `,
   },
+  {
+    version: 5,
+    name: "normalisation-scoring-et-mx",
+    sql: `
+--------------------------------------------------------------------------------
+-- Contacts : score de revue de l'etape [8]
+--------------------------------------------------------------------------------
+
+-- Colonne distincte de 'confiance', et ce n'est pas un doublon. 'confiance' dit
+-- comment le contact a ete **lu** — un lien mailto: vaut 0,9, une forme desobfusquee
+-- 0,45 (ADR-012) : c'est une provenance, elle ne bouge plus une fois ecrite. Le score
+-- ci-dessous dit si le contact vaut d'etre **publie**, ce qui melange la lecture, le
+-- MX du domaine, le regime juridique de l'adresse et la page d'ou elle vient. Les
+-- ecraser dans une seule colonne perdrait la provenance a chaque reglage du bareme.
+ALTER TABLE contact ADD COLUMN score REAL
+  CHECK (score IS NULL OR (score >= 0.0 AND score <= 1.0));
+
+-- Contributions ayant fait le score, en JSON. Un score qu'on ne peut pas expliquer
+-- n'est pas revisable : meme argument que 'prefiltre_motif' au lot 4, et c'est cet
+-- ecran de revue que le §6.8 designe comme destinataire.
+ALTER TABLE contact ADD COLUMN score_motifs TEXT;
+
+-- Constante du code, incrementee des que le bareme change. Sans elle, un reglage
+-- laisserait en base un melange indiscernable d'anciens et de nouveaux scores.
+ALTER TABLE contact ADD COLUMN score_version INTEGER;
+
+ALTER TABLE contact ADD COLUMN score_at TEXT;
+
+-- L'ecran de revue lit les contacts les moins surs d'abord : c'est la qu'un humain
+-- apporte quelque chose. L'index est partiel, un contact non score n'y figure pas.
+CREATE INDEX idx_contact_score ON contact (score) WHERE score IS NOT NULL;
+
+--------------------------------------------------------------------------------
+-- Associations : classification de l'etape [7]
+--------------------------------------------------------------------------------
+
+-- 'type_classifie' et 'source_classification' existent depuis le lot 1 et n'ont
+-- jamais ete renseignes. Les deux colonnes ajoutees ici sont ce qui manquait pour
+-- pouvoir repondre « quels verdicts sont perimes » — meme discipline que
+-- 'prefiltre_version'.
+ALTER TABLE association ADD COLUMN classification_at TEXT;
+ALTER TABLE association ADD COLUMN classification_version INTEGER;
+
+CREATE INDEX idx_association_type ON association (type_classifie)
+  WHERE type_classifie IS NOT NULL;
+
+--------------------------------------------------------------------------------
+-- Pages : retrouver la page d'ou vient un contact
+--------------------------------------------------------------------------------
+
+-- La notation [8] lit le verdict du pre-filtre de la page source de chaque contact.
+-- Les index existants portent la campagne en tete, donc aucun ne sert une recherche
+-- par URL : sans celui-ci, chaque contact declencherait un parcours complet de 'page'.
+CREATE INDEX idx_page_url_commune ON page (url, code_insee);
+
+--------------------------------------------------------------------------------
+-- Domaines de messagerie : verdict MX (ADR-017)
+--------------------------------------------------------------------------------
+
+-- Le MX est un fait de **domaine**, jamais d'adresse : « contact@mairie-x.fr » et
+-- « nimportequoi@mairie-x.fr » ont exactement le meme verdict. La table porte donc le
+-- domaine en cle, et une adresse n'herite du resultat que par jointure. Nommer cette
+-- colonne autrement — 'email_valide' par exemple — laisserait croire a une garantie
+-- que le DNS ne donne pas : il dit que le domaine sait recevoir du courrier, pas que
+-- la boite existe.
+--
+-- C'est une donnee collectee, elle porte donc sa provenance en NOT NULL comme partout
+-- ailleurs (invariant 5) : la methode dit d'ou vient le verdict, verifie_at quand.
+CREATE TABLE domaine_mail (
+  domaine    TEXT PRIMARY KEY,
+  -- 1 le domaine annonce un MX, 0 il n'en annonce pas, NULL la resolution a echoue.
+  -- Les trois cas different : une panne de resolveur n'est pas une absence de MX, et
+  -- les confondre condamnerait un domaine sur un incident reseau passager.
+  mx         INTEGER CHECK (mx IS NULL OR mx IN (0, 1)),
+  -- Hotes annonces, du plus prioritaire au moins. Conserves pour que le verdict soit
+  -- verifiable a la main par qui en douterait.
+  mx_hotes   TEXT,
+  methode    TEXT NOT NULL,
+  verifie_at TEXT NOT NULL,
+  erreur     TEXT
+) STRICT;
+
+-- Sert la purge a trois ans et la fenetre de fraicheur : un verdict MX vieillit, le
+-- domaine d'une association peut expirer entre deux campagnes.
+CREATE INDEX idx_domaine_mail_verifie_at ON domaine_mail (verifie_at);
+`,
+  },
 ];

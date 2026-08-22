@@ -51,7 +51,10 @@ test("aucun module hors de src/http n'emet de requete reseau", () => {
 
     if (fetchGlobal.test(code)) interdits.push({ fichier: relatif, motif: "appel au fetch global" });
 
-    for (const module of ["node:http", "node:https", "node:net", "node:tls", "undici"]) {
+    // `node:dns` est entre dans cette liste au lot 5 : la resolution MX de l'etape [7]
+    // est une seconde sortie reseau, et elle doit rester dans src/http/ pour la meme
+    // raison que la premiere — un seul endroit ou l'on sait ce qui part de la machine.
+    for (const module of ["node:http", "node:https", "node:net", "node:tls", "node:dns", "undici"]) {
       if (source.includes(`"${module}"`) || source.includes(`'${module}'`)) {
         interdits.push({ fichier: relatif, motif: `import de ${module}` });
       }
@@ -84,6 +87,34 @@ test("node-html-parser n'est importe que par l'adaptateur DOM", () => {
   }
 
   assert.deepEqual(interdits, [], "Le parseur DOM ne s'importe que depuis src/parse/html.ts.");
+});
+
+test("la resolution MX passe par l'objet du module dns, seul que setServers reconfigure", () => {
+  // `node:dns/promises` porte ses methodes sur un objet ; `resolveMx` s'en sert par
+  // `this`. Importee en binding nomme, elle retombe sur les serveurs du systeme et
+  // echappe a `setServers` — donc au garde-fou de test/helpers/pas-de-reseau.ts, qui
+  // pointe le resolveur par defaut vers un port mort. La suite de tests sortirait alors
+  // reellement sur Internet en se croyant confinee : c'est precisement le genre de
+  // regression qu'aucun test de comportement ne rattrape.
+  const source = readFileSync(join(SRC, "http", "dns.ts"), "utf8");
+
+  assert.doesNotMatch(
+    source,
+    /import\s*\{[^}]*\b(?:resolveMx|setServers)\b[^}]*\}\s*from\s*["']node:dns/,
+    "importer l'objet du module, pas la fonction nue",
+  );
+  assert.match(
+    source,
+    /import\s+\w+\s+from\s+["']node:dns\/promises["']/,
+    "l'import par defaut est ce qui rend le garde-fou de test efficace",
+  );
+
+  const garde = readFileSync(join(RACINE, "test", "helpers", "pas-de-reseau.ts"), "utf8");
+  assert.match(
+    garde,
+    /\.setServers\(/,
+    "le garde-fou doit reconfigurer le resolveur par defaut, et le faire sur l'objet",
+  );
 });
 
 test("le type FetchOutcome ne permet pas d'ignorer un blocage par robots.txt", () => {

@@ -8,6 +8,7 @@ import type { Database } from "./db/index.ts";
 import { HttpCache } from "./http/cache.ts";
 import { DomainThrottle } from "./http/throttle.ts";
 import { HttpClient, buildUserAgent } from "./http/client.ts";
+import { ResolveurMx } from "./http/dns.ts";
 import { JobQueue } from "./jobs/queue.ts";
 import { Counters } from "./metrics/counters.ts";
 import { Logger } from "./log.ts";
@@ -37,6 +38,12 @@ export type App = {
   clock: Clock;
   /** Absent tant qu'aucune URL de contact n'est configuree (§4.4). */
   client: HttpClient | undefined;
+  /**
+   * Seconde porte de sortie reseau (ADR-017). Elle n'est pas conditionnee a l'URL de
+   * contact : une requete DNS n'a pas de User-Agent, il n'y a donc personne a qui se
+   * presenter, et rien a joindre pour un webmestre qui voudrait nous ecrire.
+   */
+  resolveurMx: ResolveurMx;
   close(): void;
 };
 
@@ -91,6 +98,7 @@ export function openApp(options: OpenAppOptions = {}): App {
     logger,
     clock,
     client,
+    resolveurMx: new ResolveurMx(),
     close: () => db.close(),
   };
 }
@@ -105,13 +113,15 @@ export function requireClient(app: App): HttpClient {
 /** Purge du §4.8, executee avant tout traitement. */
 export function startupPurge(app: App): PurgeResult {
   const result = purge(app.db, app.cache, app.clock, app.counters);
-  const total = result.contacts + result.pages + result.runs + result.entreesCache;
+  const total =
+    result.contacts + result.pages + result.runs + result.domaines + result.entreesCache;
   if (total > 0) {
     app.logger.info("Purge des donnees de plus de trois ans", {
       borne: result.cutoff,
       contacts: result.contacts,
       pages: result.pages,
       runs: result.runs,
+      domaines: result.domaines,
       entrees_cache: result.entreesCache,
     });
   }

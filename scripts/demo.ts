@@ -8,6 +8,7 @@
  *
  * Depuis le lot 4, elle montre aussi le tri de l'etape [4] : quelles pages vaudraient
  * le cout d'une inference, et lesquelles seraient ecartees avant d'en payer une seule.
+ * Depuis le lot 5, elle va jusqu'au bout : classification, notation et export CSV.
  *
  * Ce fichier n'est pas du code de production. Il vit dans `scripts/` et n'est jamais
  * importe par `src/` : c'est aussi pourquoi il peut ouvrir un serveur HTTP, ce que la
@@ -15,8 +16,9 @@
  */
 
 import { createServer } from "node:http";
+import dnsPromises from "node:dns/promises";
 import type { AddressInfo } from "node:net";
-import { rmSync } from "node:fs";
+import { readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 
 import { openApp } from "../src/app.ts";
@@ -81,11 +83,14 @@ const PAGES: Record<string, [type: string, corps: string]> = {
  * declare depuis 2009, il ne compte donc pas dans le denominateur qualifie du taux de
  * couverture, quand bien meme le RNA ne le dit pas dissous.
  */
-const ASSOCIATIONS: readonly (readonly [nom: string, declaration: string])[] = [
-  ["Club de Sainte-Colombe", "2025-04-18"],
-  ["Amicale laique de Sainte-Colombe", "2024-09-02"],
-  ["Tennis club colombin", "2023-11-27"],
-  ["Comite des fetes de Sainte-Colombe", "2009-06-15"],
+const ASSOCIATIONS: readonly (readonly [nom: string, declaration: string, objetSocial: string])[] = [
+  // Le troisieme champ est le code objet social du RNA. Les trois premiers chiffres
+  // donnent le type (ADR-018) — sauf pour le comite des fetes, dont le code dit
+  // « loisirs » et dont c'est le nom qui tranche.
+  ["Club de Sainte-Colombe", "2025-04-18", "011000"],
+  ["Amicale laique de Sainte-Colombe", "2024-09-02", "015000"],
+  ["Tennis club colombin", "2023-11-27", "011000"],
+  ["Comite des fetes de Sainte-Colombe", "2009-06-15", "007000"],
 ];
 
 async function demarrerFauxSite(): Promise<{ origin: string; arreter: () => Promise<void> }> {
@@ -130,14 +135,14 @@ function amorcer(dataDir: string, urlMairie: string): void {
 
     const inserer = app.db.prepare(
       `INSERT OR IGNORE INTO association
-         (rna_id, code_insee, nom, nom_normalise, source_creation, date_declaration,
-          created_at, updated_at)
-       VALUES (?, '35999', ?, ?, 'rna', ?, ?, ?)`,
+         (rna_id, code_insee, nom, nom_normalise, code_objet_social, source_creation,
+          date_declaration, created_at, updated_at)
+       VALUES (?, '35999', ?, ?, ?, 'rna', ?, ?, ?)`,
     );
     // Le nom normalise doit passer par la meme fonction que la decouverte, sans quoi
     // le rapprochement echoue sur un simple tiret.
-    ASSOCIATIONS.forEach(([nom, declaration], i) => {
-      inserer.run(`W3599900${i}`, nom, normaliserNom(nom), declaration, maintenant, maintenant);
+    ASSOCIATIONS.forEach(([nom, declaration, objetSocial], i) => {
+      inserer.run(`W3599900${i}`, nom, normaliserNom(nom), objetSocial, declaration, maintenant, maintenant);
     });
   } finally {
     app.close();
@@ -154,6 +159,15 @@ rmSync(dataDir, { recursive: true, force: true });
 // L'URL de contact du User-Agent (§4.4) est obligatoire pour toute collecte. La demo
 // n'atteignant qu'un serveur local, une valeur d'exemple suffit.
 process.env["ANNUAIRE_CONTACT_URL"] ??= "https://exemple.fr/contact";
+
+// Le lot 5 ouvre une seconde porte de sortie : la resolution MX de l'etape [7]. Elle
+// partirait vers le resolveur du systeme, et la promesse « aucune requete ne sort de la
+// machine » cesserait d'etre vraie au pied de la lettre. Le resolveur par defaut est
+// donc pointe vers un port mort de la boucle locale, exactement comme le fait le
+// garde-fou de la suite de tests. Consequence visible et voulue : la demonstration
+// affiche des verdicts MX « indetermines », ce qui montre au passage que le code
+// distingue « pas de MX » de « je n'ai pas pu savoir ».
+dnsPromises.setServers(["127.0.0.1:9"]);
 
 const site = await demarrerFauxSite();
 try {
@@ -175,6 +189,17 @@ try {
   // Rejeu du filtre depuis le cache disque : aucune requete, pas meme locale. C'est
   // ainsi qu'un seuil se regle sur un vrai corpus sans le recrawler.
   await main(["prefiltrer", "--departement", "35", "--tout", "--data-dir", dataDir]);
+
+  titre("Normalisation [7] et scoring [8]");
+  await main(["normaliser", "--departement", "35", "--tout", "--data-dir", dataDir]);
+
+  titre("Associations classees");
+  await main(["associations", "--departement", "35", "--data-dir", dataDir]);
+
+  titre("L'annuaire, avec la provenance de chaque ligne");
+  const csv = join(dataDir, "annuaire-35.csv");
+  await main(["exporter", "--departement", "35", "--data-dir", dataDir, "--fichier", csv]);
+  process.stdout.write(readFileSync(csv, "utf8").replace(/\r\n/g, "\n"));
 
   titre("Dormance des associations");
   await main(["dormance", "--departement", "35", "--data-dir", dataDir]);

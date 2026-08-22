@@ -21,12 +21,17 @@ import type { HttpCache } from "./http/cache.ts";
  * Ce qui n'est pas purge : `commune` et `association`, qui proviennent de donnees
  * ouvertes (RNA, Annuaire de l'administration) et ne sont pas des donnees collectees.
  * Elles sont rafraichies en rejouant l'amorce.
+ *
+ * Les verdicts MX du lot 5 partent avec le reste : ils sont collectes — une resolution
+ * DNS emise depuis la machine de l'utilisateur — et un verdict de trois ans ne dit plus
+ * rien d'utile sur un domaine.
  */
 
 export type PurgeResult = {
   contacts: number;
   pages: number;
   runs: number;
+  domaines: number;
   entreesCache: number;
   cutoff: string;
 };
@@ -58,12 +63,19 @@ export function purge(
       )
       .run(cutoff).changes;
     const runs = db.prepare("DELETE FROM run WHERE started_at < ?").run(cutoff).changes;
+    const domaines = db.prepare("DELETE FROM domaine_mail WHERE verifie_at < ?").run(cutoff).changes;
 
     counters.inc(ETAPE.purge, "contacts_supprimes", Number(contacts));
     counters.inc(ETAPE.purge, "pages_supprimees", Number(pages));
     counters.inc(ETAPE.purge, "runs_supprimes", Number(runs));
+    counters.inc(ETAPE.purge, "domaines_supprimes", Number(domaines));
 
-    return { contacts: Number(contacts), pages: Number(pages), runs: Number(runs) };
+    return {
+      contacts: Number(contacts),
+      pages: Number(pages),
+      runs: Number(runs),
+      domaines: Number(domaines),
+    };
   });
 
   // Le nettoyage du cache est un effet de systeme de fichiers : il ne peut pas tenir

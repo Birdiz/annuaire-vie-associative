@@ -137,6 +137,6 @@ test("la purge d'une base vierge ne fait rien et n'echoue pas", (t) => {
   const resultat = purge(db, new HttpCache(join(dir, "cache")), clock);
   assert.deepEqual(
     { ...resultat, cutoff: "" },
-    { contacts: 0, pages: 0, runs: 0, entreesCache: 0, cutoff: "" },
+    { contacts: 0, pages: 0, runs: 0, domaines: 0, entreesCache: 0, cutoff: "" },
   );
 });

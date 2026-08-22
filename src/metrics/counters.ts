@@ -92,4 +92,14 @@ export const ETAPE = {
   prefiltre: "prefiltre",
   /** Etape [5] : contacts tires du DOM. */
   extraction: "extraction",
+  /**
+   * Etapes [7] et [8] : deduplication, classification, verdict MX et score de revue.
+   *
+   * Seuls des **evenements** y sont comptes — une ligne supprimee, une requete DNS
+   * emise. Le nombre d'associations d'un type donne ou de contacts notes n'y figure
+   * pas : ce sont des etats recalculables, et les rejouer a dix reglages differents
+   * gonflerait le total de dix fois le corpus. Ils se lisent dans les tables, par
+   * `distributionNormalisation`.
+   */
+  normalisation: "normalisation",
 } as const;

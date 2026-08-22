@@ -14,7 +14,7 @@ tiers partent de la machine de l'utilisateur, jamais d'une infrastructure opér�
 
 ## État d'avancement
 
-Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Quatre lots ont
+Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Cinq lots ont
 été livrés :
 
 | Étape | | Statut |
@@ -24,9 +24,13 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 | [3] Découverte | scoring des liens, crawl à profondeur 2 | ✅ lot 3 |
 | [4] Pré-filtre | écarter les pages avant tout coût d'inférence | ✅ lot 4 |
 | [5] Extraction | `mailto:`, `tel:`, listes et tableaux | ✅ lot 3 |
-| [6] Fallback LLM | uniquement si le DOM n'a pas suffi | ⬜ |
-| [7] Normalisation | déduplication, validation, classification | ⬜ |
-| [8] Scoring | confiance par contact, écran de revue | ⬜ |
+| [6] Fallback LLM | uniquement si le DOM n'a pas suffi | ⬜ écarté |
+| [7] Normalisation | déduplication, validation syntaxique + MX, classification | ✅ lot 5 |
+| [8] Scoring | score de publiabilité par contact | ✅ lot 5 |
+
+L'étage [6] est écarté : la mesure du lot 4 lui a retiré sa justification
+([ADR-015](docs/adr/015-temporalite-rna-et-dormance.md)). Le pipeline est complet et mesurable sans
+aucune clé d'API, ce que le brief posait comme objectif (D4).
 
 Mesure de bout en bout sur l'Ille-et-Vilaine. Lot 2 : **353 communes, dont 332 avec l'URL de leur
 mairie (94 %), et 31 273 associations actives, en 40 s.** Lot 3 : **2 591 pages explorées et 7 424
@@ -38,6 +42,11 @@ Lot 4 : sur ces mêmes pages, **le pré-filtre ramène le volume qui appellerait
 40,3 % à 6,5 %** — 160 pages au lieu de 997 — sans écarter une seule des 157 pages ayant produit
 un contact rattaché à une association. L'objectif du brief pour cet étage est « < 20 % » ; il est
 tenu avec une marge de trois, et **avant qu'une seule ligne d'inférence n'ait été écrite**.
+
+Lot 5 : l'annuaire sort enfin de l'outil. **36 170 associations classées en six types**, 111
+doublons résorbés, **748 domaines de messagerie vérifiés en quatre secondes**, 7 313 contacts notés,
+et un export CSV où chaque ligne porte son URL source et sa date de collecte. Le contrôle MX a
+révélé au passage un défaut d'extraction que rien n'avait vu — voir plus bas.
 
 ## Prérequis
 
@@ -63,7 +72,7 @@ npm install
 npm run check
 ```
 
-Typecheck strict, puis 299 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
+Typecheck strict, puis 358 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
 un garde-fou qui refuse tout hôte hors de la boucle locale, sous-processus compris. Tout ce qui
 touche au réseau se teste contre un serveur HTTP local jetable, sur des fixtures HTML synthétiques
 écrites à la main.
@@ -84,16 +93,16 @@ associe un nom à ses coordonnées, une adresse obfusquée, un mobile, et un che
 `robots.txt`. Sortie attendue :
 
 ```
-contact@sainte-colombe.example         0.90 dom:mailto         [generique]
+contact@sainte-colombe.example         score   —   lu 0.90 dom:mailto         [generique]
     Sainte-Colombe (commune)
     source : http://127.0.0.1:53905/
-club@asso.example                      0.81 dom:mailto+nom     [generique]
+club@asso.example                      score   —   lu 0.81 dom:mailto+nom     [generique]
     Club de Sainte-Colombe
     source : http://127.0.0.1:53905/vie-associative
-marie.dupont@tennis.example            0.54 texte:motif+nom    [nominatif]
+marie.dupont@tennis.example            score   —   lu 0.54 texte:motif+nom    [nominatif]
     Tennis club colombin
     source : http://127.0.0.1:53905/vie-associative
-amicale@asso.example                   0.41 texte:obfusque+nom [indetermine]
+amicale@asso.example                   score   —   lu 0.41 texte:obfusque+nom [indetermine]
     Amicale laique de Sainte-Colombe
     source : http://127.0.0.1:53905/vie-associative
 ```
@@ -101,6 +110,10 @@ amicale@asso.example                   0.41 texte:obfusque+nom [indetermine]
 Ce qu'il faut y lire :
 
 - **la provenance est sur chaque ligne** — URL source, méthode d'extraction, confiance ;
+- **le score est vide à ce stade** : il est calculé par l'étape [8], quelques lignes plus bas. Les
+  deux chiffres sont montrés ensemble et jamais l'un à la place de l'autre — la confiance dit
+  comment le contact a été *lu*, le score s'il vaut d'être *publié*
+  ([ADR-019](docs/adr/019-deduplication-et-score-de-revue.md)) ;
 - **la confiance décroît avec la méthode** : un `mailto:` vaut plus qu'un motif lu dans du texte,
   qui vaut plus qu'une adresse obfusquée reconstruite ;
 - le suffixe **`+nom`** signale un contact rattaché à une association par rapprochement de son nom
@@ -133,13 +146,44 @@ Ce qu'il faut y lire :
   ni discutable en revue, ni réglable.
 
 Le rejeu qui suit relit ces mêmes pages **depuis le cache disque**, sans une requête : c'est ainsi
-qu'un seuil se règle sur un vrai corpus sans le recrawler. Les métriques affichées ensuite donnent
-les volumes par étage de l'entonnoir. La base de démonstration est créée dans `data/demo`, ignorée
-par git, et recréée à chaque exécution.
+qu'un seuil se règle sur un vrai corpus sans le recrawler.
+
+La démonstration finit par les **étapes [7] et [8]**, et sort le fichier que l'outil existe pour
+produire :
+
+```
+code_insee;commune;rna_id;association;type;kind;valeur;regime;score;confiance;methode_extraction;source_url;collected_at;review_statut
+35999;Sainte-Colombe;;;;email;contact@sainte-colombe.example;generique;0.62;0.90;dom:mailto;http://127.0.0.1:53905/;…
+35999;Sainte-Colombe;W35999000;Club de Sainte-Colombe;sportive;email;club@asso.example;generique;0.73;0.81;dom:mailto+nom;…
+35999;Sainte-Colombe;W35999003;Comite des fetes…;comite_des_fetes;email;fetes@asso.example;indetermine;0.69;0.81;dom:mailto+nom;…
+35999;Sainte-Colombe;W35999002;Tennis club colombin;sportive;email;marie.dupont@tennis.example;nominatif;0.39;0.54;texte:motif+nom;…
+```
+
+Ce qu'il faut y lire :
+
+- **la provenance voyage avec la donnée.** URL source, date de collecte, méthode et confiance sont
+  des colonnes du fichier livré. Un export qui les laisserait derrière reproduirait exactement le
+  problème que l'outil prétend résoudre ;
+- **le type vient du code objet RNA**, sauf pour le comité des fêtes : son code dit « loisirs », et
+  c'est son nom qui tranche. Le code ne porte pas cette catégorie, mesures à l'appui
+  ([ADR-018](docs/adr/018-classification-en-six-types.md)) ;
+- **`marie.dupont@` tombe à 0,39** alors qu'elle a été lue à 0,54 : adresse nominative, lue dans du
+  texte, sur un domaine dont le MX n'a pas pu être vérifié. Trois signaux, tous trois inscrits dans
+  `score_motifs` — un score qu'on ne peut pas expliquer n'est pas révisable ;
+- **aucun verdict MX n'aboutit ici**, et c'est voulu : la démonstration pointe elle-même le
+  résolveur DNS vers un port mort, pour que « aucune requête ne sort de la machine » reste vrai au
+  pied de la lettre. On y voit au passage que le code distingue « pas de MX » de « je n'ai pas pu
+  savoir ».
+
+Les métriques affichées ensuite donnent les volumes par étage de l'entonnoir. La base de
+démonstration est créée dans `data/demo`, ignorée par git, et recréée à chaque exécution.
 
 ### 3. Pour de vrai, sur un département
 
-C'est le seul mode qui émet des requêtes vers des sites tiers, depuis votre machine.
+C'est le seul mode qui émet des requêtes vers des sites tiers, depuis votre machine. Deux portes
+de sortie s'y ouvrent : les requêtes HTTP vers les sites de mairie, et une résolution DNS par
+domaine de messagerie collecté, pour le contrôle MX de l'étape [7]
+([ADR-017](docs/adr/017-validation-mx.md)).
 
 ```bash
 npm run annuaire -- init
@@ -178,6 +222,19 @@ npm run annuaire -- decouvrir --departement 35 --max-pages 20
 npm run annuaire -- contacts --departement 35
 ```
 
+La normalisation se rejoue elle aussi seule. Elle ne sort du réseau que pour les domaines dont le
+verdict MX n'est pas encore connu — le reste est un recalcul local :
+
+```bash
+npm run annuaire -- normaliser --departement 35
+```
+
+Puis l'annuaire lui-même :
+
+```bash
+npm run annuaire -- exporter --departement 35 --score-min 0.6 --fichier annuaire-35.csv
+```
+
 ```bash
 npm run annuaire -- metrics --json
 ```
@@ -191,13 +248,15 @@ npm run annuaire -- --help
 | Commande | |
 |---|---|
 | `init` | Prépare le répertoire de données et la base |
-| `run --departement <dd>` | Run complet : amorce, résolution, puis découverte |
+| `run --departement <dd>` | Run complet : amorce, résolution, découverte, puis normalisation |
 | `decouvrir --departement <dd>` | Rejoue la seule découverte sur une base déjà amorcée |
 | `communes --departement <dd>` | Communes et URL de leur mairie |
 | `associations --departement <dd>` | Associations amorcées, avec leur commune |
 | `contacts --departement <dd>` | Contacts collectés, avec leur provenance |
 | `pages --departement <dd>` | Pages explorées et verdict du pré-filtre |
 | `prefiltrer --departement <dd>` | Rejoue le pré-filtre depuis le cache, sans réseau |
+| `normaliser --departement <dd>` | Rejoue la normalisation [7] et le scoring [8] |
+| `exporter --departement <dd>` | Exporte l'annuaire en CSV, provenance comprise |
 | `dormance --departement <dd>` | Ancienneté de déclaration des associations |
 | `metrics [--json]` | Compteurs de l'entonnoir |
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |
@@ -274,8 +333,44 @@ Ce que ce chiffre ne dit pas encore : le vrai taux de rappel. Savoir si les 86 p
 nommaient pourtant une association contenaient des contacts exploitables suppose de les soumettre
 au LLM. Elles sont l'échantillon désigné pour le mesurer dès que l'étape [6] existera.
 
-Une limite connue subsiste, documentée plutôt que contournée : un même email peut exister à la fois
-rattaché à une association et au niveau de la commune — la déduplication est l'étape [7].
+**Le lot 5 a levé la limite que cette section annonçait** — un même email présent à la fois
+rattaché à une association et au niveau de la commune. 111 doublons ont été résorbés, et zéro au
+passage suivant : la règle est une requête SQL rejouable, donc idempotente
+([ADR-019](docs/adr/019-deduplication-et-score-de-revue.md)).
+
+**La validation MX coûte quatre secondes et rapporte plus qu'elle ne retire.** 748 domaines
+distincts pour 4 273 emails : 681 annoncent un MX, 65 n'en annoncent pas, 2 n'ont pas pu être
+résolus. Des 478 associations créditées d'au moins un email, **455 en ont un dont le domaine reçoit
+du courrier** — le taux passe de 1,53 % à 1,45 %. L'écart est faible, et c'est en soi le résultat :
+la couverture basse n'est pas un artefact d'adresses mortes.
+
+**Le contrôle MX a surtout trouvé un défaut que rien n'avait vu.** 41 domaines sont revenus en
+`EBADNAME`. Ils venaient tous d'adresses de la forme `abcdanse[^@]gmail.com` : un CMS répandu chez
+les petites communes remplace l'arobase de ses `mailto:` par ce littéral, qu'un script répare côté
+client. Le motif permissif de l'étape [5] les acceptait, et **138 contacts comptaient dans la
+couverture**. Ils sont désormais notés à zéro, avec leur motif, et tout seuil d'export les écarte.
+Les reconstruire serait une désobfuscation — donc une décision d'extraction, à prendre en regardant
+le §5 du brief, pas à glisser dans un lot de normalisation
+([ADR-017](docs/adr/017-validation-mx.md)).
+
+**La classification tient à 100 %, et son fourre-tout est assumé.** Le code objet du RNA est
+renseigné sur les 36 170 associations, réparties sur 31 familles :
+
+| Type | Effectif | Part |
+|---|---:|---:|
+| diverses | 11 506 | 36,8 % |
+| culturelle | 8 049 | 25,7 % |
+| sportive | 5 766 | 18,4 % |
+| sociale | 5 706 | 18,2 % |
+| comité des fêtes | 244 | 0,8 % |
+| centre de loisirs | 2 | 0,0 % |
+
+Plus d'un tiers en « diverses » parce que le brief ne prévoit aucun type pour l'éducation
+(3 152 associations), les loisirs et jeux (2 772) ou l'environnement (1 223). Les y ranger de force
+aurait produit un chiffre plus flatteur et moins vrai ; le code d'origine reste en base, et
+élargir la liste des types un jour ne coûtera qu'un rejeu. À l'inverse, « comité des fêtes » ne
+peut **pas** venir du code : les 252 associations qui en portent le nom se répartissent sur six
+familles différentes ([ADR-018](docs/adr/018-classification-en-six-types.md)).
 
 ## Documentation
 
