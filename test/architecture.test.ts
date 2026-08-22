@@ -35,6 +35,14 @@ function codeEffectif(source: string): string {
     .replace(/"(?:[^"\\\n]|\\.)*"/g, '""');
 }
 
+/**
+ * Porte d'entree de l'UI (lot 6). La regle ci-dessous vise le trafic **sortant** :
+ * robots.txt, le delai de deux secondes et le User-Agent n'ont de sens que pour ce qui
+ * part de la machine. Un serveur qui ecoute sur la boucle locale n'en releve pas — mais
+ * il ne doit pas devenir un client par la bande, d'ou le test qui suit.
+ */
+const PORTE_ENTREE = join("src", "ui", "serveur.ts");
+
 test("aucun module hors de src/http n'emet de requete reseau", () => {
   const interdits: { fichier: string; motif: string }[] = [];
 
@@ -55,6 +63,11 @@ test("aucun module hors de src/http n'emet de requete reseau", () => {
     // est une seconde sortie reseau, et elle doit rester dans src/http/ pour la meme
     // raison que la premiere — un seul endroit ou l'on sait ce qui part de la machine.
     for (const module of ["node:http", "node:https", "node:net", "node:tls", "node:dns", "undici"]) {
+      // Seule exception, et elle est nominative : la porte d'entree a besoin de
+      // `node:http` pour ecouter. Le test suivant verifie qu'elle ne s'en sert pas pour
+      // appeler. Une allowlist d'un seul fichier reste une allowlist : y ajouter une
+      // seconde ligne devrait couter la meme discussion que la premiere.
+      if (relatif === PORTE_ENTREE && module === "node:http") continue;
       if (source.includes(`"${module}"`) || source.includes(`'${module}'`)) {
         interdits.push({ fichier: relatif, motif: `import de ${module}` });
       }
@@ -67,6 +80,38 @@ test("aucun module hors de src/http n'emet de requete reseau", () => {
     "Tout appel reseau doit passer par src/http/, seul endroit ou robots.txt, le " +
       "throttle et le User-Agent sont appliques.",
   );
+});
+
+test("la porte d'entree ecoute, et n'appelle jamais", () => {
+  const code = codeEffectif(readFileSync(join(RACINE, PORTE_ENTREE), "utf8"));
+
+  // `createServer` est le seul usage legitime de node:http ici. `request` et `get`
+  // emettraient une requete sortante hors de src/http/, donc sans robots.txt, sans
+  // throttle et sans User-Agent identifiable.
+  assert.match(code, /createServer/, "la porte d'entree doit servir a ecouter");
+  for (const interdit of [/\brequest\s*\(/, /\bhttp\.get\s*\(/, /(?<![.\w#])fetch\s*\(/]) {
+    assert.doesNotMatch(
+      code,
+      interdit,
+      "src/ui/serveur.ts ne doit qu'ecouter : tout appel sortant passe par src/http/",
+    );
+  }
+});
+
+test("l'UI ne reference aucune ressource distante", () => {
+  // htmx est servi depuis cette machine. Un `<script src="https://...">` ferait sortir
+  // l'outil sur le reseau a l'ouverture d'un ecran — ce que le local-first interdit — et
+  // laisserait chez un tiers la trace de chaque consultation.
+  const distante = /(?:src|href)\s*=\s*["'](?:https?:)?\/\//;
+
+  for (const fichier of fichiersSource(join(SRC, "ui"))) {
+    const source = readFileSync(fichier, "utf8");
+    assert.doesNotMatch(
+      source,
+      distante,
+      `${relative(RACINE, fichier)} pointe vers une ressource distante : l'UI est hors ligne`,
+    );
+  }
 });
 
 test("node-html-parser n'est importe que par l'adaptateur DOM", () => {
@@ -157,6 +202,10 @@ test("aucune adresse d'infrastructure de l'editeur n'est codee en dur", () => {
     // seules portes que robots.txt laisse ouvertes (ADR-006).
     "https://data-pipeline-open.s3.sbg.io.cloud.ovh.net",
     "https://lecomarquage.service-public.gouv.fr",
+    // Lot 6 : la porte d'entree annonce sa propre adresse d'ecoute, qui est la constante
+    // definie juste au-dessus dans le meme fichier. L'entree est nominative pour que
+    // l'exception reste visible — elle ne couvre pas une interpolation quelconque.
+    "http://${ADRESSE_ECOUTE}",
     "https://exemple.fr",
     "https://mairie",
     "https://a.fr",

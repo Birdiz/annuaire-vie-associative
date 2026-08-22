@@ -61,6 +61,7 @@ const SQL_CLASSER = `
 const SQL_CONTACTS = `
   SELECT ct.id, ct.kind, ct.confiance, ct.is_generique, ct.association_id,
          ct.valeur_normalisee, ct.score_version,
+         (ct.valeur_corrigee IS NOT NULL) AS corrige,
          (SELECT p.prefiltre_verdict
             FROM page p
            WHERE p.url = ct.source_url AND p.code_insee = ct.code_insee
@@ -186,6 +187,7 @@ type LigneContact = {
   association_id: number | null;
   valeur_normalisee: string;
   score_version: number | null;
+  corrige: number;
   prefiltre_verdict: string | null;
 };
 
@@ -241,6 +243,9 @@ function noterContacts(
         ligne.prefiltre_verdict === "retenue" || ligne.prefiltre_verdict === "ecartee"
           ? ligne.prefiltre_verdict
           : null,
+      // La revue a deja recopie la correction dans `valeur_normalisee` : la syntaxe et
+      // le MX ci-dessus portent donc sur la valeur corrigee, pas sur celle qui a ete lue.
+      corrigeEnRevue: ligne.corrige === 1,
     });
 
     tranche.push([score, JSON.stringify(motifs), VERSION_SCORE, maintenant, ligne.id]);

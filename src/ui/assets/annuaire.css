@@ -1,0 +1,134 @@
+/* Ecrit a la main (D5). Pas de framework : trois ecrans ne le justifient pas, et le
+   poids du bundle est un critere de conception. */
+
+:root {
+  --fond: #fbfaf8;
+  --fond-carte: #ffffff;
+  --texte: #1c1a17;
+  --discret: #6b655c;
+  --trait: #ddd8d0;
+  --accent: #1c4f7c;
+  --alerte: #8c2f16;
+  --bon: #2f6b3a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --fond: #161513;
+    --fond-carte: #1f1e1b;
+    --texte: #eae7e1;
+    --discret: #9c968c;
+    --trait: #35322d;
+    --accent: #7fb0d8;
+    --alerte: #e8a08a;
+    --bon: #8fc79b;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--fond);
+  color: var(--texte);
+  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  align-items: baseline;
+  padding: 0.9rem 1.5rem;
+  border-bottom: 1px solid var(--trait);
+  background: var(--fond-carte);
+}
+
+header nav { display: flex; gap: 1rem; flex: 1; }
+header nav a { color: var(--accent); text-decoration: none; padding-bottom: 2px; }
+header nav a.actif { border-bottom: 2px solid var(--accent); }
+
+main { max-width: 62rem; margin: 0 auto; padding: 1.5rem; }
+footer { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem 2rem; }
+
+a { color: var(--accent); }
+
+/* Les ligatures d'une fonte monospace transforment « -- » en tiret long : une commande
+   affichee doit pouvoir etre recopiee telle quelle. */
+code {
+  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+  font-variant-ligatures: none;
+  font-feature-settings: "liga" 0, "calt" 0;
+}
+
+h2 { font-size: 1.15rem; margin: 2rem 0 0.75rem; }
+h2:first-child { margin-top: 0; }
+h3 { font-size: 1rem; margin: 0 0 0.35rem; }
+
+.discret { color: var(--discret); font-size: 0.875rem; }
+.alerte { color: var(--alerte); }
+.bon { color: var(--bon); }
+
+.cartes { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+
+.chiffre {
+  flex: 1 1 8rem;
+  background: var(--fond-carte);
+  border: 1px solid var(--trait);
+  border-radius: 6px;
+  padding: 0.75rem 0.9rem;
+}
+.chiffre b { display: block; font-size: 1.5rem; font-weight: 600; }
+.chiffre span { color: var(--discret); font-size: 0.8125rem; }
+
+table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
+th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--trait); }
+th { color: var(--discret); font-weight: 600; }
+td > span.n { display: block; text-align: right; }
+td > span.n, .chiffre b { font-variant-numeric: tabular-nums; }
+
+.contact {
+  background: var(--fond-carte);
+  border: 1px solid var(--trait);
+  border-radius: 6px;
+  padding: 1rem 1.1rem;
+  margin-bottom: 0.9rem;
+}
+
+.contact .valeur { font-size: 1.15rem; font-weight: 600; word-break: break-all; }
+.contact .score { float: right; font-variant-numeric: tabular-nums; color: var(--discret); }
+.contact ul { margin: 0.5rem 0; padding-left: 1.1rem; color: var(--discret); font-size: 0.875rem; }
+.contact .source { word-break: break-all; }
+
+form.arbitrage { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
+form.choix { margin-bottom: 1.25rem; }
+
+input[type="text"], select {
+  font: inherit;
+  padding: 0.35rem 0.5rem;
+  border: 1px solid var(--trait);
+  border-radius: 4px;
+  background: var(--fond);
+  color: var(--texte);
+}
+input[type="text"] { flex: 1 1 14rem; }
+
+button {
+  font: inherit;
+  padding: 0.35rem 0.85rem;
+  border: 1px solid var(--trait);
+  border-radius: 4px;
+  background: var(--fond);
+  color: var(--texte);
+  cursor: pointer;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+
+.refus {
+  border-left: 3px solid var(--alerte);
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 1rem;
+  color: var(--alerte);
+}
+
+.barre { display: inline-block; height: 0.7rem; background: var(--accent); border-radius: 2px; }

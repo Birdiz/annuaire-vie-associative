@@ -21,8 +21,14 @@
  * Tout est pur et testable sans base ni reseau.
  */
 
-/** Incrementee des que le bareme change. Ecrite sur chaque ligne notee. */
-export const VERSION_SCORE = 1;
+/**
+ * Incrementee des que le bareme change. Ecrite sur chaque ligne notee.
+ *
+ * 2 au lot 6 : la revue humaine entre dans le bareme. Une valeur corrigee a la main ne
+ * peut pas rester plafonnee par la qualite de lecture de la machine — c'est justement
+ * cette lecture que l'humain vient de corriger.
+ */
+export const VERSION_SCORE = 2;
 
 export type SignalScore = {
   /** Nom du signal, stable : c'est lui qui s'affichera en revue. */
@@ -61,6 +67,8 @@ export type ContactANoter = {
   mx: 0 | 1 | null;
   /** Verdict du pre-filtre [4] sur la page source, `null` si la page n'a pas ete jugee. */
   prefiltreVerdict: "retenue" | "ecartee" | null;
+  /** Vrai si un humain a reecrit la valeur en revue (lot 6). */
+  corrigeEnRevue: boolean;
 };
 
 /**
@@ -94,10 +102,30 @@ const FACTEUR_NON_RATTACHE = 0.85;
 const FACTEUR_PAGE_ECARTEE = 0.9;
 const FACTEUR_PAGE_NON_JUGEE = 0.95;
 
+/**
+ * Base d'un contact corrige en revue. Elle remplace `confiance` au lieu de s'y
+ * multiplier : la correction ne s'ajoute pas a la lecture de la machine, elle la
+ * remplace. Une adresse desobfusquee a la main garderait sinon la base de 0,45 de
+ * l'ADR-012 et tout seuil d'export continuerait a l'ecarter — la revue ne servirait
+ * a rien.
+ *
+ * 0,95 et non 1 : l'humain a lu la meme page que nous, il a pu se tromper aussi. Les
+ * facteurs qui suivent — MX, regime, rattachement — s'appliquent normalement par
+ * dessus, et c'est voulu : corriger une adresse ne prouve pas que son domaine recoit
+ * du courrier.
+ */
+const CONFIANCE_REVUE_HUMAINE = 0.95;
+
 export function noter(contact: ContactANoter): Note {
   const signaux: SignalScore[] = [];
-  const base = borner(contact.confiance);
+  const base = contact.corrigeEnRevue ? CONFIANCE_REVUE_HUMAINE : borner(contact.confiance);
   let score = base;
+
+  // Pousse directement : `appliquer` ignore les facteurs de 1, et celui-ci n'en est pas
+  // un — c'est une mention, pour que l'ecran dise d'ou vient une base inhabituelle.
+  if (contact.corrigeEnRevue) {
+    signaux.push({ signal: "revue", facteur: 1, detail: "valeur corrigee en revue humaine" });
+  }
 
   const appliquer = (signal: string, facteur: number, detail: string): void => {
     if (facteur === 1) return;

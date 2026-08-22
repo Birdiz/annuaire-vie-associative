@@ -30,7 +30,10 @@ async function corpusNormalise(t: TestContext): Promise<ReturnType<typeof openDa
   return db;
 }
 
-function lire(db: ReturnType<typeof openDatabase>, options: { scoreMin?: number } = {}): string[] {
+function lire(
+  db: ReturnType<typeof openDatabase>,
+  options: { scoreMin?: number; avecRejetes?: boolean } = {},
+): string[] {
   return [...lignesCsv(db, { departement: DEPARTEMENT, ...options })];
 }
 
@@ -75,8 +78,44 @@ test("le type classifie et le regime juridique sont des colonnes, pas des deduct
   const telephone = lignes.find((ligne) => ligne.includes("+33299000000"));
   assert.ok(telephone !== undefined);
   assert.ok(telephone.includes("comite_des_fetes"), "le nom l'emporte sur la famille 007");
-  // Un numero n'a pas de regime : la colonne est vide, elle ne ment pas.
-  assert.ok(telephone.includes(`${SEPARATEUR}${SEPARATEUR}`));
+  // Un numero n'a pas de regime : la colonne est vide, elle ne ment pas. Verifiee a sa
+  // place exacte — un `;;` quelque part dans la ligne passerait aussi sur une colonne
+  // voisine restee vide.
+  const entetes = (lignes[0] ?? "").slice(BOM.length).trimEnd().split(SEPARATEUR);
+  assert.equal(telephone.split(SEPARATEUR)[entetes.indexOf("regime")], "");
+});
+
+test("la valeur corrigee en revue sort a cote de la valeur lue", async (t) => {
+  const db = await corpusNormalise(t);
+  db.prepare(
+    "UPDATE contact SET valeur_corrigee = 'club@tennis-bruzou.example', review_statut = 'corrige' " +
+      "WHERE valeur = 'contact@tennis-bruzou.example'",
+  ).run();
+
+  const lignes = lire(db);
+  const entetes = (lignes[0] ?? "").slice(BOM.length).trimEnd().split(SEPARATEUR);
+  const corrigee = lignes.find((ligne) => ligne.includes("club@tennis-bruzou.example"));
+  assert.ok(corrigee !== undefined);
+
+  const cellules = corrigee.split(SEPARATEUR);
+  // Les trois colonnes disent trois choses differentes : ce qui a ete lu, ce qu'un
+  // humain a corrige, et ce qui se publie. Ecraser la premiere perdrait la provenance.
+  assert.equal(cellules[entetes.indexOf("valeur")], "contact@tennis-bruzou.example");
+  assert.equal(cellules[entetes.indexOf("valeur_corrigee")], "club@tennis-bruzou.example");
+  assert.equal(cellules[entetes.indexOf("valeur_publiable")], "club@tennis-bruzou.example");
+});
+
+test("un contact rejete en revue ne sort pas, sauf demande explicite", async (t) => {
+  const db = await corpusNormalise(t);
+  db.prepare("UPDATE contact SET review_statut = 'rejete' WHERE valeur LIKE '%theatre-landes%'").run();
+
+  // Un arbitrage humain qui ne changerait rien au fichier livre ne servirait a rien.
+  assert.equal(compterLignes(db, { departement: DEPARTEMENT }), 3);
+  assert.equal(lire(db).length - 1, 3);
+  assert.ok(!lire(db).some((ligne) => ligne.includes("theatre-landes")));
+
+  assert.equal(compterLignes(db, { departement: DEPARTEMENT, avecRejetes: true }), 4);
+  assert.ok(lire(db, { avecRejetes: true }).some((ligne) => ligne.includes("theatre-landes")));
 });
 
 test("--score-min ne retient que les contacts assez surs", async (t) => {

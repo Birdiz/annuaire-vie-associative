@@ -102,4 +102,14 @@ export const ETAPE = {
    * `distributionNormalisation`.
    */
   normalisation: "normalisation",
+  /**
+   * Lot 6 : les arbitrages rendus dans l'ecran de revue.
+   *
+   * Des **evenements**, comme partout ici : le nombre d'actions de revue. Le « taux de
+   * correction » du §8, lui, est un etat — il se lit sur `contact.review_statut`, par
+   * `distributionRevue`. Diviser des compteurs le fausserait au premier changement
+   * d'avis : valider puis corriger un meme contact compte deux evenements pour une
+   * seule ligne.
+   */
+  revue: "revue",
 } as const;

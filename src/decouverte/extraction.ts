@@ -194,7 +194,13 @@ function decoderSansEchec(valeur: string): string {
   }
 }
 
-function nettoyerEmail(brut: string): string | undefined {
+/**
+ * Exportee au lot 6 : la revue humaine doit nettoyer une adresse saisie a la main
+ * exactement comme l'extraction nettoie une adresse lue. Deux regles de forme
+ * differentes produiraient deux populations de contacts que rien ne distinguerait en
+ * base.
+ */
+export function nettoyerEmail(brut: string): string | undefined {
   const valeur = brut.trim().replace(/^[<("']+/, "").replace(/[>)"',.;]+$/, "");
   if (!/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(valeur)) return undefined;
   if (EXTENSIONS_IMAGE.test(valeur)) return undefined;

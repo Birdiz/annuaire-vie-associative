@@ -31,6 +31,8 @@ const COLONNES: readonly string[] = [
   "type",
   "kind",
   "valeur",
+  "valeur_corrigee",
+  "valeur_publiable",
   "regime",
   "score",
   "confiance",
@@ -40,16 +42,24 @@ const COLONNES: readonly string[] = [
   "review_statut",
 ];
 
+/**
+ * Un contact `rejete` ne sort pas : c'est le seul filtre de cette requete qu'un humain a
+ * pose lui-meme, ligne par ligne. Le rendre optionnel dans l'autre sens — sortir les
+ * rejetes sauf demande — ferait du travail de revue une decoration.
+ */
+const FILTRE_REVUE = "(? = 1 OR ct.review_statut <> 'rejete')";
+
 const SQL_CONTACTS = `
   SELECT ct.code_insee, c.nom AS commune, a.rna_id, a.nom AS association,
-         a.type_classifie, ct.kind, ct.valeur, ct.is_generique, ct.score,
-         ct.confiance, ct.methode_extraction, ct.source_url, ct.collected_at,
+         a.type_classifie, ct.kind, ct.valeur, ct.valeur_corrigee, ct.is_generique,
+         ct.score, ct.confiance, ct.methode_extraction, ct.source_url, ct.collected_at,
          ct.review_statut
     FROM contact ct
     JOIN commune c ON c.code_insee = ct.code_insee
     LEFT JOIN association a ON a.id = ct.association_id
    WHERE c.departement = ?
      AND (? IS NULL OR (ct.score IS NOT NULL AND ct.score >= ?))
+     AND ${FILTRE_REVUE}
    ORDER BY c.nom, a.nom, ct.kind, ct.valeur
 `;
 
@@ -61,6 +71,7 @@ type LigneExport = {
   type_classifie: string | null;
   kind: string;
   valeur: string;
+  valeur_corrigee: string | null;
   is_generique: number | null;
   score: number | null;
   confiance: number;
@@ -74,6 +85,8 @@ export type OptionsExport = {
   departement: string;
   /** Ne retient que les contacts notes au moins a cette valeur. */
   scoreMin?: number | undefined;
+  /** Sort aussi les contacts qu'un humain a rejetes en revue. Faux par defaut. */
+  avecRejetes?: boolean | undefined;
 };
 
 /**
@@ -87,7 +100,7 @@ export function* lignesCsv(db: Database, options: OptionsExport): Generator<stri
   const seuil = options.scoreMin ?? null;
   const lignes = db
     .prepare(SQL_CONTACTS)
-    .all(options.departement, seuil, seuil) as unknown as LigneExport[];
+    .all(options.departement, seuil, seuil, options.avecRejetes === true ? 1 : 0) as unknown as LigneExport[];
 
   for (const ligne of lignes) {
     yield `${[
@@ -98,6 +111,8 @@ export function* lignesCsv(db: Database, options: OptionsExport): Generator<stri
       ligne.type_classifie ?? "",
       ligne.kind,
       ligne.valeur,
+      ligne.valeur_corrigee ?? "",
+      ligne.valeur_corrigee ?? ligne.valeur,
       regime(ligne),
       ligne.score === null ? "" : ligne.score.toFixed(2),
       ligne.confiance.toFixed(2),
@@ -117,9 +132,12 @@ export function compterLignes(db: Database, options: OptionsExport): number {
   const ligne = db
     .prepare(
       "SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee " +
-        "WHERE c.departement = ? AND (? IS NULL OR (ct.score IS NOT NULL AND ct.score >= ?))",
+        "WHERE c.departement = ? AND (? IS NULL OR (ct.score IS NOT NULL AND ct.score >= ?)) " +
+        `AND ${FILTRE_REVUE}`,
     )
-    .get(options.departement, seuil, seuil) as { n?: number } | undefined;
+    .get(options.departement, seuil, seuil, options.avecRejetes === true ? 1 : 0) as
+    | { n?: number }
+    | undefined;
   return Number(ligne?.n ?? 0);
 }
 

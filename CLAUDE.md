@@ -61,7 +61,7 @@ doit echouer au niveau de la base, pas etre evite par de la logique applicative.
 | D2 | Departement de validation : 35 par defaut (parametre CLI) | Sous-ensemble fige de 20 communes pour l'iteration |
 | D3 | Dump RNA telecharge au 1er run, `--rna-file` en override | Downloader resumable par `Range` |
 | D4 | LLM : BYOK, provider pluggable, desactive par defaut | Le pipeline est complet et mesurable sans aucune cle |
-| D5 | UI : `node:http` + htmx + CSS ecrit a la main | Pas de bundler, pas de React |
+| D5 | UI : `node:http` + htmx + CSS ecrit a la main | Applique au lot 6 : htmx vendorise, 50 Ko (ADR-020) |
 | D6 | Parseur DOM : `node-html-parser` | Applique au lot 3 : 11 paquets, 3,0 Mo (ADR-011) |
 | D7 | Tests : `node:test` + `node:assert` | Zero dependance de test |
 | D8 | Build : aucun pour le dev, `esbuild` (devDep) pour le SEA | Node 24 execute le TS nativement |
@@ -72,6 +72,10 @@ Le poids du bundle final est un critere de conception. **Justifier tout ajout de
 dependance**, et par defaut s'en passer. Le projet a **une seule** dependance runtime,
 `node-html-parser`, entree au lot 3 apres mesure de son cout (ADR-011). C'est un seuil
 qui ne se franchit qu'une fois : tout ajout ulterieur se justifie de la meme facon.
+
+Un seul fichier tiers est embarque hors npm : `src/ui/assets/htmx.min.js`, vendorise au
+lot 6 (ADR-020). Sa version et son SHA-256 sont des constantes de `src/ui/assets.ts`,
+verifiees par un test — un fichier minifie ne se relit pas en revue de diff.
 
 ## Conventions
 
@@ -103,6 +107,21 @@ Deux portes y cohabitent depuis le lot 5 : le client HTTP, et le resolveur MX de
 cet objet par `this`, et un binding nomme echappe a `setServers`, donc au garde-fou
 anti-reseau de la suite de tests. Un test d'architecture verifie cette ligne.
 
+## Une seule porte d'ecoute
+
+`src/ui/serveur.ts` est le seul module autorise a importer `node:http` pour **ecouter**
+(ADR-020). Le test d'architecture verifie en meme temps qu'il n'appelle jamais
+`request`, `http.get` ni `fetch` : il peut ecouter, il ne peut pas appeler.
+
+L'UI n'ecoute que sur `127.0.0.1`, et cette adresse n'est pas configurable — seul le port
+l'est. Les garde-fous (verification de `Host`, jeton echange contre un cookie
+`SameSite=Strict`, refus des POST croises, CSP `default-src 'self'`) vivent dans
+`src/ui/routes.ts`, ou ils se testent sans ouvrir de socket.
+
+Toute valeur venue du crawl passe par `echapperHtml` de `src/ui/rendu.ts` avant d'entrer
+dans une page — meme discipline que le desamorcage des formules a l'export. La CSP ferme
+la meme porte une seconde fois ; aucune des deux ne dispense de l'autre.
+
 ## Definition du « fait »
 
 Une etape n'est terminee que si :
@@ -118,6 +137,7 @@ Une etape n'est terminee que si :
 npm run check      # typecheck strict + suite complete, sans reseau
 npm test           # tests seuls
 npm run annuaire -- <commande>
+npm run annuaire -- ui        # interface locale : suivi, revue, export
 ```
 
 ## Mode de travail attendu

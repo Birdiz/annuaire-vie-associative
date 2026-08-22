@@ -14,7 +14,7 @@ tiers partent de la machine de l'utilisateur, jamais d'une infrastructure opér�
 
 ## État d'avancement
 
-Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Cinq lots ont
+Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Six lots ont
 été livrés :
 
 | Étape | | Statut |
@@ -27,6 +27,7 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 | [6] Fallback LLM | uniquement si le DOM n'a pas suffi | ⬜ écarté |
 | [7] Normalisation | déduplication, validation syntaxique + MX, classification | ✅ lot 5 |
 | [8] Scoring | score de publiabilité par contact | ✅ lot 5 |
+| — Interface | suivi de run, revue humaine, export | ✅ lot 6 |
 
 L'étage [6] est écarté : la mesure du lot 4 lui a retiré sa justification
 ([ADR-015](docs/adr/015-temporalite-rna-et-dormance.md)). Le pipeline est complet et mesurable sans
@@ -48,6 +49,13 @@ doublons résorbés, **748 domaines de messagerie vérifiés en quatre secondes*
 et un export CSV où chaque ligne porte son URL source et sa date de collecte. Le contrôle MX a
 révélé au passage un défaut d'extraction que rien n'avait vu — voir plus bas.
 
+Lot 6 : le score du lot 5 trouve enfin son destinataire. Une **interface locale** — un serveur sur
+`127.0.0.1`, rien qui sorte de la machine — sert le suivi d'un run en cours, un écran de revue qui
+présente les contacts **les moins sûrs d'abord** avec le détail de ce qui a fait baisser leur note,
+et l'export. Un humain peut valider, rejeter, ou **corriger** une valeur : la valeur lue reste en
+base à côté de la correction, et c'est l'étape [8] qui renote, pas l'écran. Les 138 adresses cassées
+par un CMS trouvées au lot 5 arrivent ainsi en tête de file. Il ne reste que le packaging.
+
 ## Prérequis
 
 **Node 24 ou plus**, et rien d'autre. Node exécute le TypeScript nativement : il n'y a aucune étape
@@ -58,7 +66,10 @@ node --version
 ```
 
 Le projet a **une seule dépendance runtime**, `node-html-parser`, entrée au lot 3 après mesure de
-son coût ([ADR-011](docs/adr/011-premiere-dependance-runtime.md)).
+son coût ([ADR-011](docs/adr/011-premiere-dependance-runtime.md)). L'interface du lot 6 embarque un
+second fichier tiers, hors npm : une copie de **htmx 2.0.7** (50 Ko, licence 0BSD) servie depuis la
+machine, dont l'empreinte SHA-256 est vérifiée par un test
+([ADR-020](docs/adr/020-porte-d-entree-locale.md)).
 
 ```bash
 npm install
@@ -72,7 +83,7 @@ npm install
 npm run check
 ```
 
-Typecheck strict, puis 358 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
+Typecheck strict, puis 405 tests. **La suite ne sort jamais sur Internet** : `npm test` précharge
 un garde-fou qui refuse tout hôte hors de la boucle locale, sous-processus compris. Tout ce qui
 touche au réseau se teste contre un serveur HTTP local jetable, sur des fixtures HTML synthétiques
 écrites à la main.
@@ -257,6 +268,7 @@ npm run annuaire -- --help
 | `prefiltrer --departement <dd>` | Rejoue le pré-filtre depuis le cache, sans réseau |
 | `normaliser --departement <dd>` | Rejoue la normalisation [7] et le scoring [8] |
 | `exporter --departement <dd>` | Exporte l'annuaire en CSV, provenance comprise |
+| `ui [--port <n>]` | Interface locale : suivi de run, revue humaine, export |
 | `dormance --departement <dd>` | Ancienneté de déclaration des associations |
 | `metrics [--json]` | Compteurs de l'entonnoir |
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |
@@ -267,6 +279,47 @@ npm run annuaire -- --help
 Un run interrompu — `Ctrl-C`, coupure, `kill -9` — se reprend en relançant la même commande. Rien
 n'est perdu ni rejoué : c'est une propriété de la file de jobs, vérifiée par un test qui tue
 réellement un process en plein vol.
+
+## L'interface
+
+```bash
+npm run annuaire -- ui
+```
+
+La commande imprime une adresse et rend la main quand on l'interrompt :
+
+```
+Interface locale disponible :
+
+  http://127.0.0.1:8787/?jeton=xi9dz8uqA-OdyO6KhoZ0_6Sn1GOO_TEu
+```
+
+Trois écrans, servis par un `node:http` de quelques centaines de lignes, avec htmx et du CSS écrit
+à la main — pas de bundler, pas de React (D5).
+
+**Synthèse** — le §8 du brief à l'écran : taux de couverture selon trois définitions dont l'écart
+*est* le résultat, volumes par étage de l'entonnoir, verdicts MX, classification, taux de
+correction. Le bloc de suivi se rafraîchit tout seul : un `annuaire run` lancé dans un autre
+terminal est vu avancer d'ici, sans que les deux processus se connaissent — c'est ce pour quoi le
+mode WAL avait été choisi au lot 1.
+
+**Revue** — les contacts à arbitrer, **les moins sûrs d'abord**, chacun avec le détail des signaux
+qui ont fait baisser sa note, son régime juridique et son URL source. Valider, rejeter, ou corriger
+la valeur. Une correction ne réécrit jamais ce qui a été lu : elle s'écrit à côté, remet la ligne
+dans le flux de notation, et c'est `annuaire normaliser` qui la renote
+([ADR-021](docs/adr/021-correction-en-revue.md)). Un numéro mobile saisi en correction est refusé,
+comme partout ailleurs (§4.6).
+
+**Export** — le même CSV que `annuaire exporter`, sans variante propre à l'interface. Les contacts
+rejetés en revue en sortent par défaut : un arbitrage humain qui ne changerait rien au fichier livré
+ne servirait à rien.
+
+Le serveur **n'écoute que sur `127.0.0.1`**, et cette adresse n'est pas configurable — seul le port
+l'est. Un serveur local n'est pas un serveur inoffensif : il tourne avec vos droits et tient des
+données personnelles. L'en-tête `Host` est donc vérifié (rebinding DNS), un jeton tiré à chaque
+démarrage est échangé contre un cookie `SameSite=Strict`, les requêtes d'écriture croisées sont
+refusées, et une CSP `default-src 'self'` interdit toute ressource distante — htmx est servi depuis
+votre machine ([ADR-020](docs/adr/020-porte-d-entree-locale.md)).
 
 ## Ce que l'outil ne fait pas
 
@@ -351,7 +404,9 @@ client. Le motif permissif de l'étape [5] les acceptait, et **138 contacts comp
 couverture**. Ils sont désormais notés à zéro, avec leur motif, et tout seuil d'export les écarte.
 Les reconstruire serait une désobfuscation — donc une décision d'extraction, à prendre en regardant
 le §5 du brief, pas à glisser dans un lot de normalisation
-([ADR-017](docs/adr/017-validation-mx.md)).
+([ADR-017](docs/adr/017-validation-mx.md)). **Le lot 6 leur donne un chemin sans trancher cette
+question** : notées zéro, elles arrivent en tête de la file de revue, où chacune peut être réparée
+à la main. La désobfuscation automatique, elle, reste ouverte.
 
 **La classification tient à 100 %, et son fourre-tout est assumé.** Le code objet du RNA est
 renseigné sur les 36 170 associations, réparties sur 31 familles :
@@ -377,6 +432,8 @@ familles différentes ([ADR-018](docs/adr/018-classification-en-six-types.md)).
 - [`docs/brief.md`](docs/brief.md) — le brief d'origine, qui fait foi
 - [`docs/adr/`](docs/adr/) — les décisions d'architecture, avec leurs conséquences assumées
 - [`CLAUDE.md`](CLAUDE.md) — ce qui contraint le code au quotidien
+- [`src/ui/assets/htmx.LICENSE.txt`](src/ui/assets/htmx.LICENSE.txt) — licence du seul fichier
+  tiers embarqué hors npm
 
 ## Licence et données
 

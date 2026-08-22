@@ -47,7 +47,7 @@ test("l'aide documente chaque commande", async () => {
   assert.equal(code, 0);
   for (const commande of [
     "init", "run", "status", "metrics", "jobs", "purge", "fetch", "prefiltrer", "pages", "dormance",
-    "requeue", "normaliser", "exporter",
+    "requeue", "normaliser", "exporter", "ui",
   ]) {
     assert.match(stdout, new RegExp(`\\b${commande}\\b`), `${commande} devrait etre documentee`);
   }
@@ -344,4 +344,58 @@ test("une configuration invalide est rapportee sans trace d'exception", async (t
   assert.equal(code, 78);
   assert.match(stderr, /Configuration invalide/);
   assert.ok(!stderr.includes("    at "), "l'utilisateur ne doit pas voir de pile d'appels");
+});
+
+/**
+ * L'interface locale, lancee comme un utilisateur la lancerait. Le sous-processus
+ * precharge le garde-fou anti-reseau comme les autres : le port ephemere sur lequel il
+ * ecoute est sur la boucle locale, seul hote que la suite autorise.
+ */
+function lancerUi(t: TestContext, args: readonly string[]): Promise<{ url: string; arreter: () => Promise<number> }> {
+  const child = spawn(process.execPath, ["--import", GARDE_RESEAU, CLI, "ui", ...args], {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const fin = new Promise<number>((resolve) => child.on("close", (code) => resolve(code ?? -1)));
+  t.after(async () => {
+    child.kill("SIGINT");
+    await fin;
+  });
+
+  return new Promise((resolve, reject) => {
+    let stdout = "";
+    child.stdout.on("data", (morceau: Buffer) => {
+      stdout += morceau.toString();
+      const trouve = /(http:\/\/127\.0\.0\.1:\d+\/\?jeton=[\w-]+)/.exec(stdout);
+      if (trouve?.[1] !== undefined) {
+        resolve({
+          url: trouve[1],
+          arreter: () => {
+            child.kill("SIGINT");
+            return fin;
+          },
+        });
+      }
+    });
+    child.on("error", reject);
+    child.on("close", () => reject(new Error(`l'interface n'a pas demarre : ${stdout}`)));
+  });
+}
+
+test("annuaire ui sert l'interface sur la boucle locale, et s'arrete sur SIGINT", async (t) => {
+  const dir = dataDir(t);
+  const { url, arreter } = await lancerUi(t, ["--port", "0", "--data-dir", dir]);
+
+  const refuse = await fetch(new URL(url).origin + "/");
+  assert.equal(refuse.status, 401, "le jeton n'est pas decoratif");
+
+  const ouverte = await fetch(url, { redirect: "manual" });
+  assert.equal(ouverte.status, 303);
+
+  assert.equal(await arreter(), 0, "Ctrl+C doit rendre la main proprement");
+});
+
+test("un port invalide echoue avant d'ouvrir quoi que ce soit", async (t) => {
+  const resultat = await annuaire(["ui", "--port", "quatre-vingt", "--data-dir", dataDir(t)]);
+  assert.equal(resultat.code, 2);
+  assert.match(resultat.stderr, /--port attend un entier/);
 });

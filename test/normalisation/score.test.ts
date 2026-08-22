@@ -20,6 +20,7 @@ const PARFAIT: ContactANoter = {
   rattache: true,
   mx: 1,
   prefiltreVerdict: "retenue",
+  corrigeEnRevue: false,
 };
 
 test("un contact ideal garde la confiance de lecture, sans signal degradant", () => {
@@ -97,6 +98,7 @@ test("le MX et le regime ne s'appliquent pas a un telephone", () => {
     rattache: true,
     mx: 0,
     prefiltreVerdict: "retenue",
+    corrigeEnRevue: false,
   });
   assert.equal(telephone.score, 0.9, "un numero n'a ni domaine de messagerie ni regime d'adresse");
   assert.deepEqual(telephone.motifs.signaux, []);

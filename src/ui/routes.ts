@@ -1,0 +1,359 @@
+/**
+ * Routage et garde-fous de l'UI, sans socket.
+ *
+ * Tout ce qui decide vit ici et prend une requete decrite par un objet ordinaire : les
+ * refus — hote inattendu, jeton absent, requete croisee — se testent alors sans ouvrir
+ * de port. `serveur.ts` ne fait plus que de l'entree-sortie.
+ *
+ * **Le jeton.** Un serveur local n'est pas un serveur inoffensif : n'importe quelle page
+ * ouverte par ailleurs dans le meme navigateur peut adresser `127.0.0.1`. L'outil tient
+ * des donnees personnelles et sait ecrire en base ; il ne se contente donc pas d'ecouter
+ * sur la boucle locale. Le jeton est tire a chaque demarrage, imprime par la CLI, et
+ * echange contre un cookie `SameSite=Strict` des la premiere page.
+ *
+ * **L'hote.** Verifier `Host` ferme le rebinding DNS : sans lui, un nom controle par un
+ * tiers qui resout vers 127.0.0.1 suffirait a faire porter les requetes du navigateur
+ * sur cette base.
+ */
+
+import { timingSafeEqual } from "node:crypto";
+import type { Database } from "../db/index.ts";
+import type { JobQueue } from "../jobs/queue.ts";
+import type { Counters } from "../metrics/counters.ts";
+import type { Clock } from "../clock.ts";
+import { lireAsset } from "./assets.ts";
+import { page } from "./rendu.ts";
+import {
+  departementParDefaut,
+  departementsConnus,
+  distributionRevue,
+  fileRevue,
+  runsRecents,
+} from "./requetes.ts";
+import { arbitrer, estActionRevue } from "./revue.ts";
+import { ecranSynthese, fragmentSuivi } from "./vues/synthese.ts";
+import { ecranRevue, fragmentFile } from "./vues/revue.ts";
+import { ecranExport } from "./vues/export.ts";
+import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts";
+import { distributionNormalisation } from "../normalisation/rejeu.ts";
+import { mesurerCouverture } from "../metrics/couverture.ts";
+import { mesurerDormance } from "../metrics/dormance.ts";
+import { compterLignes, lignesCsv } from "../export/csv.ts";
+
+export const NOM_COOKIE = "annuaire_jeton";
+
+/** Contacts affiches d'un coup dans la file de revue. */
+export const TAILLE_FILE = 10;
+
+export type RequeteUi = {
+  methode: string;
+  chemin: string;
+  requete: URLSearchParams;
+  entetes: Record<string, string | undefined>;
+  corps: string;
+};
+
+export type ReponseUi = {
+  statut: number;
+  entetes: Record<string, string>;
+  /** Une chaine, un binaire, ou un flux de morceaux pour l'export. */
+  corps: string | Uint8Array | Iterable<string>;
+};
+
+export type ContexteUi = {
+  db: Database;
+  queue: JobQueue;
+  counters: Counters;
+  clock: Clock;
+  jeton: string;
+  port: number;
+  version: string;
+  /** Departement affiche quand la base n'en connait aucun. */
+  departementSecours: string;
+};
+
+/**
+ * `default-src 'self'` suffit : htmx est servi depuis cette origine et l'UI n'ecrit
+ * aucun script en ligne — c'est pour cela que le selecteur de departement porte un
+ * bouton plutot qu'un `onchange`. `no-referrer` evite qu'un clic sur l'URL source d'un
+ * contact annonce a la mairie visitee l'adresse de l'ecran de revue.
+ */
+const ENTETES_COMMUNES: Record<string, string> = {
+  "Content-Security-Policy":
+    "default-src 'self'; form-action 'self'; base-uri 'none'; frame-ancestors 'none'",
+  "Referrer-Policy": "no-referrer",
+  "X-Content-Type-Options": "nosniff",
+  "Cache-Control": "no-store",
+};
+
+function html(corps: string, statut = 200): ReponseUi {
+  return {
+    statut,
+    entetes: { ...ENTETES_COMMUNES, "Content-Type": "text/html; charset=utf-8" },
+    corps,
+  };
+}
+
+function texte(corps: string, statut: number): ReponseUi {
+  return {
+    statut,
+    entetes: { ...ENTETES_COMMUNES, "Content-Type": "text/plain; charset=utf-8" },
+    corps,
+  };
+}
+
+function redirection(vers: string, entetes: Record<string, string> = {}): ReponseUi {
+  return { statut: 303, entetes: { ...ENTETES_COMMUNES, ...entetes, Location: vers }, corps: "" };
+}
+
+function comparerJetons(attendu: string, recu: string): boolean {
+  const a = Buffer.from(attendu, "utf8");
+  const b = Buffer.from(recu, "utf8");
+  return a.length === b.length && timingSafeEqual(a, b);
+}
+
+function lireCookie(entete: string | undefined, nom: string): string | undefined {
+  if (entete === undefined) return undefined;
+  for (const morceau of entete.split(";")) {
+    const separateur = morceau.indexOf("=");
+    if (separateur === -1) continue;
+    if (morceau.slice(0, separateur).trim() === nom) return morceau.slice(separateur + 1).trim();
+  }
+  return undefined;
+}
+
+const HOTES_LOCAUX = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+export function hoteAccepte(host: string | undefined, port: number): boolean {
+  if (host === undefined) return false;
+  const separateur = host.lastIndexOf(":");
+  const nom = separateur === -1 || host.endsWith("]") ? host : host.slice(0, separateur);
+  const portRecu = separateur === -1 || host.endsWith("]") ? "" : host.slice(separateur + 1);
+  return HOTES_LOCAUX.has(nom) && portRecu === String(port);
+}
+
+/**
+ * Rend une reponse quand l'acces doit etre refuse, `undefined` quand il peut continuer.
+ * Le cas particulier du jeton passe en query est traite ici : il est echange contre un
+ * cookie, puis l'URL est nettoyee — le jeton ne doit pas rester dans la barre d'adresse
+ * ni dans l'historique.
+ */
+export function verifierAcces(ctx: ContexteUi, requete: RequeteUi): ReponseUi | undefined {
+  if (!hoteAccepte(requete.entetes["host"], ctx.port)) {
+    return texte(
+      "Hote inattendu. Ce serveur ne repond qu'a 127.0.0.1 et localhost sur son propre port.\n",
+      403,
+    );
+  }
+
+  const parCookie = lireCookie(requete.entetes["cookie"], NOM_COOKIE);
+  if (parCookie !== undefined && comparerJetons(ctx.jeton, parCookie)) {
+    // Une requete d'ecriture venue d'une autre origine n'a rien a faire ici. L'en-tete
+    // manque sur les navigateurs anciens : le cookie SameSite=Strict tient alors seul.
+    const provenance = requete.entetes["sec-fetch-site"];
+    if (requete.methode === "POST" && provenance !== undefined && provenance !== "same-origin") {
+      return texte("Requete croisee refusee.\n", 403);
+    }
+    return undefined;
+  }
+
+  const parUrl = requete.requete.get("jeton");
+  if (parUrl !== null && comparerJetons(ctx.jeton, parUrl)) {
+    const propre = new URLSearchParams(requete.requete);
+    propre.delete("jeton");
+    const suffixe = propre.size === 0 ? "" : `?${propre.toString()}`;
+    return redirection(`${requete.chemin}${suffixe}`, {
+      "Set-Cookie": `${NOM_COOKIE}=${ctx.jeton}; Path=/; SameSite=Strict; HttpOnly`,
+    });
+  }
+
+  return texte(
+    "Jeton absent ou invalide.\n\n" +
+      "Ouvrez l'adresse imprimee par « annuaire ui » : elle porte le jeton tire au\n" +
+      "demarrage. Il change a chaque lancement.\n",
+    401,
+  );
+}
+
+export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
+  const asset = requete.chemin.startsWith("/assets/") ? requete.chemin.slice("/assets/".length) : undefined;
+  if (asset !== undefined) {
+    if (requete.methode !== "GET") return texte("Methode non autorisee.\n", 405);
+    const fichier = lireAsset(asset);
+    if (fichier === undefined) return texte("Introuvable.\n", 404);
+    return {
+      statut: 200,
+      entetes: { ...ENTETES_COMMUNES, "Content-Type": fichier.type, "Cache-Control": "no-cache" },
+      corps: fichier.corps,
+    };
+  }
+
+  const departement = departementParDefaut(
+    ctx.db,
+    requete.requete.get("departement"),
+    ctx.departementSecours,
+  );
+  const departements = departementsConnus(ctx.db);
+
+  if (requete.methode === "GET" && requete.chemin === "/") {
+    return html(
+      page({
+        titre: "Synthese",
+        onglet: "synthese",
+        departement,
+        version: ctx.version,
+        contenu: ecranSynthese({
+          departement,
+          departements,
+          suivi: { runs: runsRecents(ctx.db), jobs: ctx.queue.counts() },
+          couverture: mesurerCouverture(ctx.db, departement),
+          dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
+          prefiltre: distributionDuJour(ctx, departement),
+          normalisation: distributionNormalisation(ctx.db, departement),
+          revue: distributionRevue(ctx.db, departement),
+        }),
+      }),
+    );
+  }
+
+  if (requete.methode === "GET" && requete.chemin === "/suivi") {
+    return html(fragmentSuivi({ runs: runsRecents(ctx.db), jobs: ctx.queue.counts() }));
+  }
+
+  if (requete.methode === "GET" && requete.chemin === "/revue") {
+    return html(
+      page({
+        titre: "Revue",
+        onglet: "revue",
+        departement,
+        version: ctx.version,
+        contenu: ecranRevue(donneesRevue(ctx, departement, departements, undefined)),
+      }),
+    );
+  }
+
+  if (requete.methode === "POST" && requete.chemin.startsWith("/revue/")) {
+    return arbitrage(ctx, requete, departement, departements);
+  }
+
+  if (requete.methode === "GET" && requete.chemin === "/export") {
+    const scoreMin = requete.requete.get("score-min") ?? "";
+    const avecRejetes = requete.requete.get("avec-rejetes") === "1";
+    const options = {
+      departement,
+      scoreMin: lireScoreMin(scoreMin),
+      avecRejetes,
+    };
+    return html(
+      page({
+        titre: "Export",
+        onglet: "export",
+        departement,
+        version: ctx.version,
+        contenu: ecranExport({
+          departement,
+          departements,
+          scoreMin,
+          avecRejetes,
+          lignes: compterLignes(ctx.db, options),
+          rejetes: distributionRevue(ctx.db, departement).rejetes,
+        }),
+      }),
+    );
+  }
+
+  if (requete.methode === "GET" && requete.chemin === "/export.csv") {
+    const options = {
+      departement,
+      scoreMin: lireScoreMin(requete.requete.get("score-min") ?? ""),
+      avecRejetes: requete.requete.get("avec-rejetes") === "1",
+    };
+    return {
+      statut: 200,
+      entetes: {
+        ...ENTETES_COMMUNES,
+        "Content-Type": "text/csv; charset=utf-8",
+        "Content-Disposition": `attachment; filename="annuaire-${departement}.csv"`,
+      },
+      corps: lignesCsv(ctx.db, options),
+    };
+  }
+
+  return texte("Introuvable.\n", 404);
+}
+
+function distributionDuJour(ctx: ContexteUi, departement: string) {
+  const campagne = derniereCampagne(ctx.db, departement);
+  return campagne === undefined ? undefined : distributionPrefiltre(ctx.db, departement, campagne);
+}
+
+function donneesRevue(
+  ctx: ContexteUi,
+  departement: string,
+  departements: readonly string[],
+  refus: string | undefined,
+) {
+  return {
+    departement,
+    departements,
+    file: fileRevue(ctx.db, departement, TAILLE_FILE),
+    distribution: distributionRevue(ctx.db, departement),
+    refus,
+  };
+}
+
+/**
+ * Un arbitrage. La reponse depend de qui demande : htmx recoit la file recalculee et
+ * remplace le bloc, un formulaire ordinaire est redirige — sans quoi un rechargement de
+ * page rejouerait l'arbitrage. Un refus, lui, est rendu sur place dans les deux cas : le
+ * faire voyager dans l'URL y ferait passer la valeur saisie.
+ */
+function arbitrage(
+  ctx: ContexteUi,
+  requete: RequeteUi,
+  departement: string,
+  departements: readonly string[],
+): ReponseUi {
+  const htmx = requete.entetes["hx-request"] === "true";
+  const rendre = (refus: string | undefined, statut: number): ReponseUi => {
+    const donnees = donneesRevue(ctx, departement, departements, refus);
+    if (htmx) return html(fragmentFile(donnees), statut);
+    return html(
+      page({
+        titre: "Revue",
+        onglet: "revue",
+        departement,
+        version: ctx.version,
+        contenu: ecranRevue(donnees),
+      }),
+      statut,
+    );
+  };
+
+  const id = Number(requete.chemin.slice("/revue/".length));
+  if (!Number.isInteger(id) || id <= 0) return rendre("Contact inconnu.", 400);
+
+  const champs = new URLSearchParams(requete.corps);
+  const action = champs.get("action") ?? "";
+  if (!estActionRevue(action)) return rendre("Action de revue inconnue.", 400);
+
+  const resultat = arbitrer(ctx.db, ctx.clock, ctx.counters, {
+    id,
+    action,
+    valeur: champs.get("valeur") ?? undefined,
+    note: champs.get("note") ?? undefined,
+  });
+
+  if (resultat.kind === "introuvable") return rendre("Ce contact n'existe plus.", 404);
+  if (resultat.kind === "refus") return rendre(resultat.message, 422);
+  if (htmx) return rendre(undefined, 200);
+  return redirection(`/revue?departement=${encodeURIComponent(departement)}`);
+}
+
+/** Un seuil illisible ne filtre rien : mieux vaut tout sortir que sortir au hasard. */
+function lireScoreMin(brut: string): number | undefined {
+  if (brut.trim() === "") return undefined;
+  const valeur = Number(brut.replace(",", "."));
+  if (!Number.isFinite(valeur) || valeur < 0 || valeur > 1) return undefined;
+  return valeur;
+}

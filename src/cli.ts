@@ -22,7 +22,14 @@ import type { ContexteNormalisation } from "./normalisation/index.ts";
 import { distributionNormalisation } from "./normalisation/rejeu.ts";
 import { normaliser } from "./normalisation/rejeu.ts";
 import { compterLignes, lignesCsv } from "./export/csv.ts";
+import { demarrerServeur, ADRESSE_ECOUTE } from "./ui/serveur.ts";
 import { mesurerDormance } from "./metrics/dormance.ts";
+
+/** Port d'ecoute de l'interface locale. Le port est reglable, l'adresse ne l'est pas. */
+const PORT_UI_PAR_DEFAUT = 8787;
+
+/** D2 : departement de validation, quand la base est vide et qu'aucun n'est demande. */
+const DEPARTEMENT_PAR_DEFAUT = "35";
 
 const USAGE = `annuaire ${VERSION} — annuaire de la vie associative locale
 
@@ -41,6 +48,7 @@ Commandes
   associations --departement <dd>  Associations amorcees, avec leur commune
   dormance --departement <dd>   Anciennete de declaration des associations
   dumps                   Etat des dumps ouverts et de leur reprise
+  ui [--port <n>]         Sert l'interface locale : suivi de run, revue, export
   status                  Etat de l'installation et de la file de jobs
   metrics [--json]        Compteurs du §8
   jobs [--state <etat>]   Liste les jobs d'un etat donne (defaut : dead)
@@ -77,6 +85,12 @@ Options d'export
   --fichier <chemin>      Ecrit dans un fichier plutot que sur la sortie standard
   --score-min <n>         Ne retient que les contacts notes au moins a cette valeur
                           (entre 0 et 1, par exemple 0.6)
+  --avec-rejetes          Sort aussi les contacts qu'un humain a rejetes en revue,
+                          exclus par defaut
+
+Options d'interface
+  --port <n>              Port d'ecoute (defaut : ${PORT_UI_PAR_DEFAUT}). L'interface
+                          n'ecoute que sur ${ADRESSE_ECOUTE}, et cela n'est pas reglable.
 
 Options communes
   --data-dir <chemin>     Repertoire de donnees (defaut : emplacement systeme)
@@ -111,6 +125,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         verdict: { type: "string" },
         fichier: { type: "string" },
         "score-min": { type: "string" },
+        "avec-rejetes": { type: "boolean", default: false },
+        port: { type: "string" },
         tout: { type: "boolean", default: false },
         limit: { type: "string" },
         json: { type: "boolean", default: false },
@@ -154,6 +170,8 @@ export async function main(argv: readonly string[]): Promise<number> {
     switch (commande) {
       case "init":
         return commandeInit(ouvrir, values["data-dir"]);
+      case "ui":
+        return await commandeUi(ouvrir, values.port, values.departement);
       case "status":
         return commandeStatus(ouvrir);
       case "metrics":
@@ -190,6 +208,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         return commandeExporter(ouvrir, values.departement, {
           fichier: values.fichier,
           scoreMin: values["score-min"],
+          avecRejetes: values["avec-rejetes"] === true,
         });
       case "contacts":
         return commandeContacts(ouvrir, values.departement, values.json === true, values.limit);
@@ -240,6 +259,82 @@ function commandeInit(ouvrir: () => App, dataDir: string | undefined): number {
   } finally {
     app.close();
     void dataDir;
+  }
+}
+
+/**
+ * Sert l'interface locale jusqu'au premier signal d'arret.
+ *
+ * Aucun run n'est lance d'ici : l'UI lit la base et ecrit les arbitrages de revue, rien
+ * d'autre. Un `annuaire run` demarre dans un autre terminal est vu avancer a travers le
+ * WAL, sans que les deux process aient a se connaitre — c'est pour cela que le mode WAL
+ * a ete choisi au lot 1.
+ */
+async function commandeUi(
+  ouvrir: () => App,
+  port: string | undefined,
+  departement: string | undefined,
+): Promise<number> {
+  const numero = port === undefined ? PORT_UI_PAR_DEFAUT : Number(port);
+  if (!Number.isInteger(numero) || numero < 0 || numero > 65535) {
+    process.stderr.write(`--port attend un entier entre 0 et 65535, recu « ${port} »\n`);
+    return 2;
+  }
+
+  const app = ouvrir();
+  let serveur;
+  try {
+    startupPurge(app);
+    serveur = await demarrerServeur({
+      port: numero,
+      db: app.db,
+      queue: app.queue,
+      counters: app.counters,
+      clock: app.clock,
+      version: VERSION,
+      departementSecours: departement ?? DEPARTEMENT_PAR_DEFAUT,
+      logger: app.logger,
+    });
+  } catch (cause) {
+    app.close();
+    if ((cause as { code?: string }).code === "EADDRINUSE") {
+      process.stderr.write(
+        `Le port ${numero} est deja pris. Choisissez-en un autre : annuaire ui --port ${numero + 1}\n`,
+      );
+      return 1;
+    }
+    throw cause;
+  }
+
+  process.stdout.write(
+    [
+      "Interface locale disponible :",
+      "",
+      `  ${serveur.url}`,
+      "",
+      `Le serveur n'ecoute que sur ${ADRESSE_ECOUTE} et rien n'en sort. Le jeton de`,
+      "l'adresse est tire a ce demarrage et change au suivant : c'est lui qui empeche une",
+      "page ouverte par ailleurs dans le navigateur d'ecrire dans cette base.",
+      "",
+      "Ctrl+C pour arreter.",
+      "",
+    ].join("\n"),
+  );
+
+  const controller = installShutdownHandlers(() => {
+    process.stdout.write("Arret de l'interface.\n");
+  });
+
+  try {
+    if (!controller.signal.aborted) {
+      await new Promise<void>((resoudre) => {
+        controller.signal.addEventListener("abort", () => resoudre(), { once: true });
+      });
+    }
+    await serveur.fermer();
+    return 0;
+  } finally {
+    app.close();
   }
 }
 
@@ -1137,7 +1232,7 @@ async function commandeNormaliser(
 function commandeExporter(
   ouvrir: () => App,
   departement: string | undefined,
-  options: { fichier: string | undefined; scoreMin: string | undefined },
+  options: { fichier: string | undefined; scoreMin: string | undefined; avecRejetes: boolean },
 ): number {
   if (!exigerDepartement(departement, "exporter")) return 2;
 
@@ -1149,7 +1244,11 @@ function commandeExporter(
 
   const app = ouvrir();
   try {
-    const parametres = { departement, ...(scoreMin === null ? {} : { scoreMin }) };
+    const parametres = {
+      departement,
+      avecRejetes: options.avecRejetes,
+      ...(scoreMin === null ? {} : { scoreMin }),
+    };
     const total = compterLignes(app.db, parametres);
     if (total === 0) {
       process.stderr.write(

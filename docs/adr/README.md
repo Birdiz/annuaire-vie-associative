@@ -26,3 +26,5 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [017](017-validation-mx.md) | Validation MX : une porte DNS, et un fait de domaine | Acceptée |
 | [018](018-classification-en-six-types.md) | Six types : ce que le code RNA porte, et ce qu'il ne porte pas | Acceptée |
 | [019](019-deduplication-et-score-de-revue.md) | Déduplication, et un score distinct de la confiance de lecture | Acceptée |
+| [020](020-porte-d-entree-locale.md) | Une porte d'entrée locale, et un fichier tiers embarqué | Acceptée |
+| [021](021-correction-en-revue.md) | Ce qu'un humain corrige, et ce que la base en fait | Acceptée |

@@ -514,4 +514,49 @@ CREATE TABLE domaine_mail (
 CREATE INDEX idx_domaine_mail_verifie_at ON domaine_mail (verifie_at);
 `,
   },
+  {
+    version: 6,
+    name: "revue-humaine",
+    sql: `
+--------------------------------------------------------------------------------
+-- Revue humaine : la correction d'un contact
+--------------------------------------------------------------------------------
+
+-- 'review_statut' porte 'corrige' depuis le lot 1, mais rien n'a jamais eu ou ranger la
+-- correction. C'est cette colonne qui manquait.
+--
+-- 'valeur' n'est **jamais** reecrite : c'est ce qui a ete lu sur la page, donc de la
+-- provenance au sens de l'invariant 5. La saisie humaine vit a cote, et l'export sort
+-- les deux — celle qui se publie et celle d'ou elle vient.
+ALTER TABLE contact ADD COLUMN valeur_corrigee TEXT;
+
+-- Quand l'arbitrage a eu lieu. Sans elle, un statut de revue est une affirmation sans
+-- date, et la purge a trois ans n'aurait rien a mordre.
+ALTER TABLE contact ADD COLUMN review_at TEXT;
+
+-- Un contact 'corrige' sans valeur corrigee est une contradiction : le statut dit qu'un
+-- humain a reecrit la valeur, et il n'y en a pas. SQLite ne sait pas ajouter un CHECK de
+-- table par ALTER ; le trigger tient la meme promesse au meme endroit — l'incoherence
+-- echoue en base, pas dans un test du serveur HTTP. Meme logique que les UNIQUE du lot 1.
+CREATE TRIGGER contact_correction_exige_valeur_insert
+BEFORE INSERT ON contact
+WHEN NEW.review_statut = 'corrige' AND NEW.valeur_corrigee IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'un contact corrige doit porter sa valeur corrigee');
+END;
+
+CREATE TRIGGER contact_correction_exige_valeur_update
+BEFORE UPDATE OF review_statut, valeur_corrigee ON contact
+WHEN NEW.review_statut = 'corrige' AND NEW.valeur_corrigee IS NULL
+BEGIN
+  SELECT RAISE(ABORT, 'un contact corrige doit porter sa valeur corrigee');
+END;
+
+-- L'ecran de revue tire sa file d'ici : les contacts a arbitrer, les moins surs d'abord.
+-- L'index de score du lot 5 porte le score en tete et ne sert pas ce filtre.
+CREATE INDEX idx_contact_a_revoir
+  ON contact (review_statut, score)
+  WHERE review_statut = 'a_revoir';
+`,
+  },
 ];
