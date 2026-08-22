@@ -80,6 +80,16 @@ export type OptionsRejeu = {
   avecMobiles?: boolean | undefined;
   /** Recalcule meme les verdicts deja produits par la version courante. */
   tout?: boolean | undefined;
+  /**
+   * Appele apres chaque tranche commitee, avec le nombre de pages ecrites depuis le
+   * debut. Un rejeu de plusieurs milliers de pages est muet pendant une dizaine de
+   * secondes ; c'est ce qui alimente le journal detaille.
+   *
+   * C'est aussi le seul instant ou l'etat en base est partiel de facon **observable**,
+   * donc le point ou le test de reprise peut provoquer un `kill -9` reellement en plein
+   * travail, plutot que d'esperer qu'un delai tombe au bon endroit.
+   */
+  onTranche?: ((ecrites: number) => void) | undefined;
 };
 
 type LignePage = {
@@ -117,6 +127,7 @@ export function rejouerPrefiltre(
       const maj = db.prepare(SQL_MAJ);
       for (const ligne of lot) maj.run(...ligne);
     });
+    options.onTranche?.(evaluees);
   };
 
   for (const page of pages) {

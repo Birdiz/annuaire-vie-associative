@@ -201,6 +201,7 @@ npm run annuaire -- --help
 | `dormance --departement <dd>` | Ancienneté de déclaration des associations |
 | `metrics [--json]` | Compteurs de l'entonnoir |
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |
+| `requeue <id\|cle>` | Remet en attente un job terminé, écarté ou mort |
 | `purge` | Force la purge des données de plus de trois ans |
 | `fetch <url>` | Récupère une URL via le client conforme (diagnostic) |
 

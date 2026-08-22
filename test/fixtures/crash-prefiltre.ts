@@ -1,11 +1,13 @@
 /**
  * Rejeu du pre-filtre, jetable, utilise par le test de reprise apres `kill -9`.
  *
- * Il annonce « pret » puis appelle `rejouerPrefiltre`, et c'est le test qui l'abat
- * depuis l'exterieur. Le rejeu etant entierement synchrone, une minuterie interne ne
- * pourrait jamais se declencher pendant son execution : le signal doit venir d'ailleurs.
+ * En mode « crash », il s'abat lui-meme a la premiere tranche commitee. C'est le seul
+ * instant ou la base est partiellement a jour de facon **certaine** : le rejeu etant
+ * entierement synchrone, ni une minuterie interne ni un signal exterieur ne peuvent
+ * viser cet instant de maniere fiable — sous charge, ils tombent avant le premier
+ * commit ou apres le dernier, et le test ne prouve alors plus rien.
  *
- * Usage : node crash-prefiltre.ts <dbFile> <cacheDir> <tout|reprise>
+ * Usage : node crash-prefiltre.ts <dbFile> <cacheDir> <crash|reprise|tout>
  */
 import { openDatabase } from "../../src/db/index.ts";
 import { HttpCache } from "../../src/http/cache.ts";
@@ -17,14 +19,19 @@ const [, , dbFile, cacheDir, mode] = process.argv;
 const db = openDatabase(dbFile as string);
 const cache = new HttpCache(cacheDir as string);
 
-process.stdout.write("pret\n");
-
 const resultat = rejouerPrefiltre(db, cache, systemClock, {
   departement: "35",
   campagne: "2026-08-21",
   // « reprise » emprunte le chemin reel d'une relance apres incident : les pages deja
   // jugees par la version courante sont sautees, seules les autres sont traitees.
   tout: mode !== "reprise",
+  ...(mode === "crash"
+    ? {
+        onTranche: (): void => {
+          process.kill(process.pid, "SIGKILL");
+        },
+      }
+    : {}),
 });
 db.close();
 process.stdout.write(`${JSON.stringify(resultat)}\n`);

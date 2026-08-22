@@ -191,3 +191,54 @@ test("un worker sans aucun handler ne prend rien", (t) => {
   assert.equal(queue.lease(LEASE_MS, []), undefined);
   assert.equal(queue.lease(LEASE_MS)?.dedupKey, "j1", "et le job reste disponible");
 });
+
+test("un job termine se reenfile, ce que la deduplication interdisait", (t) => {
+  const { queue } = setup(t);
+  queue.enqueue("rna_seed", "rna_waldec:35:2026-08", { departement: "35" });
+  const job = queue.lease(LEASE_MS);
+  queue.complete(job!.id);
+
+  // La cle porte le mois : reenfiler ne fait rien, et c'est voulu tant que la source
+  // n'a pas change. Mais quand c'est le lecteur qui a change — une migration qui lit
+  // de nouvelles colonnes du meme fichier — il faut pouvoir dire l'intention.
+  assert.equal(queue.enqueue("rna_seed", "rna_waldec:35:2026-08", { departement: "35" }), false);
+  assert.equal(queue.lease(LEASE_MS), undefined);
+
+  assert.equal(queue.requeue({ dedupKey: "rna_waldec:35:2026-08" }), 1);
+  const repris = queue.lease(LEASE_MS);
+  assert.equal(repris?.dedupKey, "rna_waldec:35:2026-08");
+  assert.deepEqual(repris?.payload, { departement: "35" }, "le payload d'origine est conserve");
+  assert.equal(repris?.attempts, 1, "les tentatives repartent de zero");
+});
+
+test("le reenfilement remet a zero les tentatives d'un job mort", (t) => {
+  const { queue } = setup(t);
+  queue.enqueue("travail", "j", null, { maxAttempts: 1 });
+  const job = queue.lease(LEASE_MS);
+  queue.fail(job!.id, new Error("panne"));
+  assert.equal(queue.counts().dead, 1);
+
+  assert.equal(queue.requeue({ state: "dead" }), 1);
+  assert.equal(queue.counts().dead, 0);
+  const repris = queue.lease(LEASE_MS);
+  assert.equal(repris?.attempts, 1, "sans remise a zero, un job mort le resterait");
+  assert.equal(queue.list("pending").length, 0);
+});
+
+test("un job en attente ou en vol n'est pas reenfilable", (t) => {
+  const { queue } = setup(t);
+  queue.enqueue("travail", "attente", null);
+  queue.enqueue("travail", "en-vol", null);
+  const enVol = queue.lease(LEASE_MS);
+
+  // Doubler un job en vol le ferait executer deux fois ; un job en attente y est deja.
+  assert.equal(queue.requeue({ state: "pending" }), 0);
+  assert.equal(queue.requeue({ id: enVol!.id }), 0);
+  assert.equal(queue.counts().leased, 1);
+});
+
+test("le reenfilement d'un job inexistant ne fait rien", (t) => {
+  const { queue } = setup(t);
+  assert.equal(queue.requeue({ id: 4242 }), 0);
+  assert.equal(queue.requeue({ dedupKey: "jamais-vue" }), 0);
+});

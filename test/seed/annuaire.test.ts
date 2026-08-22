@@ -168,3 +168,75 @@ test("rejouer le seed ne cree pas de doublon", async (t) => {
   const compte = db.prepare("SELECT count(*) AS n FROM commune").get();
   assert.equal(compte?.n, 2);
 });
+
+test("le listing de l'Annuaire est revalide, jamais servi depuis le cache", async (t) => {
+  // Un index n'est pas une ressource : il nomme le fichier du jour, et ce fichier
+  // tourne quotidiennement. Le mettre en cache revient a demander demain un fichier
+  // qui n'existait qu'hier — trois runs consecutifs y ont echoue en production.
+  let jour = "2026-08-20_050000";
+  const dumpDe = (j: string): string =>
+    `{ "service" : [ ${service({ nom: `Mairie - J${j.slice(8, 10)}`, codes: ["35047"], site: `https://j${j.slice(8, 10)}.example`, commune: "Bruz" })} ] }`;
+
+  const server = await startServer(t, {
+    "/robots.txt": robotsAllowAll,
+    "/all/": (_req, res) => {
+      res.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+      res.end(`<pre><a href="${jour}-data.gouv_local.json">${jour}-data.gouv_local.json</a></pre>`);
+    },
+    // Seul le dump du jour courant repond : celui de la veille a ete fait tourner,
+    // exactement comme le serveur reel s'en debarrasse.
+    "/all/2026-08-20_050000-data.gouv_local.json": (_req, res) => {
+      if (jour !== "2026-08-20_050000") {
+        res.writeHead(404, { "content-type": "text/plain" });
+        res.end("disparu");
+        return;
+      }
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(dumpDe("2026-08-20_050000"));
+    },
+    "/all/2026-08-21_051500-data.gouv_local.json": text(dumpDe("2026-08-21_051500")),
+  });
+
+  const db = openDatabase(":memory:");
+  t.after(() => db.close());
+  const clock = fixedClock(T0);
+  const ctx: ContexteSeed = {
+    db,
+    client: new HttpClient({
+      cache: new HttpCache(makeTempDir(t)),
+      throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
+      counters: new Counters(db, null),
+      userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+      // Une heure de fraicheur : sans revalidation forcee, le second passage servirait
+      // le listing de la veille et irait chercher un dump disparu.
+      cacheTtlMs: 3_600_000,
+      clock,
+    }),
+    counters: new Counters(db, null),
+    clock,
+    logger: new Logger({ console: false }),
+    queue: new JobQueue(db, clock),
+    runId: null,
+    sources: { annuaireListing: `${server.origin}/all/` },
+  };
+
+  const premier = await handlerAnnuaire(ctx)(JOB, { signal: new AbortController().signal });
+  assert.equal(premier.kind, "done");
+  assert.equal(
+    (db.prepare("SELECT url_mairie FROM commune WHERE code_insee = '35047'").get() as { url_mairie: string })
+      .url_mairie,
+    "https://j20.example",
+  );
+
+  // Le serveur fait tourner son dump, comme chaque nuit.
+  jour = "2026-08-21_051500";
+
+  const second = await handlerAnnuaire(ctx)({ ...JOB, dedupKey: "k2" }, { signal: new AbortController().signal });
+  assert.equal(second.kind, "done", "le second passage ne doit pas buter sur un dump disparu");
+  assert.equal(
+    (db.prepare("SELECT url_mairie FROM commune WHERE code_insee = '35047'").get() as { url_mairie: string })
+      .url_mairie,
+    "https://j21.example",
+    "le listing relu doit designer le dump du jour",
+  );
+});

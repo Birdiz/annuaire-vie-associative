@@ -95,30 +95,12 @@ function preparer(t: TestContext): { dbFile: string; cacheDir: string; urls: str
 
 type Run = { code: number | null; signal: NodeJS.Signals | null };
 
-/**
- * Lance le rejeu et, si `killApresMs` est positif, l'abat ce delai apres qu'il a
- * annonce « pret ». Le decompte part de l'annonce et non du `spawn` : le demarrage de
- * Node dure plus longtemps que le travail lui-meme, et un delai absolu tomberait
- * systematiquement avant que la premiere page ne soit jugee.
- */
-function lancer(
-  dbFile: string,
-  cacheDir: string,
-  killApresMs: number,
-  mode: "tout" | "reprise" = "tout",
-): Promise<Run> {
+/** Lance le rejeu dans un sous-processus. En mode « crash », il s'abat tout seul. */
+function lancer(dbFile: string, cacheDir: string, mode: "crash" | "reprise" | "tout"): Promise<Run> {
   return new Promise((resolve, reject) => {
     const child = spawn(process.execPath, [FIXTURE, dbFile, cacheDir, mode], {
-      stdio: ["ignore", "pipe", "ignore"],
+      stdio: ["ignore", "ignore", "ignore"],
     });
-
-    if (killApresMs >= 0) {
-      child.stdout.once("data", () => {
-        setTimeout(() => child.kill("SIGKILL"), killApresMs);
-      });
-    }
-    child.stdout.resume();
-
     child.on("error", reject);
     child.on("close", (code, signal) => resolve({ code, signal }));
   });
@@ -153,23 +135,6 @@ function compterJuges(dbFile: string): number {
   }
 }
 
-/**
- * Efface les verdicts entre deux tentatives. Sans cela, un passage qui irait au bout
- * laisserait toutes les pages jugees pour de bon, et les tentatives suivantes ne
- * pourraient plus distinguer « tue en plein travail » de « tue apres la fin ».
- */
-function effacerVerdicts(dbFile: string): void {
-  const db = openDatabase(dbFile);
-  try {
-    db.exec(
-      "UPDATE page SET prefiltre_score = NULL, prefiltre_verdict = NULL, prefiltre_motif = NULL, " +
-        "prefiltre_at = NULL, prefiltre_version = NULL, contacts_extraits = NULL",
-    );
-  } finally {
-    db.close();
-  }
-}
-
 test("tue en plein rejeu, le pre-filtre se relance et retombe sur le meme etat", async (t) => {
   const { dbFile, cacheDir } = preparer(t);
 
@@ -177,47 +142,30 @@ test("tue en plein rejeu, le pre-filtre se relance et retombe sur le meme etat",
   const reference = join(makeTempDir(t), "reference.sqlite");
   copyFileSync(dbFile, reference);
   const dbReference = openDatabase(reference);
-  const debut = performance.now();
   rejouerPrefiltre(dbReference, new HttpCache(cacheDir), systemClock, {
     departement: "35",
     campagne: CAMPAGNE,
     tout: true,
   });
-  // La duree du passage sain calibre les instants de mort : des delais fixes tomberaient
-  // tous avant la premiere tranche sur une machine lente, et tous apres la fin sur une
-  // machine rapide. Le test resterait vert, sans plus rien prouver.
-  const dureeSaine = performance.now() - debut;
   dbReference.close();
   const attendu = verdicts(reference);
   assert.equal(attendu.length, NB_PAGES);
 
-  // On cherche une mort qui tombe *en plein travail*, tranches deja ecrites et travail
-  // restant. L'instant se cherche au lieu de se fixer : sous charge, un delai calibre
-  // sur une machine au repos tombe avant la premiere tranche, et le test passerait au
-  // vert sans avoir rien interrompu.
-  let tue = false;
-  let juges = 0;
-  let delai = Math.max(5, Math.round(dureeSaine * 0.5));
+  // Mort a la premiere tranche commitee : le seul instant ou l'etat en base est
+  // partiel de facon certaine. Aucun chronometre, donc aucune dependance a la charge
+  // de la machine — ce test ne peut pas devenir vert par accident.
+  const crash = await lancer(dbFile, cacheDir, "crash");
+  assert.equal(crash.signal, "SIGKILL", "le rejeu devait s'abattre en plein travail");
 
-  for (let essai = 0; essai < 12; essai += 1) {
-    effacerVerdicts(dbFile);
-    const run = await lancer(dbFile, cacheDir, delai);
-    if (run.signal === "SIGKILL") tue = true;
-    juges = compterJuges(dbFile);
-    if (juges > 0 && juges < NB_PAGES) break;
-    // Trop tot : aucune tranche n'etait ecrite. Trop tard : tout l'etait.
-    delai = juges === 0 ? Math.round(delai * 1.7) + 5 : Math.max(3, Math.round(delai * 0.5));
-  }
-
-  assert.ok(tue, "aucun passage n'a ete interrompu : le test serait sans objet");
+  const juges = compterJuges(dbFile);
   assert.ok(
     juges > 0 && juges < NB_PAGES,
-    `aucune mort n'est tombee en plein travail (${juges}/${NB_PAGES} juges) : le test ne prouverait rien`,
+    `l'interruption doit laisser un etat partiel, recu ${juges}/${NB_PAGES}`,
   );
 
   // La relance emprunte le chemin reel d'une reprise : elle saute ce qui est deja juge
   // et termine le reste, sans nettoyage prealable ni etat de reprise a lire.
-  const dernier = await lancer(dbFile, cacheDir, -1, "reprise");
+  const dernier = await lancer(dbFile, cacheDir, "reprise");
   assert.equal(dernier.signal, null);
   assert.equal(dernier.code, 0);
 

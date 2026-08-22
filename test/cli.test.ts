@@ -47,6 +47,7 @@ test("l'aide documente chaque commande", async () => {
   assert.equal(code, 0);
   for (const commande of [
     "init", "run", "status", "metrics", "jobs", "purge", "fetch", "prefiltrer", "pages", "dormance",
+    "requeue",
   ]) {
     assert.match(stdout, new RegExp(`\\b${commande}\\b`), `${commande} devrait etre documentee`);
   }
@@ -251,6 +252,28 @@ test("metrics --json produit un document exploitable sans journal parasite", asy
   const document = JSON.parse(stdout) as { version: string; runs: { run: number; departement: string }[] };
   assert.equal(document.version, "0.1.0");
   assert.equal(document.runs[0]?.departement, "35");
+});
+
+test("requeue exige une cible et refuse un etat inconnu", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const sansCible = await annuaire(["requeue", "--data-dir", dir]);
+  assert.equal(sansCible.code, 2);
+  assert.match(sansCible.stderr, /Un job est requis/);
+
+  const etat = await annuaire(["requeue", "--state", "zombie", "--data-dir", dir]);
+  assert.equal(etat.code, 2);
+  assert.match(etat.stderr, /Etat inconnu/);
+});
+
+test("requeue sur un job introuvable explique pourquoi rien n'a bouge", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const { code, stdout } = await annuaire(["requeue", "4242", "--data-dir", dir]);
+  assert.equal(code, 1);
+  assert.match(stdout, /Aucun job remis en attente/);
 });
 
 test("jobs refuse un etat inconnu", async (t) => {

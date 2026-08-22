@@ -37,6 +37,8 @@ Commandes
   status                  Etat de l'installation et de la file de jobs
   metrics [--json]        Compteurs du §8
   jobs [--state <etat>]   Liste les jobs d'un etat donne (defaut : dead)
+  requeue <id|cle>        Remet en attente un job termine, ecarte ou mort
+          [--state <etat>]  ... ou tous ceux d'un etat donne
   purge                   Force la purge des donnees de plus de trois ans
   fetch <url>             Recupere une URL via le client conforme (diagnostic)
 
@@ -140,6 +142,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         return commandeMetrics(ouvrir, values.json === true);
       case "jobs":
         return commandeJobs(ouvrir, values.state);
+      case "requeue":
+        return commandeRequeue(ouvrir, positionals[1], values.state);
       case "purge":
         return commandePurge(ouvrir);
       case "run":
@@ -304,6 +308,59 @@ function commandeJobs(ouvrir: () => App, etatDemande: string | undefined): numbe
           `${detail === "" ? "" : `\n      ${detail}`}\n`,
       );
     }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
+/**
+ * Reenfile un job. Existe parce que les cles de deduplication portent une periode : le
+ * jour pour l'Annuaire, le mois pour le RNA. Elles raisonnent sur la source et jamais
+ * sur le lecteur, si bien qu'une migration qui lit de nouvelles colonnes dans le meme
+ * fichier ne peut pas se rejouer avant la periode suivante. Le seul recours etait
+ * jusqu'ici d'ouvrir la base au SQL.
+ */
+function commandeRequeue(
+  ouvrir: () => App,
+  selecteur: string | undefined,
+  etatDemande: string | undefined,
+): number {
+  if (selecteur === undefined && etatDemande === undefined) {
+    process.stderr.write(
+      "Un job est requis : annuaire requeue <id|cle>, ou annuaire requeue --state dead\n",
+    );
+    return 2;
+  }
+  if (etatDemande !== undefined && !ETATS.includes(etatDemande as JobState)) {
+    process.stderr.write(`Etat inconnu : ${etatDemande} (attendu : ${ETATS.join(", ")})\n`);
+    return 2;
+  }
+
+  const app = ouvrir();
+  try {
+    // Un identifiant numerique et une cle de deduplication ne se confondent pas : les
+    // cles du projet portent toutes un « : ».
+    const cible =
+      selecteur === undefined
+        ? { state: etatDemande as JobState }
+        : /^\d+$/.test(selecteur)
+          ? { id: Number(selecteur) }
+          : { dedupKey: selecteur };
+
+    const remis = app.queue.requeue(cible);
+    if (remis === 0) {
+      process.stdout.write(
+        "Aucun job remis en attente. Seuls les jobs termines, en echec, morts ou ecartes\n" +
+          "peuvent l'etre : un job deja en attente y est deja, un job en vol ne doit pas\n" +
+          "etre double. Verifiez avec : annuaire jobs --state <etat>\n",
+      );
+      return 1;
+    }
+    process.stdout.write(
+      `${remis} ${remis === 1 ? "job remis" : "jobs remis"} en attente. ` +
+        "Relancez la commande qui les traite.\n",
+    );
     return 0;
   } finally {
     app.close();
@@ -837,6 +894,7 @@ function commandePrefiltrer(
       campagne,
       tout: options.tout,
       avecMobiles: options.avecMobiles,
+      onTranche: (ecrites) => app.logger.debug("Tranche de pre-filtre ecrite", { pages: ecrites }),
       ...(seuil === null ? {} : { seuil }),
     });
     const distribution = distributionPrefiltre(app.db, departement, campagne);

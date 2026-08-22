@@ -240,6 +240,53 @@ export class JobQueue {
     this.#counters.inc(ETAPE.jobs, "released");
   }
 
+  /**
+   * Remet en attente un job deja termine, ecarte ou mort.
+   *
+   * Les cles de deduplication portent une periode — le jour pour l'Annuaire, le mois
+   * pour le RNA — et `enqueue` est un `INSERT OR IGNORE`. C'est ce qui empeche de
+   * retelecharger un dump inchange, et c'est voulu. Mais la cle raisonne sur la
+   * **source**, jamais sur le **lecteur** : quand une migration ajoute des colonnes
+   * lues dans le meme fichier, la source n'a pas bouge et le travail est pourtant a
+   * refaire. De meme, un job `skipped` sur une indisponibilite passagere reste ecarte
+   * jusqu'a la fin de sa periode, alors que le reessai serait legitime des la minute
+   * suivante.
+   *
+   * Sans cette methode, le seul recours etait d'ouvrir la base au SQL. La deduplication
+   * a raison sur les donnees et tort sur l'intention : il faut donc pouvoir dire
+   * l'intention, pas contourner la regle.
+   *
+   * Un job `pending` est deja en file et un job `leased` est en vol : ni l'un ni l'autre
+   * n'est concerne, les toucher dupliquerait un travail en cours.
+   */
+  requeue(selecteur: { id: number } | { dedupKey: string } | { state: JobState }): number {
+    const nowIso = toIso(this.#clock.now());
+
+    const [condition, valeur] =
+      "id" in selecteur
+        ? ["id = ?", selecteur.id]
+        : "dedupKey" in selecteur
+          ? ["dedup_key = ?", selecteur.dedupKey]
+          : ["state = ?", selecteur.state];
+
+    const info = this.#db
+      .prepare(
+        `UPDATE job
+            SET state = 'pending',
+                attempts = 0,
+                last_error = NULL,
+                reason = NULL,
+                lease_expires_at = NULL,
+                available_at = ?,
+                updated_at = ?
+          WHERE state IN ('done', 'failed', 'dead', 'skipped')
+            AND ${condition}`,
+      )
+      .run(nowIso, nowIso, valeur);
+
+    return Number(info.changes);
+  }
+
   counts(): Record<JobState, number> {
     const rows = this.#db.prepare("SELECT state, count(*) AS n FROM job GROUP BY state").all() as {
       state: JobState;

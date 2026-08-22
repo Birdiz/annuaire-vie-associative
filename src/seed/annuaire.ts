@@ -150,7 +150,14 @@ export function handlerAnnuaire(ctx: ContexteSeed): JobHandler {
     if (departement === undefined) return { kind: "skipped", reason: "payload sans departement" };
 
     const urlListing = ctx.sources?.annuaireListing ?? URL_ANNUAIRE_LISTING;
-    const listing = await ctx.client.fetch(urlListing, { signal: jobCtx.signal });
+    // Un index n'est pas une ressource : sa seule raison d'etre est de nommer le fichier
+    // du jour, et le dump qu'il designe est regenere quotidiennement. Le servir depuis le
+    // cache — sept jours par defaut — revient a demander poliment un fichier que le
+    // serveur a fait tourner depuis, et a recevoir un 404 dont rien n'indique la cause.
+    // Constate en production : trois runs consecutifs echoues sur une entree de cache
+    // vieille de deux jours. La revalidation coute une requete conditionnelle sur 600
+    // octets ; le corps ne repart que si le listing a reellement change.
+    const listing = await ctx.client.fetch(urlListing, { signal: jobCtx.signal, forceRevalidate: true });
     if (listing.kind === "blocked") return { kind: "skipped", reason: listing.reason };
     if (listing.kind === "status") {
       return { kind: "skipped", reason: `listing de l'Annuaire indisponible (statut ${listing.status})` };
