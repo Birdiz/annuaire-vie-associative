@@ -8,6 +8,8 @@ import { JobQueue } from "../../src/jobs/queue.ts";
 import { NOM_COOKIE, hoteAccepte, router, verifierAcces } from "../../src/ui/routes.ts";
 import type { ContexteUi, RequeteUi } from "../../src/ui/routes.ts";
 import { CODE_INSEE, DEPARTEMENT, preparerCorpus } from "../helpers/corpus.ts";
+import { piloteDouble, reglagesDouble } from "../helpers/pilote-double.ts";
+import type { PiloteDouble, ReglagesDouble } from "../helpers/pilote-double.ts";
 import type { TestContext } from "node:test";
 
 /**
@@ -20,7 +22,9 @@ const JETON = "jeton-de-test";
 const PORT = 8787;
 const HORLOGE = fixedClock(Date.parse("2026-09-01T10:00:00.000Z"));
 
-function contexte(t: TestContext): ContexteUi {
+type ContexteTest = ContexteUi & { pilote: PiloteDouble; reglages: ReglagesDouble };
+
+function contexte(t: TestContext): ContexteTest {
   const { dbFile } = preparerCorpus(t);
   const db = openDatabase(dbFile);
   t.after(() => db.close());
@@ -39,6 +43,8 @@ function contexte(t: TestContext): ContexteUi {
     port: PORT,
     version: "0.1.0",
     departementSecours: DEPARTEMENT,
+    pilote: piloteDouble(),
+    reglages: reglagesDouble("https://exemple.fr/contact"),
   };
 }
 
@@ -251,4 +257,122 @@ test("un refus d'arbitrage s'affiche sur place, sans passer par l'URL", (t) => {
   // l'historique du navigateur.
   assert.equal(reponse.entetes["Location"], undefined);
   assert.match(corpsTexte(reponse.corps), /forme d&#39;une adresse/);
+});
+
+/**
+ * Lot 8 : lancer, arreter, regler. Le routeur ne fait que transmettre — le pilote,
+ * lui, est teste dans `pilote.test.ts`. Ce qui compte ici est qu'aucune de ces routes
+ * n'attende quoi que ce soit, et qu'un formulaire ordinaire soit redirige.
+ */
+
+function post(chemin: string, corps: string, htmx = false): RequeteUi {
+  const entetes: Record<string, string | undefined> = {
+    host: `127.0.0.1:${PORT}`,
+    cookie: `${NOM_COOKIE}=${JETON}`,
+  };
+  if (htmx) entetes["hx-request"] = "true";
+  return requete(chemin, { methode: "POST", corps, entetes });
+}
+
+test("POST /run transmet le departement au pilote et redirige un formulaire ordinaire", (t) => {
+  const ctx = contexte(t);
+
+  const reponse = router(ctx, post(`/run?departement=${DEPARTEMENT}`, `departement=${DEPARTEMENT}`));
+
+  assert.deepEqual(ctx.pilote.demarrages, [DEPARTEMENT]);
+  assert.equal(reponse.statut, 303, "sans redirection, un rechargement relancerait un run");
+  assert.equal(reponse.entetes["Location"], `/?departement=${DEPARTEMENT}`);
+});
+
+test("POST /run par htmx rend le seul bloc de suivi", (t) => {
+  const ctx = contexte(t);
+  ctx.pilote.poser({ kind: "en_cours", departement: DEPARTEMENT, demarre: "2026-09-01T10:00:00.000Z", runId: 7 });
+
+  const reponse = router(ctx, post(`/run?departement=${DEPARTEMENT}`, `departement=${DEPARTEMENT}`, true));
+  const corps = corpsTexte(reponse.corps);
+
+  assert.equal(reponse.statut, 200);
+  assert.doesNotMatch(corps, /<!doctype html>/);
+  assert.match(corps, /Arreter le run/, "un run en cours s'arrete, il ne se relance pas");
+});
+
+test("un refus de lancement survit au rafraichissement du bloc de suivi", (t) => {
+  const ctx = contexte(t);
+  ctx.pilote.repondre({ kind: "refus", message: "Un run est deja en cours dans cette interface." });
+
+  router(ctx, post(`/run?departement=${DEPARTEMENT}`, `departement=${DEPARTEMENT}`, true));
+
+  // Le bloc se reechange toutes les deux secondes : un message rendu une seule fois
+  // dans la reponse au POST aurait disparu avant d'etre lu.
+  const suivi = router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`));
+  assert.match(corpsTexte(suivi.corps), /Un run est deja en cours/);
+});
+
+test("POST /run/arret demande l'arret", (t) => {
+  const ctx = contexte(t);
+  ctx.pilote.poser({ kind: "en_cours", departement: DEPARTEMENT, demarre: "t", runId: 7 });
+
+  const reponse = router(ctx, post(`/run/arret?departement=${DEPARTEMENT}`, "", true));
+
+  assert.equal(ctx.pilote.arrets, 1);
+  assert.equal(reponse.statut, 200);
+});
+
+test("le bouton cede la place au reglage tant que l'URL de contact manque (§4.4)", (t) => {
+  const ctx = contexte(t);
+  ctx.reglages = reglagesDouble();
+
+  const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+
+  assert.doesNotMatch(ecran, /Lancer un run/);
+  assert.match(ecran, /aucune collecte ne part sans elle/);
+});
+
+test("POST /reglages enregistre l'URL de contact, et le bouton apparait", (t) => {
+  const ctx = contexte(t);
+  ctx.reglages = reglagesDouble();
+
+  const reponse = router(
+    ctx,
+    post("/reglages", `contactUrl=${encodeURIComponent("https://exemple.fr/nous-ecrire")}`, true),
+  );
+
+  assert.equal(reponse.statut, 200);
+  assert.deepEqual(ctx.reglages.ecrites, ["https://exemple.fr/nous-ecrire"]);
+  assert.match(corpsTexte(router(ctx, requete("/suivi")).corps), /Lancer un run/);
+});
+
+test("une URL de contact invalide est refusee sur place, sans passer par l'URL", (t) => {
+  const ctx = contexte(t);
+  ctx.reglages = reglagesDouble();
+
+  const reponse = router(ctx, post("/reglages", "contactUrl=mairie-de-bruzou", true));
+
+  assert.equal(reponse.statut, 422);
+  assert.equal(reponse.entetes["Location"], undefined);
+  assert.deepEqual(ctx.reglages.ecrites, []);
+  assert.match(corpsTexte(reponse.corps), /n&#39;est pas une URL absolue/);
+});
+
+test("une URL de contact venue de l'environnement s'affiche sans champ de saisie", (t) => {
+  const ctx = contexte(t);
+  ctx.reglages = reglagesDouble("https://exemple.fr/contact", true);
+
+  const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(ecran, /ANNUAIRE_CONTACT_URL/);
+  assert.doesNotMatch(ecran, /name="contactUrl"/, "un champ qui ne servirait a rien vaut mieux absent");
+});
+
+test("un run que cette interface ne pilote pas est signale, sans bloquer le bouton", (t) => {
+  const ctx = contexte(t);
+  ctx.db
+    .prepare("INSERT INTO run (departement, started_at, statut, phase) VALUES (?, ?, 'en_cours', 'decouverte')")
+    .run(DEPARTEMENT, "2026-09-01T09:00:00.000Z");
+
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(suivi, /phase decouverte/, "la phase vient de la base, pas de la memoire de l'interface");
+  assert.match(suivi, /n'est pas pilote depuis cette interface/);
+  assert.match(suivi, /Lancer un run/, "une ligne orpheline ne doit pas condamner l'interface");
 });

@@ -559,4 +559,24 @@ CREATE INDEX idx_contact_a_revoir
   WHERE review_statut = 'a_revoir';
 `,
   },
+  {
+    version: 7,
+    name: "phase-du-run",
+    sql: `
+--------------------------------------------------------------------------------
+-- Phase du run : ou en est l'entonnoir
+--------------------------------------------------------------------------------
+
+-- Le lot 8 permet de lancer un run depuis l'interface (ADR-024), donc de le suivre
+-- depuis un ecran qui ne voit pas la console. Restait a savoir *quoi* montrer : la file
+-- de jobs dit combien il reste a faire, pas dans laquelle des trois passes on se trouve.
+--
+-- Cette colonne est ecrite par executerRun a chaque transition, et remise a NULL a la
+-- fin. Elle est persistee plutot que gardee en memoire par l'interface pour deux
+-- raisons : un run lance dans un terminal doit s'afficher pareil, et l'information doit
+-- survivre au redemarrage de l'interface. Pas de CHECK : une phase inconnue apres une
+-- mise a jour vaut mieux qu'un run qui echoue a s'annoncer.
+ALTER TABLE run ADD COLUMN phase TEXT;
+`,
+  },
 ];

@@ -16,12 +16,14 @@ export type LigneRun = {
   started_at: string;
   finished_at: string | null;
   statut: string;
+  /** Passe en cours, ecrite par `executerRun` ; nulle des que le run est clos. */
+  phase: string | null;
 };
 
 export function runsRecents(db: Database, limite = 5): LigneRun[] {
   return db
     .prepare(
-      "SELECT id, departement, started_at, finished_at, statut FROM run ORDER BY id DESC LIMIT ?",
+      "SELECT id, departement, started_at, finished_at, statut, phase FROM run ORDER BY id DESC LIMIT ?",
     )
     .all(limite) as unknown as LigneRun[];
 }

@@ -51,6 +51,7 @@ test("l'aide documente chaque commande", async () => {
   ]) {
     assert.match(stdout, new RegExp(`\\b${commande}\\b`), `${commande} devrait etre documentee`);
   }
+  assert.match(stdout, /--sans-navigateur/, "le drapeau du lot 8 doit etre documente");
   assert.match(stdout, /ne sont pas configurables/, "l'aide doit dire que les invariants ne se reglent pas");
 });
 
@@ -347,12 +348,14 @@ test("une configuration invalide est rapportee sans trace d'exception", async (t
 });
 
 /**
- * L'interface locale, lancee comme un utilisateur la lancerait. Le sous-processus
- * precharge le garde-fou anti-reseau comme les autres : le port ephemere sur lequel il
- * ecoute est sur la boucle locale, seul hote que la suite autorise.
+ * L'interface locale, lancee comme un utilisateur la lancerait — a une chose pres.
+ * `--sans-navigateur` est obligatoire ici : depuis le lot 8, `annuaire ui` ouvre le
+ * navigateur du poste, et une suite de tests qui en ouvrirait un par cas serait
+ * insupportable. Le sous-processus precharge le garde-fou anti-reseau comme les autres :
+ * le port ephemere sur lequel il ecoute est sur la boucle locale, seul hote autorise.
  */
 function lancerUi(t: TestContext, args: readonly string[]): Promise<{ url: string; arreter: () => Promise<number> }> {
-  const child = spawn(process.execPath, ["--import", GARDE_RESEAU, CLI, "ui", ...args], {
+  const child = spawn(process.execPath, ["--import", GARDE_RESEAU, CLI, "ui", "--sans-navigateur", ...args], {
     stdio: ["ignore", "pipe", "pipe"],
   });
   const fin = new Promise<number>((resolve) => child.on("close", (code) => resolve(code ?? -1)));

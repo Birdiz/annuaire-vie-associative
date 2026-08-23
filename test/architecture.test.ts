@@ -98,6 +98,41 @@ test("la porte d'entree ecoute, et n'appelle jamais", () => {
   }
 });
 
+/**
+ * Porte de sortie **processus** (lot 8). Ouvrir le navigateur de l'utilisateur est la
+ * seule chose que l'outil demande au systeme d'executer, et il n'y a pas de raison que
+ * cela se repande : un `spawn` egare est un contournement possible de tout le reste.
+ */
+const PORTE_PROCESSUS = join("src", "ui", "navigateur.ts");
+
+test("un seul module lance un processus, et jamais a travers un shell", () => {
+  const interdits: string[] = [];
+
+  for (const fichier of fichiersSource(SRC)) {
+    const relatif = relative(RACINE, fichier);
+    if (relatif === PORTE_PROCESSUS) continue;
+    const source = readFileSync(fichier, "utf8");
+    for (const module of ["node:child_process", "node:worker_threads"]) {
+      if (source.includes(`"${module}"`) || source.includes(`'${module}'`)) {
+        interdits.push(`${relatif} importe ${module}`);
+      }
+    }
+  }
+
+  assert.deepEqual(
+    interdits,
+    [],
+    `Lancer un processus passe par ${PORTE_PROCESSUS}, seul endroit ou l'on sait ce qui est execute.`,
+  );
+
+  // `cmd /c start "" <url>` est la recette repandue sous Windows, et sa citation est un
+  // piege : un `&` dans l'URL y devient un separateur de commandes. L'argument doit
+  // arriver au systeme sans passer par un interpreteur.
+  const code = codeEffectif(readFileSync(join(RACINE, PORTE_PROCESSUS), "utf8"));
+  assert.doesNotMatch(code, /shell\s*:/, "aucun shell : l'URL serait interpretee");
+  assert.doesNotMatch(code, /\bexec\s*\(|\bexecSync\s*\(/, "exec passe par un shell");
+});
+
 test("l'UI ne reference aucune ressource distante", () => {
   // htmx est servi depuis cette machine. Un `<script src="https://...">` ferait sortir
   // l'outil sur le reseau a l'ouverture d'un ecran — ce que le local-first interdit — et

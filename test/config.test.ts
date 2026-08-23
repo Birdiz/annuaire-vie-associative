@@ -2,7 +2,13 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { loadConfig, requireContactUrl, writeConfigTemplate, ConfigError } from "../src/config.ts";
+import {
+  loadConfig,
+  requireContactUrl,
+  writeConfigTemplate,
+  ecrireContactUrl,
+  ConfigError,
+} from "../src/config.ts";
 import { makeTempDir } from "./helpers/tmp.ts";
 
 function writeConfig(dir: string, content: unknown): string {
@@ -98,4 +104,46 @@ test("le gabarit de configuration n'ecrase jamais un fichier existant", (t) => {
 
   // Le gabarit doit rester chargeable tel quel, sans URL de contact renseignee.
   assert.equal(loadConfig(file, {}).contactUrl, undefined);
+});
+
+/**
+ * Lot 8 : l'URL de contact se renseigne depuis l'interface, sur une installation qui n'a
+ * jamais vu d'editeur de texte. Ce qui compte est que le fichier n'y perde rien.
+ */
+
+test("ecrire l'URL de contact preserve le reste du fichier", (t) => {
+  const file = join(makeTempDir(t), "config.json");
+  writeConfigTemplate(file);
+
+  const resultat = ecrireContactUrl(file, "  https://exemple.fr/nous-ecrire  ");
+
+  assert.deepEqual(resultat, { url: "https://exemple.fr/nous-ecrire" });
+  const relu = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
+  assert.equal(relu["contactUrl"], "https://exemple.fr/nous-ecrire");
+  assert.ok(Array.isArray(relu["_aide"]), "l'aide du gabarit ne doit pas disparaitre");
+  assert.deepEqual(relu["llm"], { provider: "none" });
+  assert.equal(loadConfig(file, {}).contactUrl, "https://exemple.fr/nous-ecrire");
+});
+
+test("ecrire l'URL de contact cree le fichier quand il n'existe pas encore", (t) => {
+  const file = join(makeTempDir(t), "config.json");
+
+  assert.deepEqual(ecrireContactUrl(file, "https://exemple.fr/contact"), {
+    url: "https://exemple.fr/contact",
+  });
+  assert.equal(loadConfig(file, {}).contactUrl, "https://exemple.fr/contact");
+});
+
+test("une URL de contact invalide est refusee sans toucher au fichier", (t) => {
+  const file = join(makeTempDir(t), "config.json");
+  writeConfigTemplate(file);
+  const avant = readFileSync(file, "utf8");
+
+  // Le meme controle que le chargement : un User-Agent qui ne mene nulle part vaut un
+  // User-Agent anonyme, que le §4.4 interdit.
+  for (const saisie of ["mairie-de-bruzou", "ftp://exemple.fr/contact", ""]) {
+    const resultat = ecrireContactUrl(file, saisie);
+    assert.ok("erreur" in resultat, saisie);
+  }
+  assert.equal(readFileSync(file, "utf8"), avant);
 });

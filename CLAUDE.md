@@ -126,9 +126,21 @@ l'est. Les garde-fous (verification de `Host`, jeton echange contre un cookie
 `SameSite=Strict`, refus des POST croises, CSP `default-src 'self'`) vivent dans
 `src/ui/routes.ts`, ou ils se testent sans ouvrir de socket.
 
+Depuis le lot 8, l'interface **lance** le run et n'en est plus seulement le spectateur
+(ADR-024) : le worker tourne dans le process de l'UI, et `src/ui/pilote.ts` en tient
+l'etat. Le bloc de suivi se rafraichit toutes les deux secondes — il ne peut donc porter
+aucun champ de saisie, et un message qui doit etre lu se garde dans le pilote plutot que
+d'etre rendu une seule fois.
+
 Toute valeur venue du crawl passe par `echapperHtml` de `src/ui/rendu.ts` avant d'entrer
 dans une page — meme discipline que le desamorcage des formules a l'export. La CSP ferme
 la meme porte une seconde fois ; aucune des deux ne dispense de l'autre.
+
+## Une seule porte de lancement de processus
+
+`src/ui/navigateur.ts` est le seul module autorise a importer `node:child_process`, et un
+test d'architecture le verifie. Il n'utilise **jamais de shell** : `cmd /c start "" <url>`
+citerait mal l'URL, ou un `&` devient un separateur de commandes.
 
 ## Definition du « fait »
 

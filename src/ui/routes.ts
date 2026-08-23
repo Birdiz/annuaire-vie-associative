@@ -31,7 +31,9 @@ import {
   runsRecents,
 } from "./requetes.ts";
 import { arbitrer, estActionRevue } from "./revue.ts";
-import { ecranSynthese, fragmentSuivi } from "./vues/synthese.ts";
+import { ecranSynthese, fragmentSuivi, fragmentReglages } from "./vues/synthese.ts";
+import type { DonneesSuivi, DonneesReglages } from "./vues/synthese.ts";
+import type { SurfacePilote } from "./pilote.ts";
 import { ecranRevue, fragmentFile } from "./vues/revue.ts";
 import { ecranExport } from "./vues/export.ts";
 import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts";
@@ -70,6 +72,20 @@ export type ContexteUi = {
   version: string;
   /** Departement affiche quand la base n'en connait aucun. */
   departementSecours: string;
+  /**
+   * Le run que cette interface pilote (ADR-024). Le worker tourne dans ce process : le
+   * routeur ne fait que demander, il n'attend jamais — un run dure des minutes.
+   */
+  pilote: SurfacePilote;
+  /** L'URL de contact du §4.4, lue et ecrite depuis l'ecran. */
+  reglages: SurfaceReglages;
+};
+
+export type SurfaceReglages = {
+  contactUrl(): string | undefined;
+  /** Vrai quand la variable d'environnement l'emporte : le fichier n'y peut rien. */
+  parEnvironnement(): boolean;
+  enregistrer(valeur: string): { url: string } | { erreur: string };
 };
 
 /**
@@ -205,7 +221,8 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
         contenu: ecranSynthese({
           departement,
           departements,
-          suivi: { runs: runsRecents(ctx.db), jobs: ctx.queue.counts() },
+          suivi: donneesSuivi(ctx, departement),
+          reglages: donneesReglages(ctx),
           couverture: mesurerCouverture(ctx.db, departement),
           dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
           prefiltre: distributionDuJour(ctx, departement),
@@ -217,7 +234,24 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   }
 
   if (requete.methode === "GET" && requete.chemin === "/suivi") {
-    return html(fragmentSuivi({ runs: runsRecents(ctx.db), jobs: ctx.queue.counts() }));
+    return html(fragmentSuivi(donneesSuivi(ctx, departement)));
+  }
+
+  // Lancer et arreter. Rien n'est attendu ici : le pilote rend la main aussitot, et
+  // c'est le bloc de suivi — deja rafraichi toutes les deux secondes — qui rend compte.
+  if (requete.methode === "POST" && requete.chemin === "/run") {
+    const champs = new URLSearchParams(requete.corps);
+    ctx.pilote.demarrer(champs.get("departement") ?? departement);
+    return reponseSuivi(ctx, requete, departement);
+  }
+
+  if (requete.methode === "POST" && requete.chemin === "/run/arret") {
+    ctx.pilote.arreter();
+    return reponseSuivi(ctx, requete, departement);
+  }
+
+  if (requete.methode === "POST" && requete.chemin === "/reglages") {
+    return enregistrerReglages(ctx, requete, departement, departements);
   }
 
   if (requete.methode === "GET" && requete.chemin === "/revue") {
@@ -282,6 +316,30 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   return texte("Introuvable.\n", 404);
 }
 
+function donneesSuivi(ctx: ContexteUi, departement: string): DonneesSuivi {
+  return {
+    runs: runsRecents(ctx.db),
+    jobs: ctx.queue.counts(),
+    departement,
+    pilote: ctx.pilote.etat(),
+    refus: ctx.pilote.refus(),
+    collecteConfiguree: ctx.reglages.contactUrl() !== undefined,
+  };
+}
+
+function donneesReglages(
+  ctx: ContexteUi,
+  message?: string,
+  erreur?: string,
+): DonneesReglages {
+  return {
+    contactUrl: ctx.reglages.contactUrl(),
+    parEnvironnement: ctx.reglages.parEnvironnement(),
+    message,
+    erreur,
+  };
+}
+
 function distributionDuJour(ctx: ContexteUi, departement: string) {
   const campagne = derniereCampagne(ctx.db, departement);
   return campagne === undefined ? undefined : distributionPrefiltre(ctx.db, departement, campagne);
@@ -300,6 +358,58 @@ function donneesRevue(
     distribution: distributionRevue(ctx.db, departement),
     refus,
   };
+}
+
+/**
+ * Reponse aux commandes de run : le fragment de suivi pour htmx, une redirection sinon
+ * — sans quoi un rechargement de page relancerait la commande.
+ */
+function reponseSuivi(ctx: ContexteUi, requete: RequeteUi, departement: string): ReponseUi {
+  if (requete.entetes["hx-request"] === "true") return html(fragmentSuivi(donneesSuivi(ctx, departement)));
+  return redirection(`/?departement=${encodeURIComponent(departement)}`);
+}
+
+/**
+ * L'URL de contact (§4.4). Le refus est rendu sur place, jamais renvoye dans l'URL : la
+ * valeur saisie y passerait, et l'historique du navigateur la garderait.
+ */
+function enregistrerReglages(
+  ctx: ContexteUi,
+  requete: RequeteUi,
+  departement: string,
+  departements: readonly string[],
+): ReponseUi {
+  const saisie = new URLSearchParams(requete.corps).get("contactUrl") ?? "";
+  const resultat = ctx.reglages.enregistrer(saisie);
+  const erreur = "erreur" in resultat ? resultat.erreur : undefined;
+  const message =
+    erreur === undefined ? "URL de contact enregistree. La collecte peut demarrer." : undefined;
+
+  const donnees = donneesReglages(ctx, message, erreur);
+  const statut = erreur === undefined ? 200 : 422;
+
+  if (requete.entetes["hx-request"] === "true") return html(fragmentReglages(donnees), statut);
+  if (erreur === undefined) return redirection(`/?departement=${encodeURIComponent(departement)}`);
+  return html(
+    page({
+      titre: "Synthese",
+      onglet: "synthese",
+      departement,
+      version: ctx.version,
+      contenu: ecranSynthese({
+        departement,
+        departements,
+        suivi: donneesSuivi(ctx, departement),
+        reglages: donnees,
+        couverture: mesurerCouverture(ctx.db, departement),
+        dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
+        prefiltre: distributionDuJour(ctx, departement),
+        normalisation: distributionNormalisation(ctx.db, departement),
+        revue: distributionRevue(ctx.db, departement),
+      }),
+    }),
+    statut,
+  );
 }
 
 /**

@@ -1,29 +1,27 @@
 // Surface de commandes de l'outil. Le point d'entree, lui, vit dans `bin.ts` : ce
 // module n'expose que `main`, ce qui le rend testable et bundlable (ADR-022).
 import { parseArgs } from "node:util";
+import sea from "node:sea";
 import { existsSync, writeFileSync } from "node:fs";
 import { openApp, requireClient, startupPurge } from "./app.ts";
 import type { App } from "./app.ts";
 import { writeConfigTemplate, ConfigError } from "./config.ts";
-import { Worker, installShutdownHandlers } from "./jobs/worker.ts";
+import { installShutdownHandlers } from "./jobs/worker.ts";
 import type { JobState } from "./jobs/queue.ts";
 import { MIGRATIONS } from "./db/migrations.ts";
 import { toIso } from "./clock.ts";
 import { VERSION } from "./version.ts";
-import type { Logger } from "./log.ts";
-import { creerHandlers, cleAnnuaire } from "./seed/index.ts";
-import type { ContexteSeed } from "./seed/index.ts";
-import { creerHandlersDecouverte, campagneDuJour, cleDecouverte } from "./decouverte/index.ts";
-import type { ContexteDecouverte } from "./decouverte/index.ts";
+import { executerRun, lancerDecouverte, lancerNormalisation, refusDepartement } from "./pipeline.ts";
+import type { OptionsDecouverte } from "./pipeline.ts";
 import { PAGES_MAX_PAR_COMMUNE } from "./decouverte/scoring.ts";
 import { SEUIL_EXTRACTION, SEUIL_PAR_DEFAUT } from "./decouverte/prefiltre.ts";
 import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./decouverte/rejeu.ts";
-import { creerHandlersNormalisation, cleNormalisation } from "./normalisation/index.ts";
-import type { ContexteNormalisation } from "./normalisation/index.ts";
 import { distributionNormalisation } from "./normalisation/rejeu.ts";
 import { normaliser } from "./normalisation/rejeu.ts";
 import { compterLignes, lignesCsv } from "./export/csv.ts";
 import { demarrerServeur, ADRESSE_ECOUTE } from "./ui/serveur.ts";
+import { PiloteRun } from "./ui/pilote.ts";
+import { ouvrirNavigateur } from "./ui/navigateur.ts";
 import { mesurerDormance } from "./metrics/dormance.ts";
 
 /** Port d'ecoute de l'interface locale. Le port est reglable, l'adresse ne l'est pas. */
@@ -49,7 +47,8 @@ Commandes
   associations --departement <dd>  Associations amorcees, avec leur commune
   dormance --departement <dd>   Anciennete de declaration des associations
   dumps                   Etat des dumps ouverts et de leur reprise
-  ui [--port <n>]         Sert l'interface locale : suivi de run, revue, export
+  ui [--port <n>]         Sert l'interface locale : lancement et suivi d'un run,
+                          revue, export — puis ouvre le navigateur
   status                  Etat de l'installation et de la file de jobs
   metrics [--json]        Compteurs du §8
   jobs [--state <etat>]   Liste les jobs d'un etat donne (defaut : dead)
@@ -92,6 +91,7 @@ Options d'export
 Options d'interface
   --port <n>              Port d'ecoute (defaut : ${PORT_UI_PAR_DEFAUT}). L'interface
                           n'ecoute que sur ${ADRESSE_ECOUTE}, et cela n'est pas reglable.
+  --sans-navigateur       N'ouvre pas le navigateur au demarrage
 
 Options communes
   --data-dir <chemin>     Repertoire de donnees (defaut : emplacement systeme)
@@ -104,6 +104,21 @@ ne sont pas configurables et n'ont donc pas d'option.
 `;
 
 const ETATS: readonly JobState[] = ["pending", "leased", "done", "failed", "dead", "skipped"];
+
+/**
+ * Ce que fait l'outil quand on ne lui demande rien.
+ *
+ * Double-cliquer sur l'executable Windows, c'est lancer `annuaire` sans argument. Le §2
+ * du brief decrit pourtant l'artefact comme « un serveur HTTP sur localhost qui sert une
+ * UI, puis ouvre le navigateur » : y repondre par une page d'aide dans une console rate
+ * la cible. L'emballage est donc interroge — `sea.isSea()` est un fait de construction,
+ * pas une heuristique d'environnement comme celle que l'ADR-023 a ecartee pour le
+ * conteneur. `npx` et l'image Docker, dont les utilisateurs ont un terminal sous les
+ * yeux, gardent l'aide et son code de sortie.
+ */
+function commandeParDefaut(): string | undefined {
+  return sea.isSea() ? "ui" : undefined;
+}
 
 export async function main(argv: readonly string[]): Promise<number> {
   let parsed;
@@ -128,6 +143,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         "score-min": { type: "string" },
         "avec-rejetes": { type: "boolean", default: false },
         port: { type: "string" },
+        "sans-navigateur": { type: "boolean", default: false },
         tout: { type: "boolean", default: false },
         limit: { type: "string" },
         json: { type: "boolean", default: false },
@@ -147,7 +163,7 @@ export async function main(argv: readonly string[]): Promise<number> {
     return 0;
   }
 
-  const commande = positionals[0];
+  const commande = positionals[0] ?? commandeParDefaut();
   if (values.help === true || commande === undefined || commande === "help") {
     process.stdout.write(USAGE);
     return commande === undefined && values.help !== true ? 2 : 0;
@@ -172,7 +188,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       case "init":
         return commandeInit(ouvrir, values["data-dir"]);
       case "ui":
-        return await commandeUi(ouvrir, values.port, values.departement);
+        return await commandeUi(
+          ouvrir,
+          values.port,
+          values.departement,
+          values["sans-navigateur"] === true,
+        );
       case "status":
         return commandeStatus(ouvrir);
       case "metrics":
@@ -275,6 +296,7 @@ async function commandeUi(
   ouvrir: () => App,
   port: string | undefined,
   departement: string | undefined,
+  sansNavigateur: boolean,
 ): Promise<number> {
   const numero = port === undefined ? PORT_UI_PAR_DEFAUT : Number(port);
   if (!Number.isInteger(numero) || numero < 0 || numero > 65535) {
@@ -283,6 +305,7 @@ async function commandeUi(
   }
 
   const app = ouvrir();
+  const pilote = new PiloteRun(app);
   let serveur;
   try {
     startupPurge(app);
@@ -294,6 +317,15 @@ async function commandeUi(
       clock: app.clock,
       version: VERSION,
       departementSecours: departement ?? DEPARTEMENT_PAR_DEFAUT,
+      pilote,
+      reglages: {
+        contactUrl: () => app.config.contactUrl,
+        parEnvironnement: () => {
+          const valeur = process.env["ANNUAIRE_CONTACT_URL"];
+          return valeur !== undefined && valeur !== "";
+        },
+        enregistrer: (valeur) => app.configurerContactUrl(valeur),
+      },
       logger: app.logger,
     });
   } catch (cause) {
@@ -322,8 +354,15 @@ async function commandeUi(
     ].join("\n"),
   );
 
+  // Le §2 du brief : l'artefact « sert une UI web, puis ouvre le navigateur ». Un echec
+  // ne coute rien — l'adresse vient d'etre imprimee juste au-dessus.
+  if (!sansNavigateur) ouvrirNavigateur(serveur.url);
+
   const controller = installShutdownHandlers(() => {
     process.stdout.write("Arret de l'interface.\n");
+    if (pilote.arreter()) {
+      process.stdout.write("Un run est en cours : les jobs deja pris vont finir.\n");
+    }
   });
 
   try {
@@ -332,6 +371,9 @@ async function commandeUi(
         controller.signal.addEventListener("abort", () => resoudre(), { once: true });
       });
     }
+    // Avant de fermer la base : un worker encore vivant ecrirait dans une connexion
+    // fermee, et c'est la seule facon de perdre du travail dans ce lot.
+    await pilote.attendre();
     await serveur.fermer();
     return 0;
   } finally {
@@ -515,15 +557,9 @@ async function commandeRun(
     decouverte: OptionsDecouverte;
   },
 ): Promise<number> {
-  if (departement === undefined || !/^(\d{2}|\d[AB]|\d{3})$/i.test(departement)) {
-    process.stderr.write("Un departement est requis : annuaire run --departement 35\n");
-    return 2;
-  }
-  if (["57", "67", "68"].includes(departement)) {
-    process.stderr.write(
-      `Le departement ${departement} est hors du champ du RNA (droit local d'Alsace-Moselle).\n` +
-        "Aucune amorce n'est disponible pour ce departement.\n",
-    );
+  const refus = refusDepartement(departement);
+  if (refus !== undefined || departement === undefined) {
+    process.stderr.write(`${refus ?? ""}\nExemple : annuaire run --departement 35\n`);
     return 2;
   }
 
@@ -534,69 +570,11 @@ async function commandeRun(
 
   const app = ouvrir();
   try {
-    const client = requireClient(app);
-    startupPurge(app);
-
-    const info = app.db
-      .prepare("INSERT INTO run (departement, started_at, statut) VALUES (?, ?, 'en_cours')")
-      .run(departement, toIso(app.clock.now()));
-    const runId = Number(info.lastInsertRowid);
-    const logger = app.logger.child({ run_id: runId });
-    logger.info("Demarrage du run", { departement });
-
     const controller = installShutdownHandlers(() => {
-      logger.warn("Arret demande : plus aucun job n'est pris, les jobs en cours vont finir");
+      app.logger.warn("Arret demande : plus aucun job n'est pris, les jobs en cours vont finir");
     });
 
-    const contexte: ContexteSeed = {
-      db: app.db,
-      client,
-      counters: app.counters.forRun(runId),
-      clock: app.clock,
-      logger,
-      queue: app.queue,
-      runId,
-    };
-
-    // Seule l'etape [2] est enfilee : elle enchaine elle-meme sur l'amorce RNA, qui a
-    // besoin des communes pour rattacher les associations. Le dump de l'Annuaire est
-    // regenere chaque jour, d'ou une cle de deduplication a la journee.
-    const jour = toIso(app.clock.now()).slice(0, 10);
-    app.queue.enqueue(
-      "annuaire_dump",
-      cleAnnuaire(departement, jour),
-      {
-        departement,
-        avecImport: options.avecImport,
-        ...(options.rnaFile === undefined ? {} : { rnaFile: options.rnaFile }),
-      },
-      { runId },
-    );
-
-    const worker = new Worker(app.queue, creerHandlers(contexte), { concurrency: app.config.concurrency });
-    const stats = await worker.run(controller.signal);
-
-    // La decouverte est lancee dans une seconde passe, apres que l'amorce soit
-    // entierement drainee. Ce n'est pas une precaution de style : le rapprochement
-    // d'un contact avec une association lit la table `association`, et la laisser
-    // tourner en parallele du second dump RNA (--avec-import) ferait echouer des
-    // rattachements que rien ne viendrait corriger ensuite.
-    if (!options.sansDecouverte && !controller.signal.aborted) {
-      await lancerDecouverte(app, runId, logger, departement, options.decouverte, controller.signal);
-    }
-
-    // Les etapes [7] et [8] closent le run : sans elles, les contacts sortent du crawl
-    // dedupliques a moitie et sans score, donc inexploitables par l'export.
-    if (!controller.signal.aborted) {
-      await lancerNormalisation(app, runId, logger, departement, controller.signal);
-    }
-
-    const interrompu = controller.signal.aborted;
-    app.db
-      .prepare("UPDATE run SET finished_at = ?, statut = ? WHERE id = ?")
-      .run(toIso(app.clock.now()), interrompu ? "interrompu" : "termine", runId);
-
-    logger.info("Fin du run", { ...stats, interrompu });
+    const { interrompu } = await executerRun(app, { departement, ...options }, controller.signal);
 
     resumeRun(app, departement);
     return interrompu ? 130 : 0;
@@ -821,8 +799,6 @@ function formaterOctets(valeur: number): string {
 }
 
 /** Resume ce que le run a produit, pour que le jalon soit lisible sans autre commande. */
-export type OptionsDecouverte = { maxPages: number; avecMobiles: boolean };
-
 /** Rend `undefined` sur une valeur invalide : c'est une erreur d'usage, pas d'execution. */
 function lireOptionsDecouverte(
   maxPages: string | undefined,
@@ -832,84 +808,6 @@ function lireOptionsDecouverte(
   const valeur = Number.parseInt(maxPages, 10);
   if (!Number.isInteger(valeur) || valeur < 1 || String(valeur) !== maxPages.trim()) return undefined;
   return { maxPages: valeur, avecMobiles };
-}
-
-/**
- * Enfile l'etape [3] et draine la file. Partage par `run`, ou elle suit l'amorce, et
- * par `decouvrir`, ou elle est rejouee seule sur une base deja amorcee — le seed d'un
- * departement coute 40 s, on ne le repaie pas a chaque reglage du scoring.
- */
-async function lancerDecouverte(
-  app: App,
-  runId: number,
-  logger: Logger,
-  departement: string,
-  options: OptionsDecouverte,
-  signal: AbortSignal,
-): Promise<void> {
-  const client = requireClient(app);
-  const campagne = campagneDuJour(app.clock.now());
-  logger.info("Demarrage de la decouverte", { departement, campagne, ...options });
-
-  const contexte: ContexteDecouverte = {
-    db: app.db,
-    client,
-    counters: app.counters.forRun(runId),
-    clock: app.clock,
-    logger,
-    queue: app.queue,
-    runId,
-  };
-
-  app.queue.enqueue(
-    "decouverte_planifiee",
-    cleDecouverte(departement, campagne),
-    { departement, campagne, maxPages: options.maxPages, avecMobiles: options.avecMobiles },
-    { runId },
-  );
-
-  const worker = new Worker(app.queue, creerHandlersDecouverte(contexte), {
-    concurrency: app.config.concurrency,
-  });
-  const stats = await worker.run(signal);
-  logger.info("Fin de la decouverte", stats);
-}
-
-/**
- * Enfile les etapes [7] et [8] et draine la file. Lancee apres que la decouverte soit
- * entierement drainee : la deduplication et la notation lisent les contacts que celle-ci
- * produit, et les faire tourner en parallele noterait un corpus encore incomplet.
- */
-async function lancerNormalisation(
-  app: App,
-  runId: number,
-  logger: Logger,
-  departement: string,
-  signal: AbortSignal,
-): Promise<void> {
-  const contexte: ContexteNormalisation = {
-    db: app.db,
-    resolveur: app.resolveurMx,
-    counters: app.counters.forRun(runId),
-    clock: app.clock,
-    logger,
-    queue: app.queue,
-    runId,
-  };
-
-  const jour = toIso(app.clock.now()).slice(0, 10);
-  app.queue.enqueue(
-    "normalisation_departement",
-    cleNormalisation(departement, jour),
-    { departement, tout: false },
-    { runId },
-  );
-
-  const worker = new Worker(app.queue, creerHandlersNormalisation(contexte), {
-    concurrency: app.config.concurrency,
-  });
-  const stats = await worker.run(signal);
-  logger.info("Fin de la normalisation", stats);
 }
 
 async function commandeDecouvrir(

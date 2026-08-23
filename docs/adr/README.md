@@ -30,3 +30,4 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [021](021-correction-en-revue.md) | Ce qu'un humain corrige, et ce que la base en fait | Acceptée |
 | [022](022-un-artefact-trois-emballages.md) | Un artefact, trois emballages | Acceptée |
 | [023](023-l-interface-et-le-conteneur.md) | L'interface et le conteneur | Acceptée |
+| [024](024-lancer-un-run-depuis-l-interface.md) | Lancer un run depuis l'interface | Acceptée |

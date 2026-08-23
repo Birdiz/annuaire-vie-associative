@@ -1,7 +1,7 @@
 import { resolvePaths, ensurePaths } from "./paths.ts";
 import type { Paths, Environment } from "./paths.ts";
 import { realEnvironment } from "./paths.ts";
-import { loadConfig, requireContactUrl } from "./config.ts";
+import { loadConfig, requireContactUrl, ecrireContactUrl } from "./config.ts";
 import type { Config } from "./config.ts";
 import { openDatabase } from "./db/index.ts";
 import type { Database } from "./db/index.ts";
@@ -39,6 +39,19 @@ export type App = {
   /** Absent tant qu'aucune URL de contact n'est configuree (§4.4). */
   client: HttpClient | undefined;
   /**
+   * Enregistre l'URL de contact et reconstruit le client, sans redemarrer le process.
+   *
+   * C'est ce qui rend l'executable Windows utilisable sans editeur de texte : le §4.4
+   * exige une URL joignable avant toute collecte, et l'interface doit pouvoir la
+   * demander (ADR-024). Le **cache et le throttle sont conserves** — un throttle neuf
+   * remettrait a zero l'espacement de deux secondes par domaine, que l'invariant 3
+   * interdit de contourner, fut-ce par inadvertance.
+   *
+   * Sans effet si `ANNUAIRE_CONTACT_URL` est definie : la variable l'emporte sur le
+   * fichier, et ecrire dans celui-ci donnerait l'illusion d'un changement.
+   */
+  configurerContactUrl(valeur: string): { url: string } | { erreur: string };
+  /**
    * Seconde porte de sortie reseau (ADR-017). Elle n'est pas conditionnee a l'URL de
    * contact : une requete DNS n'a pas de User-Agent, il n'y a donc personne a qui se
    * presenter, et rien a joindre pour un webmestre qui voudrait nous ecrire.
@@ -74,21 +87,26 @@ export function openApp(options: OpenAppOptions = {}): App {
     clock,
   });
 
+  // Le throttle vit au niveau de l'application, pas du client : reconstruire celui-ci
+  // apres un changement d'URL de contact ne doit pas effacer ce qu'il sait des delais
+  // deja consommes.
+  const throttle = new DomainThrottle();
+
   // Sans URL de contact, aucun client n'est construit : il vaut mieux qu'une commande
   // de collecte echoue a l'assemblage qu'emettre une requete anonyme.
-  const client =
-    config.contactUrl === undefined
+  const construireClient = (contactUrl: string | undefined): HttpClient | undefined =>
+    contactUrl === undefined
       ? undefined
       : new HttpClient({
           cache,
-          throttle: new DomainThrottle(),
+          throttle,
           counters,
-          userAgent: buildUserAgent(VERSION, config.contactUrl),
+          userAgent: buildUserAgent(VERSION, contactUrl),
           cacheTtlMs: config.cacheTtlHours * 3_600_000,
           clock,
         });
 
-  return {
+  const app: App = {
     paths,
     config,
     db,
@@ -97,10 +115,27 @@ export function openApp(options: OpenAppOptions = {}): App {
     counters,
     logger,
     clock,
-    client,
+    client: construireClient(config.contactUrl),
+    configurerContactUrl: (valeur) => {
+      const env = options.processEnv ?? process.env;
+      if (env["ANNUAIRE_CONTACT_URL"] !== undefined && env["ANNUAIRE_CONTACT_URL"] !== "") {
+        return {
+          erreur:
+            "ANNUAIRE_CONTACT_URL est definie dans l'environnement : elle l'emporte sur le " +
+            "fichier de configuration. Modifiez la variable, ou retirez-la.",
+        };
+      }
+      const resultat = ecrireContactUrl(paths.configFile, valeur);
+      if ("erreur" in resultat) return resultat;
+      config.contactUrl = resultat.url;
+      app.client = construireClient(resultat.url);
+      return resultat;
+    },
     resolveurMx: new ResolveurMx(),
     close: () => db.close(),
   };
+
+  return app;
 }
 
 /** Echoue avec un message actionnable si la collecte n'est pas configurable. */

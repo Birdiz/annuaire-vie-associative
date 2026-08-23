@@ -8,6 +8,7 @@ import { JobQueue } from "../../src/jobs/queue.ts";
 import { ADRESSE_ECOUTE, demarrerServeur } from "../../src/ui/serveur.ts";
 import { NOM_COOKIE } from "../../src/ui/routes.ts";
 import { DEPARTEMENT, preparerCorpus } from "../helpers/corpus.ts";
+import { piloteDouble, reglagesDouble } from "../helpers/pilote-double.ts";
 import type { ServeurUi } from "../../src/ui/serveur.ts";
 import type { TestContext } from "node:test";
 
@@ -34,6 +35,8 @@ async function servir(t: TestContext): Promise<ServeurUi> {
     clock: HORLOGE,
     version: "0.1.0",
     departementSecours: DEPARTEMENT,
+    pilote: piloteDouble(),
+    reglages: reglagesDouble("https://exemple.fr/contact"),
   });
   t.after(() => serveur.fermer());
   return serveur;

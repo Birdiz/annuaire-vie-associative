@@ -14,7 +14,7 @@ tiers partent de la machine de l'utilisateur, jamais d'une infrastructure opér�
 
 ## État d'avancement
 
-Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Sept lots ont
+Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Huit lots ont
 été livrés, et le brief est couvert de bout en bout :
 
 | Étape | | Statut |
@@ -29,6 +29,7 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 | [8] Scoring | score de publiabilité par contact | ✅ lot 5 |
 | — Interface | suivi de run, revue humaine, export | ✅ lot 6 |
 | — Emballage | `npx`, image Docker, exécutable Windows | ✅ lot 7 |
+| — Pilotage | lancer et arrêter un run depuis l'interface | ✅ lot 8 |
 
 L'étage [6] est écarté : la mesure du lot 4 lui a retiré sa justification
 ([ADR-015](docs/adr/015-temporalite-rna-et-dormance.md)). Le pipeline est complet et mesurable sans
@@ -57,11 +58,19 @@ et l'export. Un humain peut valider, rejeter, ou **corriger** une valeur : la va
 base à côté de la correction, et c'est l'étape [8] qui renote, pas l'écran. Les 138 adresses cassées
 par un CMS trouvées au lot 5 arrivent ainsi en tête de file.
 
-Lot 7 : l'outil s'emballe. **Un seul bundle de 262 Ko** sert les trois cibles du brief — un paquet
-npm de 124 Ko, une image Docker de 163 Mo, et un exécutable Windows autonome de 88,5 Mo qui
+Lot 7 : l'outil s'emballe. **Un seul bundle** sert les trois cibles du brief — 262 Ko à sa
+construction, 271 Ko depuis le lot 8 — soit un paquet npm de 132 Ko, une image Docker de 163 Mo,
+et un exécutable Windows autonome de 88,5 Mo qui
 n'attend ni Node, ni installateur, ni droits d'administrateur. Le développement, lui, n'a toujours
 aucune étape de build : c'est l'emballage qui en a une
 ([ADR-022](docs/adr/022-un-artefact-trois-emballages.md)).
+
+Lot 8 : l'outil se pilote enfin sans terminal. Un double-clic sur l'exécutable **démarre
+l'interface et ouvre le navigateur** — le §2 du brief, pris au mot. L'écran demande l'URL de
+contact si elle manque, puis offre un bouton : **le run part de la page, sa phase avance à
+l'écran, et un second bouton l'arrête** sans rien perdre. Le worker tourne dans le process de
+l'interface, ce qui est le seul moyen d'obtenir un arrêt propre sous Windows, où il n'existe pas
+de `SIGTERM` ([ADR-024](docs/adr/024-lancer-un-run-depuis-l-interface.md)).
 
 ## Prérequis
 
@@ -94,7 +103,7 @@ npm run build
 
 | Cible | Poids | Ce qu'elle demande |
 |---|---|---|
-| Paquet npm (`npx`) | 124 Ko | Node 24+ |
+| Paquet npm (`npx`) | 132 Ko | Node 24+ |
 | Image Docker | 163 Mo | Docker |
 | Exécutable Windows | 88,5 Mo | rien |
 
@@ -327,13 +336,18 @@ npm run annuaire -- --help
 | `prefiltrer --departement <dd>` | Rejoue le pré-filtre depuis le cache, sans réseau |
 | `normaliser --departement <dd>` | Rejoue la normalisation [7] et le scoring [8] |
 | `exporter --departement <dd>` | Exporte l'annuaire en CSV, provenance comprise |
-| `ui [--port <n>]` | Interface locale : suivi de run, revue humaine, export |
+| `ui [--port <n>]` | Interface locale : lancement et suivi d'un run, revue, export |
 | `dormance --departement <dd>` | Ancienneté de déclaration des associations |
 | `metrics [--json]` | Compteurs de l'entonnoir |
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |
 | `requeue <id\|cle>` | Remet en attente un job terminé, écarté ou mort |
 | `purge` | Force la purge des données de plus de trois ans |
 | `fetch <url>` | Récupère une URL via le client conforme (diagnostic) |
+
+`ui` ouvre le navigateur au démarrage ; `--sans-navigateur` s'en abstient. Lancé **sans aucune
+commande**, l'exécutable Windows sert l'interface — c'est ce qu'attend un double-clic. `npx` et
+l'image Docker, dont les utilisateurs ont un terminal sous les yeux, impriment l'aide comme avant
+([ADR-024](docs/adr/024-lancer-un-run-depuis-l-interface.md)).
 
 Un run interrompu — `Ctrl-C`, coupure, `kill -9` — se reprend en relançant la même commande. Rien
 n'est perdu ni rejoué : c'est une propriété de la file de jobs, vérifiée par un test qui tue
@@ -353,14 +367,26 @@ Interface locale disponible :
   http://127.0.0.1:8787/?jeton=xi9dz8uqA-OdyO6KhoZ0_6Sn1GOO_TEu
 ```
 
-Trois écrans, servis par un `node:http` de quelques centaines de lignes, avec htmx et du CSS écrit
-à la main — pas de bundler, pas de React (D5).
+La commande ouvre aussi le navigateur, sauf `--sans-navigateur`. Trois écrans, servis par un
+`node:http` de quelques centaines de lignes, avec htmx et du CSS écrit à la main — pas de bundler,
+pas de React (D5).
 
 **Synthèse** — le §8 du brief à l'écran : taux de couverture selon trois définitions dont l'écart
 *est* le résultat, volumes par étage de l'entonnoir, verdicts MX, classification, taux de
 correction. Le bloc de suivi se rafraîchit tout seul : un `annuaire run` lancé dans un autre
 terminal est vu avancer d'ici, sans que les deux processus se connaissent — c'est ce pour quoi le
 mode WAL avait été choisi au lot 1.
+
+**Et depuis le lot 8, le run part d'ici.** Un bouton le lance sur le département affiché, la phase
+en cours — amorce, découverte, normalisation — s'écrit dans le suivi, et un second bouton l'arrête :
+les requêtes déjà parties finissent, rien n'est perdu, et relancer reprend où l'on s'est arrêté.
+Le worker tourne dans le process de l'interface : c'est ce qui donne un arrêt propre sous Windows,
+où il n'y a pas de `SIGTERM`. Une ligne de run restée « en cours » après une coupure brutale est
+signalée sans bloquer le bouton — la file est reprenable, c'est l'invariant 9, pas un pari.
+
+Si aucune URL de contact n'est configurée, l'écran la demande **avant** d'offrir le bouton : elle
+est annoncée dans le User-Agent pour qu'un webmestre puisse vous joindre, et aucune collecte ne
+part sans elle (§4.4). C'est ce qui rend l'exécutable Windows utilisable sans éditeur de texte.
 
 **Revue** — les contacts à arbitrer, **les moins sûrs d'abord**, chacun avec le détail des signaux
 qui ont fait baisser sa note, son régime juridique et son URL source. Valider, rejeter, ou corriger

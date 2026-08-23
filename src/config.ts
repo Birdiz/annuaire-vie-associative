@@ -110,24 +110,36 @@ function firstDefined(...values: readonly unknown[]): unknown {
   return undefined;
 }
 
+/**
+ * Le seul controle de l'URL de contact, partage par le chargement du fichier et par la
+ * saisie dans l'interface (lot 8). Deux controles differents finiraient par diverger, et
+ * c'est l'invariant 4 qui en paierait le prix : un User-Agent qui ne mene nulle part.
+ */
+export function validerContactUrl(value: string): { url: string } | { erreur: string } {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return { erreur: `contactUrl n'est pas une URL absolue : ${value}` };
+  }
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { erreur: `contactUrl doit etre en http ou https : ${value}` };
+  }
+  return { url: url.toString() };
+}
+
 function parseContactUrl(value: unknown, problems: string[]): string | undefined {
   if (value === undefined) return undefined;
   if (typeof value !== "string") {
     problems.push("contactUrl doit etre une chaine.");
     return undefined;
   }
-  let url: URL;
-  try {
-    url = new URL(value);
-  } catch {
-    problems.push(`contactUrl n'est pas une URL absolue : ${value}`);
+  const resultat = validerContactUrl(value);
+  if ("erreur" in resultat) {
+    problems.push(resultat.erreur);
     return undefined;
   }
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    problems.push(`contactUrl doit etre en http ou https : ${value}`);
-    return undefined;
-  }
-  return url.toString();
+  return resultat.url;
 }
 
 function parseBoundedInt(
@@ -203,4 +215,28 @@ export function writeConfigTemplate(configFile: string): boolean {
   };
   writeFileSync(configFile, `${JSON.stringify(template, null, 2)}\n`, "utf8");
   return true;
+}
+
+/**
+ * Ecrit `contactUrl` dans le fichier de configuration, en preservant tout le reste.
+ *
+ * Relit le fichier plutot que de reserialiser un `Config` : celui-ci a des valeurs par
+ * defaut, et les ecrire figerait dans le fichier des choix que l'utilisateur n'a pas
+ * faits. L'aide et les cles inconnues survivent pour la meme raison.
+ */
+export function ecrireContactUrl(configFile: string, valeur: string): { url: string } | { erreur: string } {
+  const resultat = validerContactUrl(valeur.trim());
+  if ("erreur" in resultat) return resultat;
+
+  const problems: string[] = [];
+  const actuel = readConfigFile(configFile, problems);
+  if (problems.length > 0) return { erreur: problems[0] ?? "configuration illisible" };
+
+  const contenu = { ...actuel, contactUrl: resultat.url };
+  try {
+    writeFileSync(configFile, `${JSON.stringify(contenu, null, 2)}\n`, "utf8");
+  } catch (cause) {
+    return { erreur: `${configFile} n'a pas pu etre ecrit : ${(cause as Error).message}` };
+  }
+  return resultat;
 }

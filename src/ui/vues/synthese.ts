@@ -12,6 +12,7 @@
 
 import { echapperHtml, nombre, pourcent, tableau, choixDepartement } from "../rendu.ts";
 import type { LigneRun, DistributionRevue } from "../requetes.ts";
+import type { EtatPilote } from "../pilote.ts";
 import type { DistributionPrefiltre } from "../../decouverte/rejeu.ts";
 import type { DistributionNormalisation } from "../../normalisation/rejeu.ts";
 import type { Couverture } from "../../metrics/couverture.ts";
@@ -21,12 +22,28 @@ import type { JobState } from "../../jobs/queue.ts";
 export type DonneesSuivi = {
   runs: readonly LigneRun[];
   jobs: Record<JobState, number>;
+  departement: string;
+  /** Etat du run pilote par cette interface, distinct de ce que dit la base. */
+  pilote: EtatPilote;
+  /** Dernier refus du pilote, ou `undefined`. */
+  refus: string | undefined;
+  /** Sans URL de contact, aucune collecte ne part (§4.4) : le bouton n'a pas lieu d'etre. */
+  collecteConfiguree: boolean;
+};
+
+export type DonneesReglages = {
+  contactUrl: string | undefined;
+  /** Fixee par l'environnement : le fichier de configuration n'y peut rien. */
+  parEnvironnement: boolean;
+  message: string | undefined;
+  erreur: string | undefined;
 };
 
 export type DonneesSynthese = {
   departement: string;
   departements: readonly string[];
   suivi: DonneesSuivi;
+  reglages: DonneesReglages;
   couverture: Couverture;
   dormance: Dormance;
   prefiltre: DistributionPrefiltre | undefined;
@@ -43,6 +60,7 @@ const ETATS: readonly JobState[] = ["pending", "leased", "done", "failed", "dead
 export function fragmentSuivi(suivi: DonneesSuivi): string {
   const enCours = suivi.runs.find((run) => run.statut === "en_cours");
   const actifs = suivi.jobs.pending + suivi.jobs.leased;
+  const pilote = suivi.pilote;
 
   const entete =
     enCours === undefined
@@ -50,7 +68,18 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
           actifs > 0 ? ` ${nombre(actifs)} jobs restent en attente dans la file.` : ""
         }</p>`
       : `<p><strong>Run #${enCours.id}</strong> sur le departement ${echapperHtml(enCours.departement)}, ` +
-        `demarre le ${echapperHtml(enCours.started_at)} — ${nombre(actifs)} jobs a traiter.</p>`;
+        `demarre le ${echapperHtml(enCours.started_at)}${
+          enCours.phase === null ? "" : ` — phase ${echapperHtml(enCours.phase)}`
+        } — ${nombre(actifs)} jobs a traiter.</p>`;
+
+  // Une ligne restee 'en_cours' apres un kill -9 ne doit pas condamner l'interface : on
+  // le dit, et on laisse relancer. C'est vrai par l'invariant 9, pas par optimisme.
+  const orphelin =
+    enCours !== undefined && pilote.kind !== "en_cours"
+      ? `<p class="avis">Ce run n'est pas pilote depuis cette interface. S'il tourne dans un
+         terminal, laissez-le finir ; s'il a ete interrompu brutalement, relancer est sans
+         risque — rien ne sera rejoue.</p>`
+      : "";
 
   const file = tableau(ETATS, [ETATS.map((etat) => `<span class="n">${nombre(suivi.jobs[etat])}</span>`)]);
 
@@ -65,7 +94,82 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
     ]),
   );
 
-  return `${entete}\n${file}\n<h3>Derniers runs</h3>\n${runs}`;
+  return `${commandes(suivi)}\n${orphelin}\n${entete}\n${file}\n<h3>Derniers runs</h3>\n${runs}`;
+}
+
+/**
+ * Le bouton, et ce qu'il faut savoir avant de le presser.
+ *
+ * Aucun champ de saisie ici : ce fragment est reechange toutes les deux secondes, et
+ * une valeur en cours de frappe y serait effacee. Le departement vient du selecteur de
+ * l'ecran, qui recharge la page — d'ou le champ cache plutot qu'une seconde liste.
+ */
+function commandes(suivi: DonneesSuivi): string {
+  const departement = echapperHtml(suivi.departement);
+  const refus = suivi.refus === undefined ? "" : `<p class="refus">${echapperHtml(suivi.refus)}</p>`;
+
+  if (suivi.pilote.kind === "en_cours") {
+    return `<form method="post" action="/run/arret" hx-post="/run/arret" hx-target="#suivi" class="commandes">
+  <button type="submit">Arreter le run</button>
+  <span class="discret">Les requetes en cours vont finir : rien ne sera perdu, et relancer reprendra ou l'on s'arrete.</span>
+</form>
+${refus}`;
+  }
+
+  const issue =
+    suivi.pilote.kind === "fini"
+      ? `<p class="${suivi.pilote.issue === "echec" ? "refus" : "discret"}">Dernier run pilote d'ici sur le
+         departement ${echapperHtml(suivi.pilote.departement)} : ${echapperHtml(suivi.pilote.issue)}${
+           suivi.pilote.message === undefined ? "" : ` — ${echapperHtml(suivi.pilote.message)}`
+         }.</p>`
+      : "";
+
+  if (!suivi.collecteConfiguree) {
+    return `<p class="avis">Renseignez l'URL de contact ci-dessus pour pouvoir lancer une collecte.</p>
+${issue}${refus}`;
+  }
+
+  return `<form method="post" action="/run" hx-post="/run" hx-target="#suivi" class="commandes">
+  <input type="hidden" name="departement" value="${departement}">
+  <button type="submit">Lancer un run sur le departement ${departement}</button>
+  <span class="discret">Amorce, decouverte, puis normalisation. Comptez une quarantaine de minutes par departement.</span>
+</form>
+${issue}${refus}`;
+}
+
+/**
+ * L'URL de contact (§4.4), demandee la ou l'on en a besoin.
+ *
+ * Hors du bloc de suivi, et donc hors du rafraichissement automatique : un champ qu'on
+ * remplit ne doit pas etre remplace pendant la frappe.
+ */
+export function fragmentReglages(reglages: DonneesReglages): string {
+  const erreur = reglages.erreur === undefined ? "" : `<p class="refus">${echapperHtml(reglages.erreur)}</p>`;
+  const message = reglages.message === undefined ? "" : `<p class="discret">${echapperHtml(reglages.message)}</p>`;
+
+  if (reglages.parEnvironnement) {
+    return `<p class="discret">URL de contact : <code>${echapperHtml(reglages.contactUrl)}</code>,
+      fixee par la variable d'environnement <code>ANNUAIRE_CONTACT_URL</code>. Elle l'emporte
+      sur le fichier de configuration.</p>`;
+  }
+
+  const explication =
+    reglages.contactUrl === undefined
+      ? `<p class="avis">Aucune URL de contact n'est configuree. Elle est annoncee dans le
+         User-Agent de chaque requete pour qu'un webmestre puisse vous joindre, et
+         <strong>aucune collecte ne part sans elle</strong>. Une page « contact » ou une adresse
+         de service convient.</p>`
+      : `<p class="discret">URL de contact annoncee dans le User-Agent :
+         <code>${echapperHtml(reglages.contactUrl)}</code>.</p>`;
+
+  return `${explication}${erreur}${message}
+<form method="post" action="/reglages" hx-post="/reglages" hx-target="#reglages" class="reglages">
+  <label>URL de contact
+    <input type="url" name="contactUrl" required placeholder="https://exemple.fr/contact"
+           value="${echapperHtml(reglages.contactUrl ?? "")}">
+  </label>
+  <button type="submit">Enregistrer</button>
+</form>`;
 }
 
 export function ecranSynthese(donnees: DonneesSynthese): string {
@@ -126,6 +230,11 @@ export function ecranSynthese(donnees: DonneesSynthese): string {
   );
 
   return `${choixDepartement("/", donnees.departements, donnees.departement)}
+<h2>Collecte</h2>
+<section id="reglages">
+${fragmentReglages(donnees.reglages)}
+</section>
+
 <h2>Suivi</h2>
 <section id="suivi" hx-get="/suivi?departement=${encodeURIComponent(donnees.departement)}"
          hx-trigger="every 2s" hx-swap="innerHTML">
