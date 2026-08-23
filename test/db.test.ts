@@ -35,10 +35,10 @@ function insertContact(db: DatabaseSync, overrides: Record<string, unknown> = {}
     association_id: null,
     code_insee: null,
     kind: "email",
-    valeur: "Contact@Exemple.fr",
-    valeur_normalisee: "contact@exemple.fr",
+    valeur: "Contact@Exemple.example",
+    valeur_normalisee: "contact@exemple.example",
     is_generique: 1,
-    source_url: "https://mairie-exemple.fr/associations",
+    source_url: "https://mairie-exemple.example/associations",
     methode_extraction: "dom:mailto",
     confiance: 0.9,
     collected_at: NOW,
@@ -102,7 +102,7 @@ test("rejouer l'insertion d'un contact ne cree pas de doublon", (t) => {
 
   insertContact(db, { association_id: associationId });
   assert.throws(
-    () => insertContact(db, { association_id: associationId, valeur: "autre-casse@exemple.fr" }),
+    () => insertContact(db, { association_id: associationId, valeur: "autre-casse@exemple.example" }),
     /UNIQUE/i,
     "la valeur normalisee identique aurait du etre rejetee",
   );

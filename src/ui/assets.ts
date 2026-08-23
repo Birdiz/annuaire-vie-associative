@@ -67,6 +67,11 @@ function corps(nom: string): Buffer {
 }
 
 export function lireAsset(nom: string): Asset | undefined {
+  // `Object.hasOwn` et pas une simple lecture : `TYPES["constructor"]` rend la fonction
+  // `Object`, pas `undefined`. `GET /assets/constructor` partait donc lire un fichier
+  // inexistant et remontait en 500 au lieu du 404 prevu — pas une faille, le `join` reste
+  // dans le repertoire, mais un chemin d'exception non prevu dans la porte d'entree.
+  if (!Object.hasOwn(TYPES, nom)) return undefined;
   const type = TYPES[nom];
   if (type === undefined) return undefined;
 

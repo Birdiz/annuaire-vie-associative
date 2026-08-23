@@ -115,8 +115,10 @@ export function preparerCorpus(t: TestContext): Corpus {
 export function peupler(db: Database): void {
   db.prepare(
     "INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution, " +
-      "resolution_source_url, resolution_collected_at, created_at, updated_at) " +
-      "VALUES (?, 'Bruzou', ?, 'https://bruzou.example', 'resolue', 'https://source.example', 't', 't', 't')",
+      "resolution_source_url, resolution_collected_at, source_resolution, resolution_confiance, " +
+      "created_at, updated_at) " +
+      "VALUES (?, 'Bruzou', ?, 'https://bruzou.example', 'resolue', 'https://source.example', 't', " +
+      "'annuaire', 0.9, 't', 't')",
   ).run(CODE_INSEE, DEPARTEMENT);
 
   const insererAssociation = db.prepare(

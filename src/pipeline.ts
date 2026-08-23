@@ -52,9 +52,7 @@ const MOTIF_DEPARTEMENT = /^(\d{2}|\d[AB]|\d{3})$/i;
  * d'un cote et accepte de l'autre serait un piege.
  */
 export function refusDepartement(departement: string | undefined): string | undefined {
-  if (departement === undefined || !MOTIF_DEPARTEMENT.test(departement)) {
-    return "Un departement est requis, sous la forme 35, 2A ou 971.";
-  }
+  if (!departementBienForme(departement)) return REFUS_DE_FORME;
   if (HORS_CHAMP_RNA.includes(departement)) {
     return (
       `Le departement ${departement} est hors du champ du RNA (droit local d'Alsace-Moselle). ` +
@@ -63,6 +61,19 @@ export function refusDepartement(departement: string | undefined): string | unde
   }
   return undefined;
 }
+
+/**
+ * Le seul controle de **forme**, pour les commandes qui lisent une base deja amorcee et
+ * n'ont donc rien a faire du champ du RNA. Les commandes qui collectent passent, elles,
+ * par `refusDepartement` au complet. Le motif vivait en double, et la copie de `cli.ts`
+ * avait deja perdu le refus d'Alsace-Moselle.
+ */
+export function departementBienForme(departement: string | undefined): departement is string {
+  return departement !== undefined && MOTIF_DEPARTEMENT.test(departement);
+}
+
+/** Le message unique du refus de forme, partage par les deux controles. */
+const REFUS_DE_FORME = "Un departement est requis, sous la forme 35, 2A ou 971.";
 
 export function optionsDecouvertePardefaut(avecMobiles = false): OptionsDecouverte {
   return { maxPages: PAGES_MAX_PAR_COMMUNE, avecMobiles };
@@ -107,47 +118,109 @@ export async function executerRun(
     runId,
   };
 
-  // Seule l'etape [2] est enfilee : elle enchaine elle-meme sur l'amorce RNA, qui a
-  // besoin des communes pour rattacher les associations. Le dump de l'Annuaire est
-  // regenere chaque jour, d'ou une cle de deduplication a la journee.
-  const jour = toIso(app.clock.now()).slice(0, 10);
-  app.queue.enqueue(
-    "annuaire_dump",
-    cleAnnuaire(departement, jour),
-    {
-      departement,
-      avecImport: options.avecImport,
-      ...(options.rnaFile === undefined ? {} : { rnaFile: options.rnaFile }),
-    },
-    { runId },
-  );
+  // Tout ce qui suit l'ouverture de la ligne est couvert : un echec a l'enfilement
+  // laissait la ligne ouverte aussi surement qu'un echec du worker.
+  let stats;
+  try {
+    // Seule l'etape [2] est enfilee : elle enchaine elle-meme sur l'amorce RNA, qui a
+    // besoin des communes pour rattacher les associations. Le dump de l'Annuaire est
+    // regenere chaque jour, d'ou une cle de deduplication a la journee.
+    const jour = toIso(app.clock.now()).slice(0, 10);
+    app.queue.enqueue(
+      "annuaire_dump",
+      cleAnnuaire(departement, jour),
+      {
+        departement,
+        avecImport: options.avecImport,
+        ...(options.rnaFile === undefined ? {} : { rnaFile: options.rnaFile }),
+      },
+      { runId },
+    );
 
-  const worker = new Worker(app.queue, creerHandlers(contexte), { concurrency: app.config.concurrency });
-  const stats = await worker.run(signal);
+    const worker = new Worker(app.queue, creerHandlers(contexte), { concurrency: app.config.concurrency });
+    stats = await worker.run(signal);
 
-  // La decouverte est lancee dans une seconde passe, apres que l'amorce soit
-  // entierement drainee. Ce n'est pas une precaution de style : le rapprochement
-  // d'un contact avec une association lit la table `association`, et la laisser
-  // tourner en parallele du second dump RNA (--avec-import) ferait echouer des
-  // rattachements que rien ne viendrait corriger ensuite.
-  if (!options.sansDecouverte && !signal.aborted) {
-    marquerPhase(app, runId, "decouverte");
-    await lancerDecouverte(app, runId, logger, departement, options.decouverte, signal);
-  }
+    // La decouverte est lancee dans une seconde passe, apres que l'amorce soit
+    // entierement drainee. Ce n'est pas une precaution de style : le rapprochement
+    // d'un contact avec une association lit la table `association`, et la laisser
+    // tourner en parallele du second dump RNA (--avec-import) ferait echouer des
+    // rattachements que rien ne viendrait corriger ensuite.
+    if (!options.sansDecouverte && !signal.aborted) {
+      marquerPhase(app, runId, "decouverte");
+      await lancerDecouverte(app, runId, logger, departement, options.decouverte, signal);
+    }
 
-  // Les etapes [7] et [8] closent le run : sans elles, les contacts sortent du crawl
-  // dedupliques a moitie et sans score, donc inexploitables par l'export.
-  if (!signal.aborted) {
-    marquerPhase(app, runId, "normalisation");
-    await lancerNormalisation(app, runId, logger, departement, signal);
+    // Les etapes [7] et [8] closent le run : sans elles, les contacts sortent du crawl
+    // dedupliques a moitie et sans score, donc inexploitables par l'export.
+    if (!signal.aborted) {
+      marquerPhase(app, runId, "normalisation");
+      await lancerNormalisation(app, runId, logger, departement, signal);
+    }
+  } catch (cause) {
+    // Un `kill -9` laisse forcement la ligne ouverte, et l'interface sait le dire. Ici le
+    // process est vivant et sait que le run a echoue : le taire serait un choix.
+    cloreRun(app, runId, "echec");
+    throw cause;
   }
 
   const interrompu = signal.aborted;
-  app.db
-    .prepare("UPDATE run SET finished_at = ?, statut = ?, phase = NULL WHERE id = ?")
-    .run(toIso(app.clock.now()), interrompu ? "interrompu" : "termine", runId);
+  cloreRun(app, runId, interrompu ? "interrompu" : "termine");
 
   logger.info("Fin du run", { ...stats, interrompu });
+  return { runId, interrompu };
+}
+
+/**
+ * Ferme la ligne `run` : statut definitif, phase effacee, horodatage de fin.
+ *
+ * Le cas `echec` n'etait ecrit par personne, alors que le `CHECK` du schema l'accepte
+ * depuis toujours. Sans lui, un run qui levait laissait sa ligne en `en_cours` avec une
+ * phase non nulle, indefiniment : l'ecran continuait d'afficher « Run #N — phase
+ * decouverte » a cote du message d'echec, et la base mentait a un process qui, lui,
+ * savait tres bien ce qui s'etait passe.
+ */
+function cloreRun(app: App, runId: number, statut: "termine" | "interrompu" | "echec"): void {
+  app.db
+    .prepare("UPDATE run SET finished_at = ?, statut = ?, phase = NULL WHERE id = ?")
+    .run(toIso(app.clock.now()), statut, runId);
+}
+
+/**
+ * Enchaine la decouverte puis la normalisation sur une base deja amorcee.
+ *
+ * `annuaire decouvrir` en tenait sa propre copie : sa ligne `run` n'ecrivait jamais de
+ * phase, si bien qu'un run lance dans un terminal ne s'affichait pas comme un run lance
+ * depuis l'interface — la divergence exacte que l'en-tete de ce module dit vouloir
+ * eviter, et que la migration 7 dit vouloir eviter aussi.
+ */
+export async function executerDecouverteSeule(
+  app: App,
+  options: { departement: string; decouverte: OptionsDecouverte },
+  signal: AbortSignal,
+): Promise<ResultatRun> {
+  const { departement } = options;
+  requireClient(app);
+
+  const info = app.db
+    .prepare("INSERT INTO run (departement, started_at, statut, phase) VALUES (?, ?, 'en_cours', 'decouverte')")
+    .run(departement, toIso(app.clock.now()));
+  const runId = Number(info.lastInsertRowid);
+  const logger = app.logger.child({ run_id: runId });
+
+  try {
+    await lancerDecouverte(app, runId, logger, departement, options.decouverte, signal);
+
+    if (!signal.aborted) {
+      marquerPhase(app, runId, "normalisation");
+      await lancerNormalisation(app, runId, logger, departement, signal);
+    }
+  } catch (cause) {
+    cloreRun(app, runId, "echec");
+    throw cause;
+  }
+
+  const interrompu = signal.aborted;
+  cloreRun(app, runId, interrompu ? "interrompu" : "termine");
   return { runId, interrompu };
 }
 
@@ -156,7 +229,7 @@ export async function executerRun(
  * par `decouvrir`, ou elle est rejouee seule sur une base deja amorcee — le seed d'un
  * departement coute 40 s, on ne le repaie pas a chaque reglage du scoring.
  */
-export async function lancerDecouverte(
+async function lancerDecouverte(
   app: App,
   runId: number,
   logger: Logger,
@@ -197,7 +270,7 @@ export async function lancerDecouverte(
  * entierement drainee : la deduplication et la notation lisent les contacts que celle-ci
  * produit, et les faire tourner en parallele noterait un corpus encore incomplet.
  */
-export async function lancerNormalisation(
+async function lancerNormalisation(
   app: App,
   runId: number,
   logger: Logger,

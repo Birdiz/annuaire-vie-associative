@@ -59,7 +59,11 @@ qu'aucun autre script ne prend cette liberté, et que celui-ci ne vise que `node
 
 ## Conséquences
 
-- **`package.json` déclare `bin: ./dist/annuaire.cjs` et `files: ["dist"]`.** Le paquet
+- **`package.json` déclare `bin: ./dist/annuaire.cjs` et
+  `files: ["dist/annuaire.cjs", "dist/assets"]`.** *(Amendé au lot 8 : `files: ["dist"]`,
+  tel qu'écrit ici à l'origine, emballerait aussi le `node.exe` vendorisé et l'exécutable
+  Windows — 71 Mo publiés au lieu de 124 Ko. Le paquet nomme donc ce qu'il embarque, et un
+  test d'architecture le vérifie.)* Le paquet
   publié ne contient plus une ligne de TypeScript. `prepack` reconstruit le bundle, si
   bien qu'un `npm pack` ne peut pas emballer un artefact périmé. Le paquet fait 124 Ko.
 - **Le `private: true` reste.** La cible `npx` se valide par `npm pack` puis installation

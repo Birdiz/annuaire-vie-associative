@@ -16,7 +16,7 @@ function decouper(entree: string, taille: number): string[] {
 const DUMP = `{
   "service" : [ {
     "nom" : "Mairie - A",
-    "site_internet" : [ { "libelle" : "", "valeur" : "https://a.fr" } ],
+    "site_internet" : [ { "libelle" : "", "valeur" : "https://a.example" } ],
     "pivot" : [ { "type_service_local" : "mairie", "code_insee_commune" : [ "35001" ] } ]
   }, {
     "nom" : "Mairie - B {piege}",
@@ -76,4 +76,20 @@ test("une cle homonyme dans une valeur de chaine ne declenche pas l'entree dans 
   const objets = decouper(piege, 4096);
   assert.equal(objets.length, 1);
   assert.equal(JSON.parse(objets[0] ?? "").n, 1);
+});
+
+test("une accolade fermante en trop est signalee, pas absorbee", () => {
+  // La profondeur passait sous zero, la condition de fin n'etait plus jamais vraie, rien
+  // n'etait consomme, et le tampon accumulait tout le reste du dump — sans qu'aucune
+  // exception ne soit levee. Le job tournait jusqu'a l'OOM.
+  const splitter = new JsonArraySplitter("service");
+  assert.throws(() => splitter.push(Buffer.from('{"service":[{"a":1}}}')), JsonArrayError);
+});
+
+test("un tableau qui ne contient pas d'objets ne fait pas grossir le tampon sans fin", () => {
+  const splitter = new JsonArraySplitter("service");
+  assert.throws(() => {
+    splitter.push(Buffer.from('{"service":['));
+    for (let i = 0; i < 80; i += 1) splitter.push(Buffer.from(`${"1,".repeat(32_768)}`));
+  }, JsonArrayError);
 });

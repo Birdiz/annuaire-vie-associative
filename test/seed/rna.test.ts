@@ -41,7 +41,7 @@ const CSV =
   `W351000002,Amicale du Ferré,Entraide,023000,35111,Le Ferré,,0001-01-01,2005-09-01,2011-02-03,A,2011-02-03T14:20:00\n` +
   `W291000003,Club de Quimper,Voile,006090,29232,Quimper,,0001-01-01,2001-04-04,2020-01-09,A,2020-01-09T08:00:00\n` +
   `W351000004,Comité dissous,Ancien comité,006090,35047,Bruz,,2019-06-30,1990-01-01,0001-01-01,D,2019-06-30T00:00:00\n` +
-  `W351000005,Association sans commune connue,Divers,023000,35999,Lieu-Inconnu,exemple-asso.fr,0001-01-01,2015-01-01,2023-05-05,A,2023-05-05T11:00:00\n`;
+  `W351000005,Association sans commune connue,Divers,023000,35999,Lieu-Inconnu,exemple-asso.example,0001-01-01,2015-01-01,2023-05-05,A,2023-05-05T11:00:00\n`;
 
 function servirCsv(corps: string): Handler {
   const octets = Buffer.from(corps, "utf8");
@@ -75,7 +75,7 @@ async function setup(t: TestContext, corps: string = CSV) {
       cache: new HttpCache(makeTempDir(t)),
       throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
       counters: new Counters(db, null),
-      userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+      userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
       cacheTtlMs: 3_600_000,
       clock,
     }),
@@ -124,8 +124,8 @@ test("retient la date de dissolution reelle", () => {
 
 test("complete un site web declare sans schema", () => {
   const lire = indexerColonnes(ENTETE.split(","));
-  const ligne = convertirLigne(lire(["W35", "X", "", "", "35047", "Bruz", "exemple-asso.fr", "0001-01-01", "", "", "", ""]), "35");
-  assert.equal(ligne?.siteWeb, "https://exemple-asso.fr");
+  const ligne = convertirLigne(lire(["W35", "X", "", "", "35047", "Bruz", "exemple-asso.example", "0001-01-01", "", "", "", ""]), "35");
+  assert.equal(ligne?.siteWeb, "https://exemple-asso.example");
 });
 
 test("les champs temporels du RNA sont retenus (ADR-013)", () => {

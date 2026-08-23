@@ -2,18 +2,19 @@
 // module n'expose que `main`, ce qui le rend testable et bundlable (ADR-022).
 import { parseArgs } from "node:util";
 import sea from "node:sea";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, createWriteStream } from "node:fs";
+import { once } from "node:events";
 import { openApp, requireClient, startupPurge } from "./app.ts";
+import type { PurgeResult } from "./purge.ts";
 import type { App } from "./app.ts";
 import { writeConfigTemplate, ConfigError } from "./config.ts";
 import { installShutdownHandlers } from "./jobs/worker.ts";
 import type { JobState } from "./jobs/queue.ts";
 import { MIGRATIONS } from "./db/migrations.ts";
-import { toIso } from "./clock.ts";
 import { VERSION } from "./version.ts";
-import { executerRun, lancerDecouverte, lancerNormalisation, refusDepartement } from "./pipeline.ts";
+import { executerRun, executerDecouverteSeule, refusDepartement, departementBienForme } from "./pipeline.ts";
 import type { OptionsDecouverte } from "./pipeline.ts";
-import { PAGES_MAX_PAR_COMMUNE } from "./decouverte/scoring.ts";
+import { PAGES_MAX_PAR_COMMUNE, estReseauSocial } from "./decouverte/scoring.ts";
 import { SEUIL_EXTRACTION, SEUIL_PAR_DEFAUT } from "./decouverte/prefiltre.ts";
 import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./decouverte/rejeu.ts";
 import { distributionNormalisation } from "./normalisation/rejeu.ts";
@@ -23,6 +24,12 @@ import { demarrerServeur, ADRESSE_ECOUTE } from "./ui/serveur.ts";
 import { PiloteRun } from "./ui/pilote.ts";
 import { ouvrirNavigateur } from "./ui/navigateur.ts";
 import { mesurerDormance } from "./metrics/dormance.ts";
+import { mesurerCouverture } from "./metrics/couverture.ts";
+import { ETATS_JOB } from "./jobs/queue.ts";
+import { messageDe } from "./log.ts";
+import { oublier } from "./oubli.ts";
+import type { Portee } from "./oubli.ts";
+import { formaterOctets } from "./texte.ts";
 
 /** Port d'ecoute de l'interface locale. Le port est reglable, l'adresse ne l'est pas. */
 const PORT_UI_PAR_DEFAUT = 8787;
@@ -56,6 +63,8 @@ Commandes
           [--state <etat>]  ... ou tous ceux d'un etat donne
   purge                   Force la purge des donnees de plus de trois ans
   fetch <url>             Recupere une URL via le client conforme (diagnostic)
+  oublier --contact <v>   Efface une donnee et l'empeche de revenir (art. 17 et 21)
+          | --domaine <d> | --commune <insee>   --motif <texte> obligatoire
 
 Options de run
   --avec-import           Ajoute l'extraction RNA « import » (associations sans
@@ -88,10 +97,26 @@ Options d'export
   --avec-rejetes          Sort aussi les contacts qu'un humain a rejetes en revue,
                           exclus par defaut
 
+Options d'oubli
+  --contact <valeur>      Efface cette adresse ou ce numero, sous sa forme normalisee
+  --domaine <domaine>     Efface toutes les adresses de ce domaine de messagerie
+  --commune <insee>       Efface tout ce qui est rattache a cette commune
+  --motif <texte>         Obligatoire : au nom de quoi l'effacement a lieu. Il est
+                          conserve, et fait la preuve de la demande honoree.
+
 Options d'interface
   --port <n>              Port d'ecoute (defaut : ${PORT_UI_PAR_DEFAUT}). L'interface
                           n'ecoute que sur ${ADRESSE_ECOUTE}, et cela n'est pas reglable.
   --sans-navigateur       N'ouvre pas le navigateur au demarrage
+
+Codes de sortie
+  0                       Succes. C'est aussi le code de « ui » arrete par Ctrl+C :
+                          l'interrompre est sa facon normale de finir.
+  1                       Echec d'execution
+  2                       Erreur d'usage : argument absent, invalide ou refuse
+  130                     Collecte interrompue par Ctrl+C. Le travail deja commite est
+                          conserve, et relancer la meme commande reprend ou elle en
+                          etait (§4.9).
 
 Options communes
   --data-dir <chemin>     Repertoire de donnees (defaut : emplacement systeme)
@@ -103,7 +128,6 @@ Les invariants — respect de robots.txt, delai de 2 s par domaine, purge a troi
 ne sont pas configurables et n'ont donc pas d'option.
 `;
 
-const ETATS: readonly JobState[] = ["pending", "leased", "done", "failed", "dead", "skipped"];
 
 /**
  * Ce que fait l'outil quand on ne lui demande rien.
@@ -142,6 +166,10 @@ export async function main(argv: readonly string[]): Promise<number> {
         fichier: { type: "string" },
         "score-min": { type: "string" },
         "avec-rejetes": { type: "boolean", default: false },
+        contact: { type: "string" },
+        domaine: { type: "string" },
+        commune: { type: "string" },
+        motif: { type: "string" },
         port: { type: "string" },
         "sans-navigateur": { type: "boolean", default: false },
         tout: { type: "boolean", default: false },
@@ -169,13 +197,26 @@ export async function main(argv: readonly string[]): Promise<number> {
     return commande === undefined && values.help !== true ? 2 : 0;
   }
 
-  const ouvrir = (): App =>
-    openApp({
+  /**
+   * Ouvre l'application, **et purge**.
+   *
+   * §4.8 dit « execute au demarrage », pas « execute par les commandes qui y pensent ».
+   * L'appel vivait dans cinq fonctions sur dix-neuf : `exporter` — la seule commande dont
+   * la sortie quitte la machine — pouvait livrer un CSV portant des contacts de plus de
+   * trois ans. Le mettre ici est ce qui rend l'invariant vrai par construction : il n'y a
+   * plus de liste a tenir a jour. Sur une base propre l'operation ne coute rien.
+   */
+  let dernierePurge: PurgeResult | undefined;
+  const ouvrir = (): App => {
+    const app = openApp({
       dataDir: values["data-dir"],
       logLevel: values.verbose === true ? "debug" : "info",
       // En sortie JSON, le journal ne doit pas polluer stdout.
       console: !(values.json === true),
     });
+    dernierePurge = startupPurge(app);
+    return app;
+  };
 
   const decouverte = lireOptionsDecouverte(values["max-pages"], values["avec-mobiles"] === true);
   if (decouverte === undefined) {
@@ -186,7 +227,7 @@ export async function main(argv: readonly string[]): Promise<number> {
   try {
     switch (commande) {
       case "init":
-        return commandeInit(ouvrir, values["data-dir"]);
+        return commandeInit(ouvrir);
       case "ui":
         return await commandeUi(
           ouvrir,
@@ -203,7 +244,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       case "requeue":
         return commandeRequeue(ouvrir, positionals[1], values.state);
       case "purge":
-        return commandePurge(ouvrir);
+        return commandePurge(ouvrir, () => dernierePurge);
       case "run":
         return await commandeRun(ouvrir, values.departement, {
           avecImport: values["avec-import"] === true,
@@ -246,6 +287,14 @@ export async function main(argv: readonly string[]): Promise<number> {
         return commandeDumps(ouvrir, values.json === true);
       case "fetch":
         return await commandeFetch(ouvrir, positionals[1]);
+      case "oublier":
+        return commandeOublier(ouvrir, {
+          contact: values.contact,
+          domaine: values.domaine,
+          commune: values.commune,
+          motif: values.motif,
+          json: values.json === true,
+        });
       default:
         process.stderr.write(`Commande inconnue : ${commande}\n\n${USAGE}`);
         return 2;
@@ -255,12 +304,12 @@ export async function main(argv: readonly string[]): Promise<number> {
       process.stderr.write(`${error.message}\n`);
       return 78; // EX_CONFIG
     }
-    process.stderr.write(`Echec : ${(error as Error).message}\n`);
+    process.stderr.write(`Echec : ${messageDe(error)}\n`);
     return 1;
   }
 }
 
-function commandeInit(ouvrir: () => App, dataDir: string | undefined): number {
+function commandeInit(ouvrir: () => App): number {
   const app = ouvrir();
   try {
     const cree = writeConfigTemplate(app.paths.configFile);
@@ -280,17 +329,27 @@ function commandeInit(ouvrir: () => App, dataDir: string | undefined): number {
     return 0;
   } finally {
     app.close();
-    void dataDir;
   }
 }
 
 /**
  * Sert l'interface locale jusqu'au premier signal d'arret.
  *
- * Aucun run n'est lance d'ici : l'UI lit la base et ecrit les arbitrages de revue, rien
- * d'autre. Un `annuaire run` demarre dans un autre terminal est vu avancer a travers le
- * WAL, sans que les deux process aient a se connaitre — c'est pour cela que le mode WAL
- * a ete choisi au lot 1.
+ * **Depuis le lot 8, un run se lance d'ici** (ADR-024) : le worker tourne dans ce
+ * process, et `PiloteRun` en tient l'etat. Un `annuaire run` demarre dans un autre
+ * terminal reste par ailleurs visible a travers le WAL, sans que les deux process aient a
+ * se connaitre — c'est pour cela que le mode WAL a ete choisi au lot 1.
+ *
+ * La subtilite de cette fonction est **l'ordre d'arret**, et il n'est pas negociable :
+ *
+ * 1. le gestionnaire de signal est installe avant l'ecoute et avant l'ouverture du
+ *    navigateur — pose apres, un Ctrl+C dans cette fenetre prend le gestionnaire par
+ *    defaut de Node et saute la fermeture propre ;
+ * 2. `pilote.fermer()` ferme la porte : plus aucun run ne demarre ;
+ * 3. `pilote.attendre()` laisse finir celui qui tourne ;
+ * 4. `serveur.fermer()` cesse d'ecouter ;
+ * 5. `app.close()` ferme la base — sous un worker vivant, ce serait la seule facon de
+ *    perdre du travail dans ce lot.
  */
 async function commandeUi(
   ouvrir: () => App,
@@ -306,9 +365,20 @@ async function commandeUi(
 
   const app = ouvrir();
   const pilote = new PiloteRun(app);
+
+  // Installe **avant** l'ecoute et l'ouverture du navigateur. Pose apres, il laissait une
+  // fenetre — le spawn du navigateur, quelques lignes sur stdout — pendant laquelle un
+  // Ctrl+C prenait le gestionnaire par defaut de Node : terminaison immediate, et le
+  // `finally { app.close() }` jamais execute.
+  const controller = installShutdownHandlers(() => {
+    process.stdout.write("Arret de l'interface.\n");
+    if (pilote.arreter()) {
+      process.stdout.write("Un run est en cours : les jobs deja pris vont finir.\n");
+    }
+  });
+
   let serveur;
   try {
-    startupPurge(app);
     serveur = await demarrerServeur({
       port: numero,
       db: app.db,
@@ -326,6 +396,7 @@ async function commandeUi(
         },
         enregistrer: (valeur) => app.configurerContactUrl(valeur),
       },
+      supprimerCache: (chemin) => app.cache.supprimerParChemin(chemin),
       logger: app.logger,
     });
   } catch (cause) {
@@ -358,21 +429,16 @@ async function commandeUi(
   // ne coute rien — l'adresse vient d'etre imprimee juste au-dessus.
   if (!sansNavigateur) ouvrirNavigateur(serveur.url);
 
-  const controller = installShutdownHandlers(() => {
-    process.stdout.write("Arret de l'interface.\n");
-    if (pilote.arreter()) {
-      process.stdout.write("Un run est en cours : les jobs deja pris vont finir.\n");
-    }
-  });
-
   try {
     if (!controller.signal.aborted) {
       await new Promise<void>((resoudre) => {
         controller.signal.addEventListener("abort", () => resoudre(), { once: true });
       });
     }
-    // Avant de fermer la base : un worker encore vivant ecrirait dans une connexion
-    // fermee, et c'est la seule facon de perdre du travail dans ce lot.
+    // L'ordre compte : plus aucun run ne peut demarrer, on attend celui qui tourne, on
+    // ferme l'ecoute, et seulement alors la base. Fermer la base sous un worker vivant
+    // est la seule facon de perdre du travail dans ce lot.
+    pilote.fermer();
     await pilote.attendre();
     await serveur.fermer();
     return 0;
@@ -395,7 +461,7 @@ function commandeStatus(ouvrir: () => App): number {
       `Contact      : ${app.config.contactUrl ?? "non configure — collecte impossible"}`,
       `LLM          : ${app.config.llm.provider}`,
       "",
-      `Jobs         : ${ETATS.map((etat) => `${etat}=${counts[etat]}`).join("  ")}`,
+      `Jobs         : ${ETATS_JOB.map((etat) => `${etat}=${counts[etat]}`).join("  ")}`,
       "",
       runs.length === 0 ? "Aucun run enregistre." : "Derniers runs :",
       ...runs.map(
@@ -455,8 +521,8 @@ function formatMetrics(titre: string, metriques: Record<string, Record<string, n
 
 function commandeJobs(ouvrir: () => App, etatDemande: string | undefined): number {
   const etat = (etatDemande ?? "dead") as JobState;
-  if (!ETATS.includes(etat)) {
-    process.stderr.write(`Etat inconnu : ${etat} (attendu : ${ETATS.join(", ")})\n`);
+  if (!ETATS_JOB.includes(etat)) {
+    process.stderr.write(`Etat inconnu : ${etat} (attendu : ${ETATS_JOB.join(", ")})\n`);
     return 2;
   }
 
@@ -498,8 +564,8 @@ function commandeRequeue(
     );
     return 2;
   }
-  if (etatDemande !== undefined && !ETATS.includes(etatDemande as JobState)) {
-    process.stderr.write(`Etat inconnu : ${etatDemande} (attendu : ${ETATS.join(", ")})\n`);
+  if (etatDemande !== undefined && !ETATS_JOB.includes(etatDemande as JobState)) {
+    process.stderr.write(`Etat inconnu : ${etatDemande} (attendu : ${ETATS_JOB.join(", ")})\n`);
     return 2;
   }
 
@@ -533,10 +599,16 @@ function commandeRequeue(
   }
 }
 
-function commandePurge(ouvrir: () => App): number {
+/**
+ * La purge n'est plus declenchee ici : `ouvrir()` l'a faite, comme pour toute autre
+ * commande (§4.8). Cette commande-ci en **rend compte** — elle reste le moyen de voir la
+ * borne de retention et ce qu'elle a emporte, sans avoir a lancer un run.
+ */
+function commandePurge(ouvrir: () => App, purgeFaite: () => PurgeResult | undefined): number {
   const app = ouvrir();
   try {
-    const resultat = startupPurge(app);
+    const resultat = purgeFaite();
+    if (resultat === undefined) throw new Error("La purge d'ouverture n'a pas eu lieu.");
     process.stdout.write(
       `Purge jusqu'au ${resultat.cutoff} : ${resultat.contacts} contacts, ${resultat.pages} pages, ` +
         `${resultat.runs} runs, ${resultat.domaines} verdicts MX, ${resultat.entreesCache} entrees de cache.\n`,
@@ -584,12 +656,108 @@ async function commandeRun(
 }
 
 /**
+ * Art. 17 et 21 : effacer, et empecher de revenir.
+ *
+ * La suppression seule ne suffirait pas — le run suivant recollecterait la donnee et
+ * personne ne s'en apercevrait. C'est l'exclusion qui est l'objet durable ; la
+ * suppression n'en est que la consequence immediate.
+ */
+function commandeOublier(
+  ouvrir: () => App,
+  options: {
+    contact: string | undefined;
+    domaine: string | undefined;
+    commune: string | undefined;
+    motif: string | undefined;
+    json: boolean;
+  },
+): number {
+  const portees: [Portee, string | undefined][] = [
+    ["contact", options.contact],
+    ["domaine", options.domaine],
+    ["commune", options.commune],
+  ];
+  const choisies = portees.filter(([, valeur]) => valeur !== undefined);
+  if (choisies.length !== 1) {
+    process.stderr.write(
+      "Indiquez exactement une portee : --contact, --domaine ou --commune.\n" +
+        "  annuaire oublier --contact prenom.nom@mairie.example --motif « opposition du 12/03 »\n",
+    );
+    return 2;
+  }
+  const [portee, valeur] = choisies[0] as [Portee, string];
+
+  if (options.motif === undefined || options.motif.trim() === "") {
+    process.stderr.write(
+      "--motif est obligatoire : un responsable de traitement doit pouvoir dire au nom de\n" +
+        "quoi il a efface, et le prouver.\n",
+    );
+    return 2;
+  }
+
+  const app = ouvrir();
+  try {
+    const resultat = oublier(
+      app.db,
+      app.clock,
+      app.counters,
+      { portee, valeur, motif: options.motif, origine: "cli" },
+      (chemin) => app.cache.supprimerParChemin(chemin),
+    );
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(resultat, null, 2)}\n`);
+      return 0;
+    }
+
+    process.stdout.write(
+      `${resultat.contactsSupprimes} contact(s) supprime(s), ` +
+        `${resultat.entreesCacheSupprimees} entree(s) de cache effacee(s).\n` +
+        (resultat.nouvelle
+          ? `L'exclusion est inscrite : ${portee} « ${resultat.valeur} » ne rentrera plus.\n`
+          : `L'exclusion existait deja pour ${portee} « ${resultat.valeur} ».\n`) +
+        "Le site tiers, lui, publie toujours cette donnee : un nouveau crawl la remettra\n" +
+        "dans le cache HTTP, ou la purge a trois ans l'emportera. Ce qui est garanti est\n" +
+        "qu'elle ne rentrera plus dans l'annuaire exporte.\n",
+    );
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
+function hoteDe(url: string): string | undefined {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
  * Diagnostic : passe une URL par le client conforme et rend compte de ce qui s'est
  * applique. Sert a verifier une installation sans attendre le lot 2.
  */
 async function commandeFetch(ouvrir: () => App, url: string | undefined): Promise<number> {
   if (url === undefined) {
     process.stderr.write("Une URL est requise : annuaire fetch https://exemple.fr/associations\n");
+    return 2;
+  }
+
+  // §5 du brief : l'interdit des reseaux sociaux est absolu. Les trois chemins de crawl
+  // le tiennent sur l'hote final ; cette commande-ci, qui court-circuite le crawl, ne le
+  // tenait pas — et ce qu'elle telecharge entre dans le cache, d'ou le rejeu le relit.
+  // Le robots.txt de ces sites n'y change rien : l'interdit ne dit pas « sauf s'il
+  // l'autorise ».
+  const hote = hoteDe(url);
+  if (hote === undefined) {
+    process.stderr.write(`URL invalide : ${url}\n`);
+    return 2;
+  }
+  if (estReseauSocial(hote)) {
+    process.stderr.write(
+      `${hote} est un reseau social : le §5 du brief l'exclut sans exception, y compris ici.\n`,
+    );
     return 2;
   }
 
@@ -634,8 +802,14 @@ function lireLimite(brut: string | undefined): number {
   return Number.isInteger(valeur) && valeur > 0 ? valeur : LIMITE_PAR_DEFAUT;
 }
 
+/**
+ * Controle de forme des commandes de lecture. Le motif n'est plus recopie ici : il vivait
+ * en double, et la copie avait deja perdu le refus d'Alsace-Moselle — `decouvrir`, qui
+ * collecte, passait par elle. Cette commande-ci passe desormais par `pipeline.ts`, et
+ * `decouvrir` par le controle complet.
+ */
 function exigerDepartement(departement: string | undefined, commande: string): departement is string {
-  if (departement !== undefined && /^(\d{2}|\d[AB]|\d{3})$/i.test(departement)) return true;
+  if (departementBienForme(departement)) return true;
   process.stderr.write(`Un departement est requis : annuaire ${commande} --departement 35\n`);
   return false;
 }
@@ -791,14 +965,6 @@ function commandeDumps(ouvrir: () => App, json: boolean): number {
   }
 }
 
-function formaterOctets(valeur: number): string {
-  if (valeur < 1024) return `${valeur} o`;
-  if (valeur < 1024 * 1024) return `${(valeur / 1024).toFixed(1)} Ko`;
-  if (valeur < 1024 * 1024 * 1024) return `${(valeur / (1024 * 1024)).toFixed(1)} Mo`;
-  return `${(valeur / (1024 * 1024 * 1024)).toFixed(2)} Go`;
-}
-
-/** Resume ce que le run a produit, pour que le jalon soit lisible sans autre commande. */
 /** Rend `undefined` sur une valeur invalide : c'est une erreur d'usage, pas d'execution. */
 function lireOptionsDecouverte(
   maxPages: string | undefined,
@@ -815,13 +981,16 @@ async function commandeDecouvrir(
   departement: string | undefined,
   options: OptionsDecouverte,
 ): Promise<number> {
-  if (!exigerDepartement(departement, "decouvrir")) return 2;
+  // Cette commande collecte : elle releve du controle complet, refus d'Alsace-Moselle
+  // compris, et pas du simple controle de forme des commandes de lecture.
+  const refus = refusDepartement(departement);
+  if (refus !== undefined || departement === undefined) {
+    process.stderr.write(`${refus ?? "Un departement est requis."}\n`);
+    return 2;
+  }
 
   const app = ouvrir();
   try {
-    requireClient(app);
-    startupPurge(app);
-
     const communes = Number(
       (app.db
         .prepare("SELECT count(*) AS n FROM commune WHERE departement = ? AND url_mairie IS NOT NULL")
@@ -835,25 +1004,18 @@ async function commandeDecouvrir(
       return 2;
     }
 
-    const info = app.db
-      .prepare("INSERT INTO run (departement, started_at, statut) VALUES (?, ?, 'en_cours')")
-      .run(departement, toIso(app.clock.now()));
-    const runId = Number(info.lastInsertRowid);
-    const logger = app.logger.child({ run_id: runId });
-
     const controller = installShutdownHandlers(() => {
-      logger.warn("Arret demande : plus aucun job n'est pris, les jobs en cours vont finir");
+      app.logger.warn("Arret demande : plus aucun job n'est pris, les jobs en cours vont finir");
     });
 
-    await lancerDecouverte(app, runId, logger, departement, options, controller.signal);
-    if (!controller.signal.aborted) {
-      await lancerNormalisation(app, runId, logger, departement, controller.signal);
-    }
-
-    const interrompu = controller.signal.aborted;
-    app.db
-      .prepare("UPDATE run SET finished_at = ?, statut = ? WHERE id = ?")
-      .run(toIso(app.clock.now()), interrompu ? "interrompu" : "termine", runId);
+    // Le cycle de vie d'un run — ouverture de la ligne, phases, cloture — vit dans
+    // `pipeline.ts` et nulle part ailleurs. Cette commande n'en est plus que la
+    // restitution.
+    const { interrompu } = await executerDecouverteSeule(
+      app,
+      { departement, decouverte: options },
+      controller.signal,
+    );
 
     resumeRun(app, departement);
     return interrompu ? 130 : 0;
@@ -955,8 +1117,6 @@ function commandePrefiltrer(
 
   const app = ouvrir();
   try {
-    startupPurge(app);
-
     const campagne = options.campagne ?? derniereCampagne(app.db, departement);
     if (campagne === undefined) {
       process.stderr.write(
@@ -1044,8 +1204,6 @@ async function commandeNormaliser(
 
   const app = ouvrir();
   try {
-    startupPurge(app);
-
     const contacts = Number(
       (
         app.db
@@ -1128,11 +1286,11 @@ async function commandeNormaliser(
 }
 
 /** L'artefact que l'outil produit : un CSV avec la provenance de chaque ligne. */
-function commandeExporter(
+async function commandeExporter(
   ouvrir: () => App,
   departement: string | undefined,
   options: { fichier: string | undefined; scoreMin: string | undefined; avecRejetes: boolean },
-): number {
+): Promise<number> {
   if (!exigerDepartement(departement, "exporter")) return 2;
 
   const scoreMin = lireScoreMin(options.scoreMin);
@@ -1162,9 +1320,17 @@ function commandeExporter(
       return 0;
     }
 
-    let contenu = "";
-    for (const ligne of lignesCsv(app.db, parametres)) contenu += ligne;
-    writeFileSync(options.fichier, contenu, "utf8");
+    // Le generateur existe pour tenir l'echelle du §1 ; l'accumuler dans une chaine
+    // defaisait exactement ce qu'il apporte. `src/ui/serveur.ts` honore deja le contrat
+    // cote interface, avec la meme attente de `drain`.
+    const flux = createWriteStream(options.fichier, { encoding: "utf8" });
+    try {
+      for (const ligne of lignesCsv(app.db, parametres)) {
+        if (!flux.write(ligne)) await once(flux, "drain");
+      }
+    } finally {
+      await new Promise<void>((resoudre, rejeter) => flux.end((erreur?: Error | null) => (erreur ? rejeter(erreur) : resoudre())));
+    }
     process.stdout.write(`${total} contacts exportes dans ${options.fichier}.\n`);
     return 0;
   } finally {
@@ -1299,6 +1465,7 @@ function commandeDormance(ouvrir: () => App, departement: string | undefined, js
   }
 }
 
+/** Resume ce que le run a produit, pour que le jalon soit lisible sans autre commande. */
 function resumeRun(app: App, departement: string): void {
   const compte = (sql: string): number =>
     Number((app.db.prepare(sql).get(departement) as { n?: number })?.n ?? 0);
@@ -1348,32 +1515,18 @@ function resumeRun(app: App, departement: string): void {
     "SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee " +
       "WHERE c.departement = ?",
   );
-  // §8 du brief : le taux de couverture est la metrique qui fera le README. Elle se
-  // mesure sur les associations, pas sur les pages : c'est l'annuaire qu'on construit.
-  const couvertes = compte(
-    "SELECT count(DISTINCT a.id) AS n FROM association a " +
-      "JOIN commune c ON c.code_insee = a.code_insee " +
-      "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
-      "WHERE c.departement = ? AND a.date_dissolution IS NULL",
-  );
-
   // Les deux denominateurs sont affiches ensemble (ADR-013). Ne montrer que le second,
   // plus favorable, reviendrait a ameliorer le chiffre en changeant la question : le
   // taux sur les actives reste donc en premier, et le critere qui produit l'autre est
   // ecrit en toutes lettres.
+  //
+  // §8 du brief : le taux de couverture est la metrique qui fera le README. Les chiffres
+  // viennent de `mesurerCouverture`, et d'elle seule — c'est ce que son en-tete promet,
+  // et cette commande le defaisait en recalculant les siens sans le filtre de revue.
   const dormance = mesurerDormance(app.db, departement, app.clock.now());
-  const couvertesNonDormantes = Number(
-    (
-      app.db
-        .prepare(
-          "SELECT count(DISTINCT a.id) AS n FROM association a " +
-            "JOIN commune c ON c.code_insee = a.code_insee " +
-            "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
-            "WHERE c.departement = ? AND a.date_dissolution IS NULL AND a.date_declaration >= ?",
-        )
-        .get(departement, dormance.borne) as { n?: number } | undefined
-    )?.n ?? 0,
-  );
+  const couverture = mesurerCouverture(app.db, departement, dormance.borne);
+  const couvertes = couverture.avecEmail;
+  const couvertesNonDormantes = couverture.avecEmailNonDormantes ?? 0;
 
   const taux = associations === 0 ? 0 : (couvertes / associations) * 100;
   const tauxQualifie =
@@ -1432,19 +1585,7 @@ function resumeNormalisation(app: App, departement: string, associations: number
     );
   }
 
-  const joignables = Number(
-    (
-      app.db
-        .prepare(
-          "SELECT count(DISTINCT a.id) AS n FROM association a " +
-            "JOIN commune c ON c.code_insee = a.code_insee " +
-            "JOIN contact ct ON ct.association_id = a.id AND ct.kind = 'email' " +
-            "JOIN domaine_mail dm ON dm.domaine = substr(ct.valeur_normalisee, instr(ct.valeur_normalisee, '@') + 1) " +
-            "WHERE c.departement = ? AND a.date_dissolution IS NULL AND dm.mx = 1",
-        )
-        .get(departement) as { n?: number } | undefined
-    )?.n ?? 0,
-  );
+  const joignables = mesurerCouverture(app.db, departement).avecEmailJoignable;
   const part = associations === 0 ? 0 : (joignables / associations) * 100;
   const types = d.parType.map((ligne) => `${ligne.type} ${ligne.associations}`).join(", ");
 

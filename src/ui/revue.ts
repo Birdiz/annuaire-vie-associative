@@ -18,17 +18,20 @@ import { toIso } from "../clock.ts";
 import type { Clock } from "../clock.ts";
 import { Counters, ETAPE } from "../metrics/counters.ts";
 import { nettoyerEmail, classerEmail, normaliserTelephone, estMobile } from "../decouverte/extraction.ts";
+import { messageDe } from "../log.ts";
+import { oublier } from "../oubli.ts";
+import type { ResultatOubli } from "../oubli.ts";
 
-export type ActionRevue = "valide" | "rejete" | "corrige";
+export type ActionRevue = "valide" | "rejete" | "corrige" | "oublie";
 
-const ACTIONS: readonly string[] = ["valide", "rejete", "corrige"];
+const ACTIONS: readonly string[] = ["valide", "rejete", "corrige", "oublie"];
 
 export function estActionRevue(valeur: string): valeur is ActionRevue {
   return ACTIONS.includes(valeur);
 }
 
 export type ResultatRevue =
-  | { kind: "ok"; action: ActionRevue }
+  | { kind: "ok"; action: ActionRevue; oubli?: ResultatOubli }
   | { kind: "introuvable" }
   /** L'arbitrage est refuse, et la raison est destinee a etre lue par la personne. */
   | { kind: "refus"; message: string };
@@ -48,6 +51,7 @@ export function arbitrer(
   clock: Clock,
   counters: Counters,
   ordre: OrdreRevue,
+  supprimerCache?: (cheminRelatif: string) => boolean,
 ): ResultatRevue {
   const contact = db.prepare("SELECT id, kind, valeur_normalisee FROM contact WHERE id = ?").get(ordre.id) as
     | LigneContact
@@ -56,6 +60,31 @@ export function arbitrer(
 
   const maintenant = toIso(clock.now());
   const note = ordre.note === undefined || ordre.note.trim() === "" ? null : ordre.note.trim().slice(0, 500);
+
+  // « Oublier » n'est pas un arbitrage de plus : rejeter ecrit un statut que
+  // `--avec-rejetes` sait remettre dans l'export, et que le run suivant recouvre.
+  // Oublier supprime la ligne et inscrit l'exclusion (art. 17 et 21). Le motif est
+  // obligatoire, ici comme en ligne de commande.
+  if (ordre.action === "oublie") {
+    const motif = ordre.note === undefined || ordre.note.trim() === "" ? undefined : ordre.note.trim();
+    if (motif === undefined) {
+      return {
+        kind: "refus",
+        message:
+          "Un motif est requis pour oublier : il fait la preuve de la demande honoree. " +
+          "Renseignez-le dans la note.",
+      };
+    }
+    const resultat = oublier(
+      db,
+      clock,
+      counters,
+      { portee: "contact", valeur: contact.valeur_normalisee, motif, origine: "revue" },
+      supprimerCache,
+    );
+    counters.inc(ETAPE.revue, "oublies");
+    return { kind: "ok", action: "oublie", oubli: resultat };
+  }
 
   if (ordre.action !== "corrige") {
     transaction(db, () => {
@@ -100,7 +129,7 @@ export function arbitrer(
     // La contrainte d'unicite du lot 1 vient de dire que cette valeur existe deja sur
     // cette association. C'est une information, pas une panne : l'ecraser silencieusement
     // ferait disparaitre un contact, et le doublon est justement ce que la base empeche.
-    const message = (cause as Error).message;
+    const message = messageDe(cause);
     if (message.includes("UNIQUE constraint failed")) {
       return {
         kind: "refus",

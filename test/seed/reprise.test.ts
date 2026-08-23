@@ -73,7 +73,7 @@ async function setup(t: TestContext, etat: { coupure: number | null; etag: strin
       cache: new HttpCache(makeTempDir(t)),
       throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
       counters: new Counters(db, null),
-      userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+      userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
       cacheTtlMs: 3_600_000,
       clock,
     }),

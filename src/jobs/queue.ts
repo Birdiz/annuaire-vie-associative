@@ -1,10 +1,17 @@
-import type { Database } from "../db/index.ts";
+import type { Database, Ordre } from "../db/index.ts";
 import { transaction } from "../db/index.ts";
 import type { Clock } from "../clock.ts";
 import { systemClock, toIso } from "../clock.ts";
 import { Counters, ETAPE } from "../metrics/counters.ts";
 
 export type JobState = "pending" | "leased" | "done" | "failed" | "dead" | "skipped";
+
+/**
+ * Les etats a l'execution, dans l'ordre ou on aime les lire. Ils vivent aupres du type
+ * dont ils sont l'enumeration : la liste etait ecrite a l'identique dans `cli.ts` et dans
+ * l'ecran de synthese, et un etat ajoute au type aurait manque aux deux.
+ */
+export const ETATS_JOB: readonly JobState[] = ["pending", "leased", "done", "failed", "dead", "skipped"];
 
 export type Job = {
   id: number;
@@ -77,16 +84,20 @@ export class JobQueue {
    * jobs apres une reprise, sans tenir elles-memes le compte de ce qu'elles ont deja
    * produit.
    */
+  #ordreEnfiler: Ordre | undefined;
+
   enqueue(type: string, dedupKey: string, payload: unknown, options: EnqueueOptions = {}): boolean {
     const now = this.#clock.now();
     const nowIso = toIso(now);
-    const info = this.#db
-      .prepare(
-        `INSERT OR IGNORE INTO job
-           (run_id, type, dedup_key, payload, state, priority, attempts, max_attempts,
-            available_at, created_at, updated_at)
-         VALUES (?, ?, ?, ?, 'pending', ?, 0, ?, ?, ?, ?)`,
-      )
+    // Ordre prepare une fois : `enqueue` est appele dans la boucle d'enfilement des pages
+    // filles, et `node:sqlite` recompilerait son SQL a chaque tour.
+    this.#ordreEnfiler ??= this.#db.prepare(
+      `INSERT OR IGNORE INTO job
+         (run_id, type, dedup_key, payload, state, priority, attempts, max_attempts,
+          available_at, created_at, updated_at)
+       VALUES (?, ?, ?, ?, 'pending', ?, 0, ?, ?, ?, ?)`,
+    );
+    const info = this.#ordreEnfiler
       .run(
         options.runId ?? null,
         type,

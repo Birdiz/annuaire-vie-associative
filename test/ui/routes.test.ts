@@ -43,8 +43,9 @@ function contexte(t: TestContext): ContexteTest {
     port: PORT,
     version: "0.1.0",
     departementSecours: DEPARTEMENT,
+    supprimerCache: () => false,
     pilote: piloteDouble(),
-    reglages: reglagesDouble("https://exemple.fr/contact"),
+    reglages: reglagesDouble("https://exemple.example/contact"),
   };
 }
 
@@ -334,11 +335,11 @@ test("POST /reglages enregistre l'URL de contact, et le bouton apparait", (t) =>
 
   const reponse = router(
     ctx,
-    post("/reglages", `contactUrl=${encodeURIComponent("https://exemple.fr/nous-ecrire")}`, true),
+    post("/reglages", `contactUrl=${encodeURIComponent("https://exemple.example/nous-ecrire")}`, true),
   );
 
   assert.equal(reponse.statut, 200);
-  assert.deepEqual(ctx.reglages.ecrites, ["https://exemple.fr/nous-ecrire"]);
+  assert.deepEqual(ctx.reglages.ecrites, ["https://exemple.example/nous-ecrire"]);
   assert.match(corpsTexte(router(ctx, requete("/suivi")).corps), /Lancer un run/);
 });
 
@@ -356,7 +357,7 @@ test("une URL de contact invalide est refusee sur place, sans passer par l'URL",
 
 test("une URL de contact venue de l'environnement s'affiche sans champ de saisie", (t) => {
   const ctx = contexte(t);
-  ctx.reglages = reglagesDouble("https://exemple.fr/contact", true);
+  ctx.reglages = reglagesDouble("https://exemple.example/contact", true);
 
   const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
 

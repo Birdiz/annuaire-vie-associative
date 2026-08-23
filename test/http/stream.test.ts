@@ -11,7 +11,7 @@ import type { Handler } from "../helpers/server.ts";
 import { startServer, robotsAllowAll } from "../helpers/server.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
 
-const CONTACT = "https://exemple.fr/contact";
+const CONTACT = "https://exemple.example/contact";
 const lookupLocal: LookupFn = async () => ({ address: "127.0.0.1", family: 4 });
 const CORPS = "0123456789abcdefghijklmnopqrstuvwxyz";
 

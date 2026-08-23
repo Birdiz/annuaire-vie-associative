@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import type { TestContext } from "node:test";
 
 import { openDatabase } from "../../src/db/index.ts";
-import { Counters } from "../../src/metrics/counters.ts";
+import { Counters, ETAPE } from "../../src/metrics/counters.ts";
 import { HttpCache } from "../../src/http/cache.ts";
 import { DomainThrottle } from "../../src/http/throttle.ts";
 import type { LookupFn } from "../../src/http/throttle.ts";
@@ -104,7 +104,7 @@ async function setup(
     // ici rendrait chaque test du crawl aussi long qu'un run complet.
     throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
     counters,
-    userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+    userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
     cacheTtlMs: 3_600_000,
     clock,
   });
@@ -112,11 +112,12 @@ async function setup(
 
   db.prepare(
     `INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution,
-       resolution_source_url, resolution_collected_at, created_at, updated_at)
-     VALUES ('35047', 'Bruz', '35', ?, 'resolue', ?, ?, ?, ?)`,
+       resolution_source_url, resolution_collected_at, source_resolution, resolution_confiance,
+       created_at, updated_at)
+     VALUES ('35047', 'Bruz', '35', ?, 'resolue', ?, ?, 'annuaire', 0.9, ?, ?)`,
   ).run(
     (options.urlMairie ?? ((origin: string) => `${origin}/`))(server.origin),
-    "https://exemple.fr/dump",
+    "https://exemple.example/dump",
     "2026-08-18T00:00:00.000Z",
     "2026-08-18T00:00:00.000Z",
     "2026-08-18T00:00:00.000Z",
@@ -379,3 +380,68 @@ function routesProfondes(): Record<string, Handler> {
   }
   return table;
 }
+
+test("§4.5 : la provenance nomme la page atteinte, pas celle qui a ete demandee", async (t) => {
+  // Le crawl extrayait depuis `meta.finalUrl` et enregistrait `payload.url`. Apres
+  // redirection, la provenance publiee dans l'export designait donc une page qui ne
+  // porte pas la donnee — ce que l'invariant 5 existe precisement pour rendre impossible.
+  const { db, server, lancer } = await setup(t, {
+    routes: {
+      "/robots.txt": text("User-agent: *\nDisallow:\n"),
+      "/": html(`<html><body><a href="/assos">associations</a></body></html>`),
+      "/assos": (_req, res) => {
+        res.writeHead(301, { location: "/vie-associative-2026" });
+        res.end();
+      },
+      "/vie-associative-2026": html(
+        `<html><body><p>Tennis club bruzois — <a href="mailto:tennis@asso.example">ecrire</a></p></body></html>`,
+      ),
+    },
+  });
+  await lancer();
+
+  const contact = db
+    .prepare("SELECT source_url FROM contact WHERE valeur_normalisee = 'tennis@asso.example'")
+    .get() as { source_url: string } | undefined;
+
+  assert.equal(
+    contact?.source_url,
+    `${server.origin}/vie-associative-2026`,
+    "la provenance doit mener a la page qui porte l'adresse",
+  );
+
+  // Et la page garde sa cle de planification : c'est elle qui rend le crawl reprenable.
+  const page = db
+    .prepare("SELECT url, final_url FROM page WHERE final_url IS NOT NULL AND url <> final_url")
+    .get() as { url: string; final_url: string } | undefined;
+  assert.equal(page?.url, `${server.origin}/assos`);
+  assert.equal(page?.final_url, `${server.origin}/vie-associative-2026`);
+});
+
+test("art. 17 : une adresse oubliee ne rentre pas au crawl suivant", async (t) => {
+  // C'est la propriete qui distingue un effacement d'une suppression. Sans elle, oublier
+  // ne durerait que jusqu'a la campagne suivante, et personne ne s'en apercevrait.
+  const { db, counters, lancer } = await setup(t, {
+    routes: {
+      "/robots.txt": text("User-agent: *\nDisallow:\n"),
+      "/": html(
+        `<html><body><p><a href="mailto:club@asso.example">club</a>
+         <a href="mailto:contact@mairie.example">mairie</a></p></body></html>`,
+      ),
+    },
+  });
+
+  db.prepare(
+    `INSERT INTO exclusion (portee, valeur, motif, origine, created_at)
+     VALUES ('contact', 'club@asso.example', 'opposition du 23/08', 'cli', 't')`,
+  ).run();
+
+  await lancer();
+
+  const valeurs = (db.prepare("SELECT valeur_normalisee FROM contact ORDER BY valeur_normalisee").all() as {
+    valeur_normalisee: string;
+  }[]).map((ligne) => ligne.valeur_normalisee);
+
+  assert.deepEqual(valeurs, ["contact@mairie.example"], "l'adresse exclue ne devait pas revenir");
+  assert.equal(counters.get(ETAPE.extraction, "contacts_exclus"), 1, "ce qui est refuse se compte aussi (§8)");
+});

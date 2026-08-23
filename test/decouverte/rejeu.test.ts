@@ -82,7 +82,7 @@ async function crawler(t: TestContext): Promise<Montage> {
     cache,
     throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
     counters,
-    userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+    userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
     cacheTtlMs: 3_600_000,
     clock,
   });
@@ -90,9 +90,10 @@ async function crawler(t: TestContext): Promise<Montage> {
 
   db.prepare(
     `INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution,
-       resolution_source_url, resolution_collected_at, created_at, updated_at)
-     VALUES ('35047', 'Bruz', '35', ?, 'resolue', ?, ?, ?, ?)`,
-  ).run(`${server.origin}/`, "https://exemple.fr/dump", "2026-08-18T00:00:00.000Z", "t", "t");
+       resolution_source_url, resolution_collected_at, source_resolution, resolution_confiance,
+       created_at, updated_at)
+     VALUES ('35047', 'Bruz', '35', ?, 'resolue', ?, ?, 'annuaire', 0.9, ?, ?)`,
+  ).run(`${server.origin}/`, "https://exemple.example/dump", "2026-08-18T00:00:00.000Z", "t", "t");
 
   const inserer = db.prepare(
     `INSERT INTO association (rna_id, code_insee, nom, nom_normalise, source_creation, created_at, updated_at)

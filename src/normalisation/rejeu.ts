@@ -35,7 +35,13 @@ import type { Clock } from "../clock.ts";
 import type { Counters } from "../metrics/counters.ts";
 import type { Database } from "../db/index.ts";
 
-/** Lignes ecrites par transaction. Assez pour amortir, assez peu pour ne pas tenir la base. */
+/**
+ * Lignes ecrites par transaction.
+ *
+ * Plus haute qu'en decouverte (200) : ici chaque ligne est un calcul en memoire, sans
+ * lecture disque, et la tranche se remplit en quelques millisecondes. Le cout par
+ * transaction domine, d'ou l'interet de l'amortir davantage.
+ */
 const TAILLE_TRANCHE = 500;
 
 const SQL_ASSOCIATIONS = `
@@ -57,6 +63,12 @@ const SQL_CLASSER = `
  * Le verdict du pre-filtre vient de la page source du contact. La sous-requete prend la
  * campagne la plus recente : une meme URL revisitee a deux campagnes a deux lignes, et
  * c'est le dernier jugement qui vaut.
+ *
+ * Le rapprochement passe par `coalesce(final_url, url)` : la provenance d'un contact
+ * nomme la page **atteinte**, alors que `page.url` reste la page **demandee** — c'est
+ * elle qui porte la cle de planification. Sans ce `coalesce`, tout contact venu d'une
+ * page redirigee perdrait son verdict de pre-filtre, donc une part de son score, sans
+ * que rien ne le signale.
  */
 const SQL_CONTACTS = `
   SELECT ct.id, ct.kind, ct.confiance, ct.is_generique, ct.association_id,
@@ -64,7 +76,7 @@ const SQL_CONTACTS = `
          (ct.valeur_corrigee IS NOT NULL) AS corrige,
          (SELECT p.prefiltre_verdict
             FROM page p
-           WHERE p.url = ct.source_url AND p.code_insee = ct.code_insee
+           WHERE coalesce(p.final_url, p.url) = ct.source_url AND p.code_insee = ct.code_insee
            ORDER BY p.campagne DESC
            LIMIT 1) AS prefiltre_verdict
     FROM contact ct

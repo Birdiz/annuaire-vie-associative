@@ -23,6 +23,7 @@ import type { IncomingMessage, Server, ServerResponse } from "node:http";
 import { randomBytes } from "node:crypto";
 import { router, verifierAcces } from "./routes.ts";
 import type { ContexteUi, ReponseUi, RequeteUi } from "./routes.ts";
+import { messageDe } from "../log.ts";
 import type { Logger } from "../log.ts";
 
 /** Ecoute imposee. Voir l'en-tete : ce n'est pas un defaut, c'est une contrainte. */
@@ -48,6 +49,7 @@ export type OptionsServeur = {
   departementSecours: string;
   pilote: ContexteUi["pilote"];
   reglages: ContexteUi["reglages"];
+  supprimerCache: ContexteUi["supprimerCache"];
   logger?: Logger | undefined;
 };
 
@@ -74,11 +76,16 @@ export function demarrerServeur(options: OptionsServeur): Promise<ServeurUi> {
     departementSecours: options.departementSecours,
     pilote: options.pilote,
     reglages: options.reglages,
+    supprimerCache: options.supprimerCache,
   };
 
   const serveur = createServer((req, res) => {
     traiter(ctx, options.logger, req, res).catch((cause: unknown) => {
-      options.logger?.error("Echec du rendu d'un ecran", { erreur: (cause as Error).message });
+      // Un client parti n'est pas une panne, et surtout : la reponse est deja engagee,
+      // ecrire un 500 par-dessus n'irait nulle part et ferait du bruit dans le journal.
+      if (cause instanceof ClientParti) return;
+      options.logger?.error("Echec du rendu d'un ecran", { erreur: messageDe(cause) });
+      if (res.writableEnded) return;
       if (!res.headersSent) res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
       res.end("Erreur interne.\n");
     });
@@ -175,9 +182,42 @@ async function ecrire(res: ServerResponse, reponse: ReponseUi): Promise<void> {
   }
 
   for (const morceau of corps) {
-    if (!res.write(morceau)) {
-      await new Promise<void>((resoudre) => res.once("drain", resoudre));
-    }
+    if (!res.write(morceau)) await attendreDrain(res);
   }
   res.end();
+}
+
+/**
+ * Attend que le tampon se vide — **ou que le client s'en aille**.
+ *
+ * Sans les deux ecouteurs de sortie, un onglet ferme pendant un export volumineux
+ * detruisait la socket : `write` rendait `false`, `drain` n'arrivait jamais, et la
+ * promesse ne se reglait plus. Le generateur, la requete et la reponse restaient en
+ * suspens pour la duree du process, un jeu de plus a chaque export interrompu. Un
+ * `'error'` sans ecouteur etait par ailleurs une exception non attrapee.
+ */
+function attendreDrain(res: ServerResponse): Promise<void> {
+  return new Promise<void>((resoudre, rejeter) => {
+    const finir = (erreur?: Error) => {
+      res.off("drain", surDrain);
+      res.off("close", surFermeture);
+      res.off("error", surErreur);
+      if (erreur === undefined) resoudre();
+      else rejeter(erreur);
+    };
+    const surDrain = () => finir();
+    const surFermeture = () => finir(new ClientParti());
+    const surErreur = (erreur: Error) => finir(erreur);
+    res.once("drain", surDrain);
+    res.once("close", surFermeture);
+    res.once("error", surErreur);
+  });
+}
+
+/** Le client a ferme avant la fin : ce n'est pas une panne, il n'y a rien a signaler. */
+export class ClientParti extends Error {
+  constructor() {
+    super("Le client a ferme la connexion avant la fin de la reponse.");
+    this.name = "ClientParti";
+  }
 }

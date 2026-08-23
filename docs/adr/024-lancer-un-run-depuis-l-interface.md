@@ -89,6 +89,14 @@ inadvertance. La validation est celle du chargement, exportée plutôt que dupli
 - **Le run lancé d'ici prend les options par défaut** : département courant de l'écran,
   budget de pages par défaut, pas d'`--avec-import`, pas de `--rna-file`. Les réglages fins
   restent à la CLI, dont c'est le public.
+- **L'interface se fige pendant les écritures groupées, et c'est le prix payé.**
+  `node:sqlite` est synchrone et le worker tourne dans ce process : pendant une tranche de
+  200 pages (découverte) ou de 500 lignes (normalisation), l'event loop est immobilisée et
+  le fragment `hx-trigger="every 2s"` ne peut pas répondre. C'est la seule des conséquences
+  de cette décision qui soit **visible par l'utilisateur** — l'écran paraît mort quelques
+  centaines de millisecondes. Les tailles de tranche sont dimensionnées avec cela en tête,
+  et c'est la raison pour laquelle celle de la découverte est plus basse. *(Ajouté au lot 9,
+  sur revue : l'ADR listait cinq conséquences et pas celle-là.)*
 - Le bundle passe de 262 à 271 Ko. Aucune dépendance n'entre.
 - Le comportement de l'exécutable sans argument **n'a pas pu être essayé** depuis ce poste,
   qui ne construit qu'une cible Windows : il se vérifie par le test de `sea.isSea()`, pas

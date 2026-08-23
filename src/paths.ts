@@ -11,8 +11,6 @@ export type Paths = {
   dbFile: string;
   /** Cache HTTP adresse par hash d'URL. */
   cacheDir: string;
-  /** Telechargements volumineux (dumps RNA, annuaire de l'administration). */
-  downloadsDir: string;
   /** Journal structure. */
   logFile: string;
   /** Fichier de configuration de l'utilisateur. */
@@ -61,7 +59,6 @@ export function buildPaths(dataDir: string): Paths {
     dataDir,
     dbFile: join(dataDir, "annuaire.sqlite"),
     cacheDir: join(dataDir, "cache"),
-    downloadsDir: join(dataDir, "downloads"),
     logFile: join(dataDir, "annuaire.log"),
     configFile: join(dataDir, "config.json"),
   };
@@ -74,9 +71,15 @@ export function resolvePaths(
   return buildPaths(resolveDataDir(explicit, e));
 }
 
-/** Cree l'arborescence. Idempotent : relancer `init` ne casse rien. */
+/**
+ * Cree l'arborescence. Idempotent : relancer `init` ne casse rien.
+ *
+ * `0o700` et non le `0o755` par defaut : ce repertoire contient la base, le cache des
+ * pages collectees et le journal, donc des donnees personnelles. Sur un poste partage ou
+ * un serveur multi-utilisateurs, tout compte local pouvait les lire. L'image Docker
+ * prenait deja la precaution (`chown node:node`), l'installation npx et Windows non.
+ */
 export function ensurePaths(paths: Paths): void {
-  mkdirSync(paths.dataDir, { recursive: true });
-  mkdirSync(paths.cacheDir, { recursive: true });
-  mkdirSync(paths.downloadsDir, { recursive: true });
+  mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
+  mkdirSync(paths.cacheDir, { recursive: true, mode: 0o700 });
 }

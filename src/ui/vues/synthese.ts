@@ -18,6 +18,7 @@ import type { DistributionNormalisation } from "../../normalisation/rejeu.ts";
 import type { Couverture } from "../../metrics/couverture.ts";
 import type { Dormance } from "../../metrics/dormance.ts";
 import type { JobState } from "../../jobs/queue.ts";
+import { ETATS_JOB } from "../../jobs/queue.ts";
 
 export type DonneesSuivi = {
   runs: readonly LigneRun[];
@@ -51,7 +52,6 @@ export type DonneesSynthese = {
   revue: DistributionRevue;
 };
 
-const ETATS: readonly JobState[] = ["pending", "leased", "done", "failed", "dead", "skipped"];
 
 /**
  * Fragment rafraichi par htmx. Rendu isolement pour qu'un rafraichissement ne recalcule
@@ -81,7 +81,7 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
          risque — rien ne sera rejoue.</p>`
       : "";
 
-  const file = tableau(ETATS, [ETATS.map((etat) => `<span class="n">${nombre(suivi.jobs[etat])}</span>`)]);
+  const file = tableau(ETATS_JOB, [ETATS_JOB.map((etat) => `<span class="n">${nombre(suivi.jobs[etat])}</span>`)]);
 
   const runs = tableau(
     ["run", "departement", "statut", "debut", "fin"],

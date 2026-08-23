@@ -89,3 +89,21 @@ function formatFields(fields: Record<string, unknown>): string {
     .map(([key, value]) => `${key}=${typeof value === "string" ? value : JSON.stringify(value)}`);
   return parts.length === 0 ? "" : `  ${parts.join(" ")}`;
 }
+
+/**
+ * Message lisible pour une cause quelconque.
+ *
+ * `(cause as Error).message` rend `undefined` des que ce qui a ete leve n'est pas une
+ * `Error` — une chaine, un objet, un `throw` mal forme. Le journal **et** le message
+ * affiche a l'utilisateur portaient alors « undefined », sans le moindre indice. C'est
+ * deja ce que fait correctement `JobQueue`, en un seul endroit desormais.
+ */
+export function messageDe(cause: unknown): string {
+  if (cause instanceof Error) return cause.message;
+  if (typeof cause === "string") return cause;
+  try {
+    return JSON.stringify(cause) ?? String(cause);
+  } catch {
+    return String(cause);
+  }
+}

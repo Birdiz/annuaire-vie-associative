@@ -61,5 +61,4 @@ test("ensurePaths cree l'arborescence et se rejoue sans erreur", (t) => {
 
   assert.ok(existsSync(paths.dataDir));
   assert.ok(existsSync(paths.cacheDir));
-  assert.ok(existsSync(paths.downloadsDir));
 });

@@ -66,7 +66,7 @@ async function setup(t: TestContext, dump: string = DUMP) {
       cache: new HttpCache(makeTempDir(t)),
       throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
       counters: new Counters(db, null),
-      userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+      userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
       cacheTtlMs: 3_600_000,
       clock,
     }),
@@ -206,7 +206,7 @@ test("le listing de l'Annuaire est revalide, jamais servi depuis le cache", asyn
       cache: new HttpCache(makeTempDir(t)),
       throttle: new DomainThrottle({ minDelayMs: 1, lookup: lookupLocal }),
       counters: new Counters(db, null),
-      userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+      userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
       // Une heure de fraicheur : sans revalidation forcee, le second passage servirait
       // le listing de la veille et irait chercher un dump disparu.
       cacheTtlMs: 3_600_000,

@@ -4,7 +4,6 @@ import {
   parseRobots,
   isAllowed,
   patternMatches,
-  effectiveDelayMs,
   pathWithQuery,
   ALLOW_ALL,
   DISALLOW_ALL,
@@ -75,7 +74,7 @@ test("les caracteres speciaux d'expression reguliere sont neutralises", () => {
 });
 
 test("le motif est compare au chemin et a la query, sans le fragment", () => {
-  const url = new URL("https://exemple.fr/recherche?q=asso#ancre");
+  const url = new URL("https://exemple.example/recherche?q=asso#ancre");
   assert.equal(pathWithQuery(url), "/recherche?q=asso");
 
   const p = policy("User-agent: *\nDisallow: /*?*\n");
@@ -95,12 +94,57 @@ test("le cas reel de data.gouv : le redirecteur est interdit, l'API de metadonne
   );
 });
 
+/**
+ * Le delai annonce par le site, en millisecondes. Le **plancher** de deux secondes, lui,
+ * est applique par `DomainThrottle` et teste la-bas : l'ecrire une seconde fois ici
+ * donnerait deux sources de verite pour un invariant qui doit n'en avoir qu'une.
+ */
+function delaiAnnonce(p: ReturnType<typeof policy>): number {
+  return Math.max(2_000, p.crawlDelayMs ?? 0);
+}
+
 test("Crawl-delay releve le plancher mais ne peut pas l'abaisser", () => {
-  assert.equal(effectiveDelayMs(policy("User-agent: *\nCrawl-delay: 10\n"), 2_000), 10_000);
-  assert.equal(effectiveDelayMs(policy("User-agent: *\nCrawl-delay: 0.5\n"), 2_000), 2_000);
-  assert.equal(effectiveDelayMs(policy("User-agent: *\n"), 2_000), 2_000);
+  assert.equal(delaiAnnonce(policy("User-agent: *\nCrawl-delay: 10\n")), 10_000);
+  assert.equal(delaiAnnonce(policy("User-agent: *\nCrawl-delay: 0.5\n")), 2_000);
+  assert.equal(delaiAnnonce(policy("User-agent: *\n")), 2_000);
 });
 
 test("un Crawl-delay illisible est ignore plutot que devine", () => {
-  assert.equal(effectiveDelayMs(policy("User-agent: *\nCrawl-delay: bientot\n"), 2_000), 2_000);
+  assert.equal(delaiAnnonce(policy("User-agent: *\nCrawl-delay: bientot\n")), 2_000);
+});
+
+test("un Crawl-delay absurde est plafonne plutot que subi", () => {
+  // « Crawl-delay: 86400 » se rencontre. Sans plafond, le job renouvelle son bail
+  // toutes les 30 s et occupe un slot de concurrence pendant 24 h ; au-dela de
+  // 2^31-1 ms, `setTimeout` ramene silencieusement le delai a 1 ms et la boucle de
+  // garde du throttle se met a tourner a vide pendant des annees.
+  assert.equal(delaiAnnonce(policy("User-agent: *\nCrawl-delay: 86400\n")), 60_000);
+  assert.equal(delaiAnnonce(policy("User-agent: *\nCrawl-delay: 3000000\n")), 60_000);
+  assert.equal(delaiAnnonce(policy("User-agent: *\nCrawl-delay: 45\n")), 45_000);
+});
+
+test("RFC 9309 §2.2.1 : deux groupes visant le meme agent sont fusionnes", () => {
+  // Ne retenir que le premier bloc laissait tomber les Disallow du second, c'est-a-dire
+  // echouer dans le sens permissif sur un invariant qui n'en tolere pas.
+  const p = policy("User-agent: *\nDisallow: /prive\n\nUser-agent: *\nDisallow: /interne\n");
+  assert.equal(isAllowed(p, "/prive/x"), false);
+  assert.equal(isAllowed(p, "/interne/x"), false, "le second bloc doit compter autant que le premier");
+  assert.equal(isAllowed(p, "/public"), true);
+});
+
+test("a la fusion, c'est le Crawl-delay le plus long qui est retenu", () => {
+  const p = policy("User-agent: *\nCrawl-delay: 5\n\nUser-agent: *\nCrawl-delay: 12\n");
+  assert.equal(delaiAnnonce(p), 12_000);
+});
+
+test("un motif a etoiles multiples s'evalue en temps borne", () => {
+  // Traduit en regex, ce motif produit `.*a.*a.*a...b` : le temps doublait tous les
+  // deux caracteres, et cette assertion ne terminait pas. Le chemin est non
+  // contournable (§4.2), donc un robots.txt maladroit gelait l'outil pour de bon.
+  const motif = `/${"a*".repeat(14)}b`;
+  const chemin = `/${"a".repeat(60)}`;
+  const debut = process.hrtime.bigint();
+  assert.equal(patternMatches(motif, chemin), false);
+  const millisecondes = Number(process.hrtime.bigint() - debut) / 1e6;
+  assert.ok(millisecondes < 50, `evaluation en ${millisecondes.toFixed(1)} ms, attendu moins de 50`);
 });

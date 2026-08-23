@@ -3,7 +3,7 @@ import type { Clock } from "../clock.ts";
 import { systemClock, toIso } from "../clock.ts";
 import type { Counters } from "../metrics/counters.ts";
 import { ETAPE } from "../metrics/counters.ts";
-import { HttpCache, canonicalizeUrl } from "./cache.ts";
+import { HttpCache, normalizeForRequest } from "./cache.ts";
 import type { CacheMeta } from "./cache.ts";
 import { DomainThrottle } from "./throttle.ts";
 import { ALLOW_ALL, DISALLOW_ALL, isAllowed, parseRobots, pathWithQuery } from "./robots.ts";
@@ -117,7 +117,7 @@ export class HttpClient {
   }
 
   async fetch(rawUrl: string | URL, options: FetchOptions = {}): Promise<FetchOutcome> {
-    const requested = new URL(canonicalizeUrl(rawUrl));
+    const requested = new URL(normalizeForRequest(rawUrl));
     assertSupportedScheme(requested);
 
     const maxBytes = options.maxBytes ?? MAX_RESPONSE_BYTES;
@@ -138,10 +138,16 @@ export class HttpClient {
 
       await this.#throttle.acquire(current, decision.delayMs, options.signal);
 
-      const response = await this.#send(current, hit?.meta, options.signal);
+      // L'entree en cache appartient a `requested`, pas au saut courant. Envoyer ses
+      // validateurs a la cible d'une redirection, c'est risquer un 304 qui ferait servir
+      // le corps d'une **autre** page — avec `touch()` qui repousse le TTL, le mensonge
+      // se reconduirait a chaque run — et faire voyager l'ETag d'une origine vers une
+      // autre. On ne revalide donc que face a l'URL qui a reellement produit l'entree.
+      const revalidable = hit !== undefined && (current.href === requested.href || current.href === hit.meta.finalUrl);
+      const response = await this.#send(current, revalidable ? hit.meta : undefined, options.signal);
       this.#counters.inc(ETAPE.http, "requests");
 
-      if (response.status === 304 && hit !== undefined) {
+      if (response.status === 304 && revalidable && hit !== undefined) {
         this.#counters.inc(ETAPE.http, "revalidated");
         const fetchedAt = toIso(this.#clock.now());
         this.#cache.touch(requested.href, fetchedAt);
@@ -150,7 +156,7 @@ export class HttpClient {
 
       if (response.status === 429) {
         this.#counters.inc(ETAPE.http, "throttled_429");
-        this.#throttle.penalize(current, retryAfterMs(response.headers.get("retry-after")));
+        this.#throttle.penalize(current, retryAfterMs(response.headers.get("retry-after"), this.#clock.now()));
         return { kind: "status", status: 429, finalUrl: current.href };
       }
 
@@ -160,7 +166,7 @@ export class HttpClient {
         const next = new URL(location, current);
         assertSupportedScheme(next);
         this.#counters.inc(ETAPE.http, "redirects");
-        current = new URL(canonicalizeUrl(next));
+        current = new URL(normalizeForRequest(next));
         continue;
       }
 
@@ -198,7 +204,7 @@ export class HttpClient {
    * garde la main par son propre `signal`.
    */
   async openStream(rawUrl: string | URL, options: StreamOptions = {}): Promise<StreamOutcome> {
-    let current = new URL(canonicalizeUrl(rawUrl));
+    let current = new URL(normalizeForRequest(rawUrl));
     assertSupportedScheme(current);
 
     for (let hop = 0; hop <= MAX_REDIRECTS; hop += 1) {
@@ -215,7 +221,7 @@ export class HttpClient {
 
       if (response.status === 429) {
         this.#counters.inc(ETAPE.http, "throttled_429");
-        this.#throttle.penalize(current, retryAfterMs(response.headers.get("retry-after")));
+        this.#throttle.penalize(current, retryAfterMs(response.headers.get("retry-after"), this.#clock.now()));
         return { kind: "status", status: 429, finalUrl: current.href };
       }
 
@@ -225,7 +231,7 @@ export class HttpClient {
         const next = new URL(location, current);
         assertSupportedScheme(next);
         this.#counters.inc(ETAPE.http, "redirects");
-        current = new URL(canonicalizeUrl(next));
+        current = new URL(normalizeForRequest(next));
         continue;
       }
 
@@ -276,19 +282,9 @@ export class HttpClient {
     // compresses et l'offset de reprise designerait le mauvais endroit.
     if (options.identityEncoding === true) headers.set("accept-encoding", "identity");
 
-    const minuteur = new AbortController();
-    const minuterie = setTimeout(() => minuteur.abort(), REQUEST_TIMEOUT_MS);
-    const signaux = options.signal === undefined ? [minuteur.signal] : [options.signal, minuteur.signal];
-    try {
-      return await this.#fetch(url, {
-        method: "GET",
-        headers,
-        redirect: "manual",
-        signal: AbortSignal.any(signaux),
-      });
-    } finally {
-      clearTimeout(minuterie);
-    }
+    return avecMinuteur(options.signal, (signalComplet) =>
+      this.#fetch(url, { method: "GET", headers, redirect: "manual", signal: signalComplet }),
+    );
   }
 
   async #send(url: URL, cached: CacheMeta | undefined, signal?: AbortSignal): Promise<Response> {
@@ -296,12 +292,12 @@ export class HttpClient {
     if (cached?.etag != null) headers.set("if-none-match", cached.etag);
     if (cached?.lastModified != null) headers.set("if-modified-since", cached.lastModified);
 
-    return this.#fetch(url, {
-      method: "GET",
-      headers,
-      redirect: "manual",
-      signal: withTimeout(signal),
-    });
+    // Meme forme que `#sendStream` : un minuteur explicite, desarme des que la reponse
+    // est la. `AbortSignal.timeout` laissait un timer de vingt secondes en vol a chaque
+    // requete, meme quand le serveur repondait en cinquante millisecondes.
+    return avecMinuteur(signal, (signalComplet) =>
+      this.#fetch(url, { method: "GET", headers, redirect: "manual", signal: signalComplet }),
+    );
   }
 
   /**
@@ -324,11 +320,21 @@ export class HttpClient {
     return { allowed: true, delayMs: policy.crawlDelayMs ?? 0 };
   }
 
+  /**
+   * La politique d'une origine est chargee une fois et partagee. **Une promesse rejetee
+   * ne reste pas en cache** : `#loadPolicy` relance les abandons — timeout compris — et
+   * ce client vit aussi longtemps que le process, qui survit desormais a plusieurs runs
+   * (ADR-024). Une mairie dont le robots.txt met plus de vingt secondes a repondre
+   * condamnait sinon toutes ses pages, pour tous les runs suivants, sans rien en dire.
+   */
   #policyFor(origin: string, signal?: AbortSignal): Promise<RobotsPolicy> {
     let pending = this.#policies.get(origin);
     if (pending === undefined) {
       pending = this.#loadPolicy(origin, signal);
       this.#policies.set(origin, pending);
+      pending.catch(() => {
+        if (this.#policies.get(origin) === pending) this.#policies.delete(origin);
+      });
     }
     return pending;
   }
@@ -337,12 +343,14 @@ export class HttpClient {
     const url = new URL("/robots.txt", origin);
     try {
       await this.#throttle.acquire(url, 0, signal);
-      const response = await this.#fetch(url, {
-        method: "GET",
-        headers: new Headers({ "user-agent": this.#userAgent }),
-        redirect: "follow",
-        signal: withTimeout(signal),
-      });
+      const response = await avecMinuteur(signal, (signalComplet) =>
+        this.#fetch(url, {
+          method: "GET",
+          headers: new Headers({ "user-agent": this.#userAgent }),
+          redirect: "follow",
+          signal: signalComplet,
+        }),
+      );
       this.#counters.inc(ETAPE.http, "robots_fetched");
 
       // 4xx : robots.txt indisponible, tout est permis (RFC 9309 §2.3.1.3).
@@ -350,6 +358,16 @@ export class HttpClient {
       // 5xx : site injoignable, on s'abstient (RFC 9309 §2.3.1.4).
       if (response.status >= 500) return DISALLOW_ALL;
       if (response.status < 200 || response.status >= 300) return ALLOW_ALL;
+
+      // Beaucoup de CMS de petites communes servent une page HTML en 200 sur
+      // /robots.txt. `parseRobots` n'y trouve aucune directive et conclurait « tout est
+      // permis » — a rebours de la doctrine du module, qui s'abstient en cas de doute.
+      // Une reponse qui n'est pas du texte brut n'est pas un robots.txt.
+      const type = response.headers.get("content-type") ?? "";
+      if (type !== "" && !type.toLowerCase().startsWith("text/plain")) {
+        this.#counters.inc(ETAPE.http, "robots_illisible");
+        return DISALLOW_ALL;
+      }
 
       const text = (await readCapped(response, MAX_RESPONSE_BYTES)).toString("utf8");
       return parseRobots(text, ROBOTS_TOKEN);
@@ -365,13 +383,22 @@ export class HttpClient {
 /** Convertit le corps d'une reponse en iterable asynchrone d'octets. */
 async function* iterer(flux: ReadableStream<Uint8Array>): AsyncIterable<Uint8Array> {
   const lecteur = flux.getReader();
+  let termine = false;
   try {
     for (;;) {
       const { done, value } = await lecteur.read();
-      if (done) return;
+      if (done) {
+        termine = true;
+        return;
+      }
       if (value !== undefined) yield value;
     }
   } finally {
+    // Sortie par exception ou par `break` : relacher le verrou ne suffit pas, le corps
+    // HTTP resterait ouvert sans consommateur et la connexion hors du pool jusqu'au GC.
+    // Or cette boucle sort bel et bien par exception — transaction en echec, JSON
+    // malforme, ligne CSV demesuree.
+    if (!termine) await lecteur.cancel().catch(() => {});
     lecteur.releaseLock();
   }
 }
@@ -406,18 +433,35 @@ function statusClass(status: number): string {
   return `${Math.floor(status / 100)}xx`;
 }
 
-function retryAfterMs(header: string | null): number {
-  if (header === null) return 60_000;
+/**
+ * `maintenant` vient de l'horloge injectee : c'etait le dernier `Date.now()` de `src/`,
+ * et il rendait la branche « Retry-After date » intestable.
+ */
+export function retryAfterMs(header: string | null, maintenant: number): number {
+  // Un en-tete vide n'est pas « zero seconde » : `Number("")` vaut 0, ce qui annulait
+  // la penalite au lieu de retenir le defaut.
+  if (header === null || header.trim() === "") return 60_000;
   const seconds = Number(header);
   if (Number.isFinite(seconds) && seconds >= 0) return Math.min(seconds * 1000, 3_600_000);
   const date = Date.parse(header);
-  if (Number.isFinite(date)) return Math.max(0, Math.min(date - Date.now(), 3_600_000));
+  if (Number.isFinite(date)) return Math.max(0, Math.min(date - maintenant, 3_600_000));
   return 60_000;
 }
 
-function withTimeout(signal?: AbortSignal): AbortSignal {
-  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
-  return signal === undefined ? timeout : AbortSignal.any([signal, timeout]);
+/**
+ * Arme un minuteur de requete, et le desarme des que l'appel rend la main. Un
+ * `AbortSignal.timeout` non declenche reste en vol jusqu'a son terme : a raison d'un par
+ * requete, cela s'accumule sur un run de plusieurs heures.
+ */
+async function avecMinuteur<T>(signal: AbortSignal | undefined, appel: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  const minuteur = new AbortController();
+  const minuterie = setTimeout(() => minuteur.abort(new Error("Delai de requete depasse")), REQUEST_TIMEOUT_MS);
+  const signaux = signal === undefined ? [minuteur.signal] : [signal, minuteur.signal];
+  try {
+    return await appel(AbortSignal.any(signaux));
+  } finally {
+    clearTimeout(minuterie);
+  }
 }
 
 function isAbort(error: unknown): boolean {

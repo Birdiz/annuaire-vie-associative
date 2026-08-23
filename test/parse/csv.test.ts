@@ -101,3 +101,31 @@ test("indexerColonnes tolere une ligne plus courte que l'entete", () => {
   const champ = lire(["W001", "Club"]);
   assert.equal(champ("siteweb"), "");
 });
+
+test("un guillemet jamais referme ne fait pas grossir le tampon sans fin", () => {
+  // Sans plafond, plus aucune ligne ne se terminait : le tampon gardait tout, chaque
+  // `push` reconcatenait et rescannait depuis l'octet zero, et `consumedBytes` restait
+  // fige. Mesure sur 13 Mo d'entree : 697 Mo de RSS et un offset de reprise a 4 — donc,
+  // sur le dump RNA, un OOM rejoue a chaque tentative de reprise jusqu'au `dead`.
+  const parseur = new CsvStreamParser();
+  parseur.push(Buffer.from('a,b\nc,"d\n'));
+
+  let lignes = 0;
+  for (let i = 0; i < 40; i += 1) {
+    lignes += parseur.push(Buffer.from(`${"x".repeat(65_536)}\n`)).length;
+  }
+
+  assert.ok(lignes > 0, "des lignes doivent finir par sortir");
+  assert.ok(parseur.consumedBytes > 1_000_000, `l'offset de reprise doit avancer, vu ${parseur.consumedBytes}`);
+  assert.equal(parseur.lignesRepliees, 1, "le guillemet orphelin doit avoir ete neutralise une fois");
+});
+
+test("un champ quote normal traverse toujours plusieurs morceaux sans encombre", () => {
+  const parseur = new CsvStreamParser();
+  const lignes = [...parseur.push(Buffer.from('id,nom\n1,"Comite des ')), ...parseur.push(Buffer.from('fetes"\n'))];
+  assert.deepEqual(lignes, [
+    ["id", "nom"],
+    ["1", "Comite des fetes"],
+  ]);
+  assert.equal(parseur.lignesRepliees, 0);
+});

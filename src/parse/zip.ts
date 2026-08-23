@@ -45,17 +45,20 @@ export class ZipError extends Error {
 export class ZipReader {
   readonly #fd: number;
   readonly #entrees: readonly ZipEntry[];
+  /** Taille du fichier : elle borne tout ce que le catalogue pretend pouvoir lire. */
+  readonly #taille: number;
 
-  private constructor(fd: number, entrees: readonly ZipEntry[]) {
+  private constructor(fd: number, entrees: readonly ZipEntry[], taille: number) {
     this.#fd = fd;
     this.#entrees = entrees;
+    this.#taille = taille;
   }
 
   static ouvrir(chemin: string): ZipReader {
     const fd = openSync(chemin, "r");
     try {
       const taille = fstatSync(fd).size;
-      return new ZipReader(fd, lireCatalogue(fd, taille));
+      return new ZipReader(fd, lireCatalogue(fd, taille), taille);
     } catch (erreur) {
       closeSync(fd);
       throw erreur;
@@ -73,7 +76,7 @@ export class ZipReader {
 
   /** Detend une entree et rend son contenu brut. */
   lire(entree: ZipEntry): Buffer {
-    const enteteLocal = lireBloc(this.#fd, entree.localHeaderOffset, 30);
+    const enteteLocal = lireBloc(this.#fd, entree.localHeaderOffset, 30, this.#taille);
     if (enteteLocal.readUInt32LE(0) !== SIG_LOCAL) {
       throw new ZipError(`En-tete local absent pour l'entree ${entree.name}`);
     }
@@ -82,13 +85,17 @@ export class ZipReader {
     const longueurNom = enteteLocal.readUInt16LE(26);
     const longueurExtra = enteteLocal.readUInt16LE(28);
     const debut = entree.localHeaderOffset + 30 + longueurNom + longueurExtra;
-    const donnees = lireBloc(this.#fd, debut, entree.compressedSize);
+    const donnees = lireBloc(this.#fd, debut, entree.compressedSize, this.#taille);
 
     if (entree.method === METHODE_STOCKEE) return donnees;
     if (entree.method !== METHODE_DEFLATE) {
       throw new ZipError(`Methode de compression ${entree.method} non geree (${entree.name})`);
     }
-    const contenu = inflateRawSync(donnees);
+    // `maxOutputLength` **avant** de decompresser, et non le controle de taille qui suit :
+    // celui-ci arrive trop tard, l'entree declarant dix kilo-octets et en contenant dix
+    // giga-octets a deja ete deroulee en memoire. Le catalogue d'un zip est declaratif, il
+    // vient du meme fichier que les donnees : il ne se croit pas sur parole.
+    const contenu = inflateRawSync(donnees, { maxOutputLength: entree.uncompressedSize + 1 });
     if (contenu.byteLength !== entree.uncompressedSize) {
       throw new ZipError(
         `Taille inattendue pour ${entree.name} : ${contenu.byteLength} au lieu de ${entree.uncompressedSize}`,
@@ -152,7 +159,17 @@ function lireCatalogue(fd: number, taille: number): ZipEntry[] {
   return entrees;
 }
 
-function lireBloc(fd: number, position: number, longueur: number): Buffer {
+function lireBloc(fd: number, position: number, longueur: number, taille?: number): Buffer {
+  // `longueur` vient d'un uint32 lu dans le catalogue. Un champ a 0xFFFFFFFF faisait
+  // lever a `Buffer.alloc` un `RangeError` de V8 — ni une `ZipError`, ni quelque chose
+  // que les appelants attrapent. Une longueur qui deborde du fichier est une erreur de
+  // format, et doit se dire comme telle.
+  if (!Number.isSafeInteger(longueur) || longueur < 0) {
+    throw new ZipError(`Longueur de bloc invalide : ${longueur}`);
+  }
+  if (taille !== undefined && position + longueur > taille) {
+    throw new ZipError(`Bloc annonce hors du fichier : ${position}+${longueur} > ${taille}`);
+  }
   const tampon = Buffer.alloc(longueur);
   let lus = 0;
   while (lus < longueur) {

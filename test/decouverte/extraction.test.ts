@@ -11,7 +11,7 @@ import {
 import { LONGUEUR_MIN_NOM, indexerAssociations, rattacher } from "../../src/decouverte/rattachement.ts";
 import { MOBILE_PREFIXES } from "../../src/invariants.ts";
 
-const BASE = "https://exemple.fr/associations";
+const BASE = "https://exemple.example/associations";
 
 function extraire(html: string, avecMobiles = false) {
   return extraireContacts(analyser(html, BASE), { avecMobiles });
@@ -53,14 +53,14 @@ test("un nom de fichier qui ressemble a une adresse n'en est pas une", () => {
 });
 
 test("INVARIANT §4.7 : generique, nominatif, ou indetermine", () => {
-  assert.equal(classerEmail("contact@exemple.fr"), 1);
-  assert.equal(classerEmail("secretariat@exemple.fr"), 1);
-  assert.equal(classerEmail("vie.associative@exemple.fr"), 1, "une fonction reste une fonction");
-  assert.equal(classerEmail("president@exemple.fr"), 1, "un role n'est pas une personne");
-  assert.equal(classerEmail("marie.dupont@exemple.fr"), 0);
-  assert.equal(classerEmail("j.dupont@exemple.fr"), 0);
-  assert.equal(classerEmail("mdupont@exemple.fr"), null, "on ne devine pas ce que la forme ne dit pas");
-  assert.equal(classerEmail("w35001@exemple.fr"), null);
+  assert.equal(classerEmail("contact@exemple.example"), 1);
+  assert.equal(classerEmail("secretariat@exemple.example"), 1);
+  assert.equal(classerEmail("vie.associative@exemple.example"), 1, "une fonction reste une fonction");
+  assert.equal(classerEmail("president@exemple.example"), 1, "un role n'est pas une personne");
+  assert.equal(classerEmail("marie.dupont@exemple.example"), 0);
+  assert.equal(classerEmail("j.dupont@exemple.example"), 0);
+  assert.equal(classerEmail("mdupont@exemple.example"), null, "on ne devine pas ce que la forme ne dit pas");
+  assert.equal(classerEmail("w35001@exemple.example"), null);
 });
 
 test("INVARIANT §4.6 : les mobiles sont exclus par defaut, admis derriere le drapeau", () => {
@@ -162,8 +162,75 @@ test("a texte egal, le nom le plus long l'emporte", () => {
     { id: 2, nomNormalise: "club de bruz tennis de table" },
   ]);
   assert.equal(
-    rattacher(index, ["Club de Bruz tennis de table, contact@exemple.fr"])?.associationId,
+    rattacher(index, ["Club de Bruz tennis de table, contact@exemple.example"])?.associationId,
     2,
     "le nom le plus specifique designe mieux",
   );
+});
+
+test("une page volumineuse sans adresse se balaie en temps borne", () => {
+  // Ce test est ne d'une mesure : avec des quantificateurs non bornes, ce meme texte
+  // demandait 97 s, et un million de caracteres plusieurs heures. `MAX_RESPONSE_BYTES`
+  // vaut 5 Mo, et depuis l'ADR-024 le worker tourne dans le process de l'interface :
+  // l'event loop gelee, c'est l'outil entier qui parait mort. Le seuil est large a
+  // dessein — il attrape un retour au quadratique, pas une machine lente.
+  const texte = "z".repeat(200_000);
+  const debut = process.hrtime.bigint();
+  const { contacts } = extraireContacts({ texte, liens: [], blocs: [] }, { avecMobiles: false });
+  const millisecondes = Number(process.hrtime.bigint() - debut) / 1e6;
+
+  assert.equal(contacts.length, 0);
+  assert.ok(millisecondes < 2_000, `balayage en ${millisecondes.toFixed(0)} ms, attendu moins de 2 000`);
+});
+
+test("le bornage des motifs ne change pas ce qui est capture", () => {
+  const { contacts } = extraire(
+    `<p>ecrire a contact@mairie-bruz.example, ou p.deville@sous-domaine.bruz.example</p>
+     <p>secretariat [at] asso-bruz [dot] example</p>`,
+  );
+  const valeurs = contacts.map((contact) => contact.valeurNormalisee).sort();
+  assert.deepEqual(valeurs, [
+    "contact@mairie-bruz.example",
+    "p.deville@sous-domaine.bruz.example",
+    "secretariat@asso-bruz.example",
+  ]);
+});
+
+test("INVARIANT §4.7 : un patronyme qui porte un mot de fonction reste nominatif", () => {
+  // La liste des racines etait cherchee par inclusion sur la partie locale compactee :
+  // « pdeville » porte « ville », « mlecole » porte « ecole ». Des adresses designant
+  // une personne se retrouvaient rangees sous le regime le plus permissif — exactement
+  // le contraire de ce que l'ADR-012 enonce, et le contraire de ce que le commentaire
+  // du code lui-meme annoncait.
+  for (const adresse of ["p.deville@mairie.example", "m.bonneville@mairie.example", "m.lecole@mairie.example"]) {
+    assert.equal(classerEmail(adresse), 0, adresse);
+  }
+});
+
+test("INVARIANT §4.7 : les formes nominatives moins scolaires sont reconnues", () => {
+  // Le motif `^[a-z]+[.\-_][a-z]{2,}$` ne voyait ni les prenoms composes, ni les
+  // particules, ni trois segments, ni les accents — qui entrent bel et bien en base.
+  for (const adresse of [
+    "jean-pierre.dupont@x.example",
+    "p.de-gaulle@x.example",
+    "jean.de.la.tour@x.example",
+    "emilie.dupont@x.example",
+    "émilie.dupont@x.example",
+    "françois.martin@x.example",
+    "dupont.j@x.example",
+    "marie.dupont2@x.example",
+  ]) {
+    assert.equal(classerEmail(adresse), 0, adresse);
+  }
+});
+
+test("INVARIANT §4.7 : le doute reste le doute plutot que de devenir une fonction", () => {
+  // « Bureau » est un patronyme francais courant autant qu'un mot de fonction, et il est
+  // ici en seconde position. On ne tranche pas : l'export dira « indetermine ». Ranger
+  // la personne sous le regime des adresses de service serait le seul vrai defaut.
+  assert.equal(classerEmail("jean.bureau@x.example"), null);
+  // Un derive, lui, ne se rencontre pas comme patronyme.
+  assert.equal(classerEmail("vie.associative@x.example"), 1);
+  assert.equal(classerEmail("service.sports@x.example"), 1);
+  assert.equal(classerEmail("secretariat.mairie@x.example"), 1);
 });

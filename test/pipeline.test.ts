@@ -23,7 +23,7 @@ function application(t: TestContext): App {
   const app = openApp({
     dataDir: join(makeTempDir(t), "instance"),
     console: false,
-    processEnv: { ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact" },
+    processEnv: { ANNUAIRE_CONTACT_URL: "https://exemple.example/contact" },
   });
   t.after(() => app.close());
   return app;
@@ -113,4 +113,68 @@ test("l'amorce est enfilee une seule fois, meme relancee le meme jour", async (t
     .get() as { n: number };
   assert.equal(jobs.n, 1);
   assert.equal((app.db.prepare("SELECT count(*) AS n FROM run").get() as { n: number }).n, 2);
+});
+
+test("un run qui echoue clot sa ligne en « echec » plutot que de la laisser ouverte", async (t) => {
+  // `executerRun` n'avait aucun try/catch : une exception laissait `statut = 'en_cours'`
+  // et une phase non nulle, indefiniment. L'ecran affichait donc durablement « Run #N —
+  // phase decouverte » a cote du message d'echec, alors que le process savait tres bien
+  // que le run etait mort. Le `CHECK` du schema acceptait 'echec' depuis toujours, et
+  // personne ne l'ecrivait.
+  const app = application(t);
+
+  // Rendre la file inutilisable : l'echec tombe au premier enfilement, apres que la
+  // ligne `run` a ete ouverte.
+  app.db.exec("DROP TABLE job");
+
+  await assert.rejects(executerRun(app, options(), new AbortController().signal));
+
+  const ligne = app.db.prepare("SELECT statut, phase, finished_at FROM run ORDER BY id DESC LIMIT 1").get() as
+    | { statut: string; phase: string | null; finished_at: string | null }
+    | undefined;
+
+  assert.equal(ligne?.statut, "echec");
+  assert.equal(ligne?.phase, null, "la phase doit disparaitre : le run n'en est plus a aucune");
+  assert.notEqual(ligne?.finished_at, null, "un run fini porte une date de fin, meme rate");
+});
+
+test("« decouvrir » ouvre un run qui s'affiche comme les autres", async (t) => {
+  // La commande tenait sa propre copie du cycle de vie, et cette copie n'ecrivait
+  // jamais de phase : un run lance dans un terminal ne s'affichait pas comme un run
+  // lance depuis l'interface, ce que la migration 7 dit vouloir eviter.
+  const { executerDecouverteSeule } = await import("../src/pipeline.ts");
+  const app = application(t);
+  app.db
+    .prepare(
+      "INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution, " +
+        "resolution_source_url, resolution_collected_at, source_resolution, resolution_confiance, " +
+        "created_at, updated_at) VALUES ('35047', 'Bruz', '35', 'https://bruz.example/', 'resolue', " +
+        "'https://source.example', 't', 'annuaire', 0.9, 't', 't')",
+    )
+    .run();
+
+  // La ligne `run` est ouverte de facon **synchrone**, avant le premier `await` : on la
+  // lit donc juste apres l'appel, sans echantillonner. Un observateur periodique
+  // dependrait de la vitesse de la machine — et sur une machine au repos, le run se
+  // termine avant le premier echantillon.
+  const promesse = executerDecouverteSeule(
+    app,
+    { departement: "35", decouverte: optionsDecouvertePardefaut() },
+    new AbortController().signal,
+  );
+
+  const pendant = app.db.prepare("SELECT statut, phase FROM run ORDER BY id DESC LIMIT 1").get() as
+    | { statut: string; phase: string | null }
+    | undefined;
+  assert.equal(pendant?.statut, "en_cours");
+  assert.equal(pendant?.phase, "decouverte", "un run lance dans un terminal doit s'afficher comme les autres");
+
+  const { runId, interrompu } = await promesse;
+
+  assert.equal(interrompu, false);
+  const ligne = app.db.prepare("SELECT statut, phase FROM run WHERE id = ?").get(runId) as
+    | { statut: string; phase: string | null }
+    | undefined;
+  assert.equal(ligne?.statut, "termine");
+  assert.equal(ligne?.phase, null, "la phase est effacee a la cloture");
 });

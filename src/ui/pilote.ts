@@ -15,6 +15,7 @@ import { toIso } from "../clock.ts";
 import { executerRun, refusDepartement, optionsDecouvertePardefaut } from "../pipeline.ts";
 import type { App } from "../app.ts";
 import type { OptionsRun, ResultatRun } from "../pipeline.ts";
+import { messageDe } from "../log.ts";
 
 export type IssueRun = "termine" | "interrompu" | "echec";
 
@@ -45,6 +46,7 @@ export class PiloteRun implements SurfacePilote {
   #refus: string | undefined;
   #controller: AbortController | undefined;
   #enCours: Promise<void> | undefined;
+  #arrete = false;
 
   /** `executer` est injectable pour que la machine a etats se teste sans file reelle. */
   constructor(app: App, executer: Executer = executerRun) {
@@ -77,6 +79,12 @@ export class PiloteRun implements SurfacePilote {
       this.#refus = message;
       return { kind: "refus", message };
     };
+
+    // Premier controle, et il n'est pas theorique : rien n'empechait un POST /run
+    // d'arriver entre la resolution de `attendre()` et la fin de `fermer()`. L'etat
+    // valait alors « fini », le depart etait accepte, et `app.close()` fermait la base
+    // sous un worker qui venait de naitre.
+    if (this.#arrete) return refuser("L'interface est en cours d'arret.");
 
     if (this.#etat.kind === "en_cours") {
       return refuser("Un run est deja en cours dans cette interface.");
@@ -123,9 +131,9 @@ export class PiloteRun implements SurfacePilote {
       (cause: unknown) => {
         this.#app.logger.error("Le run lance depuis l'interface a echoue", {
           departement,
-          erreur: (cause as Error).message,
+          erreur: messageDe(cause),
         });
-        this.#terminer(departement, "echec", (cause as Error).message);
+        this.#terminer(departement, "echec", messageDe(cause));
       },
     );
 
@@ -137,6 +145,14 @@ export class PiloteRun implements SurfacePilote {
     if (this.#etat.kind !== "en_cours") return false;
     this.#controller?.abort();
     return true;
+  }
+
+  /**
+   * Ferme la porte : plus aucun run ne demarrera. A appeler avant `attendre()`, sans quoi
+   * l'attente peut porter sur un run deja termine pendant qu'un autre commence.
+   */
+  fermer(): void {
+    this.#arrete = true;
   }
 
   /**

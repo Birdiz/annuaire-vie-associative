@@ -11,7 +11,7 @@ import type { Handler } from "../helpers/server.ts";
 import { startServer, text, robotsAllowAll } from "../helpers/server.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
 
-const CONTACT = "https://exemple.fr/contact";
+const CONTACT = "https://exemple.example/contact";
 const lookupLocal: LookupFn = async () => ({ address: "127.0.0.1", family: 4 });
 
 async function setup(
@@ -64,7 +64,7 @@ test("le User-Agent annonce le produit et une URL de contact joignable", async (
 
   for (const requete of server.requests) {
     const ua = String(requete.headers["user-agent"]);
-    assert.match(ua, /^AnnuaireVieAssociative\/0\.1\.0 \(\+https:\/\/exemple\.fr\/contact\)$/, requete.url);
+    assert.match(ua, /^AnnuaireVieAssociative\/0\.1\.0 \(\+https:\/\/exemple\.example\/contact\)$/, requete.url);
   }
 });
 
@@ -247,7 +247,7 @@ test("une reponse trop volumineuse est refusee, annoncee ou non", async (t) => {
 
 test("un schema non http est refuse avant toute requete", async (t) => {
   const { client } = await setup(t, {});
-  await assert.rejects(() => client.fetch("ftp://exemple.fr/fichier"), /Schema non supporte/);
+  await assert.rejects(() => client.fetch("ftp://exemple.example/fichier"), /Schema non supporte/);
   await assert.rejects(() => client.fetch("file:///etc/passwd"), /Schema non supporte/);
 });
 
@@ -270,6 +270,7 @@ test("un statut d'erreur est rendu tel quel, sans mise en cache", async (t) => {
 test("INVARIANT : deux requetes vers un meme hote sont espacees d'au moins 2 s", { timeout: 30_000 }, async (t) => {
   const server = await startServer(t, {
     "/robots.txt": robotsAllowAll,
+    "/prechauffage": text("c"),
     "/a": text("a"),
     "/b": text("b"),
   });
@@ -294,6 +295,14 @@ test("INVARIANT : deux requetes vers un meme hote sont espacees d'au moins 2 s",
     },
   });
 
+  // Un premier passage a vide avant de mesurer. Le throttle reserve depuis le depart
+  // **reel** et non depuis le creneau prevu : l'espacement est donc exact a la sortie de
+  // `acquire`. Ce qui varie est le trajet entre ce retour et l'appel effectif — quelques
+  // dixiemes de milliseconde, sensiblement plus au tout premier passage, le temps que V8
+  // compile ce chemin. Mesurer a froid faisait apparaitre 1998,8 ms la ou l'invariant
+  // etait tenu ; prechauffer mesure ce que l'on veut mesurer.
+  await client.fetch(`${server.origin}/prechauffage`);
+
   await client.fetch(`${server.origin}/a`);
   await client.fetch(`${server.origin}/b`);
 
@@ -301,4 +310,98 @@ test("INVARIANT : deux requetes vers un meme hote sont espacees d'au moins 2 s",
   assert.equal(pages.length, 2);
   const ecart = pages[1]!.at - pages[0]!.at;
   assert.ok(ecart >= 2_000, `espacement insuffisant : ${ecart.toFixed(1)} ms`);
+});
+
+test("un robots.txt abandonne ne condamne pas l'origine pour les runs suivants", async (t) => {
+  // La politique par origine est memoisee sous forme de **promesse**, et ce client vit
+  // aussi longtemps que le process — qui survit desormais a plusieurs runs (ADR-024).
+  // Memoriser un rejet revenait a condamner l'origine jusqu'au redemarrage : toutes ses
+  // pages en `dead`, sans que rien ne dise pourquoi.
+  let robotsVus = 0;
+  let premiereLectureAtteinte: () => void = () => {};
+  const atteinte = new Promise<void>((resoudre) => {
+    premiereLectureAtteinte = resoudre;
+  });
+  const { server, client } = await setup(t, {
+    "/robots.txt": (_req, res) => {
+      robotsVus += 1;
+      // Premiere lecture : on ne repond jamais, l'appelant abandonne en cours de route.
+      if (robotsVus === 1) {
+        premiereLectureAtteinte();
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/plain" });
+      res.end("User-agent: *\nDisallow:\n");
+    },
+    "/page": text("<html>a</html>"),
+  });
+
+  const abandon = new AbortController();
+  const premier = client.fetch(`${server.origin}/page`, { signal: abandon.signal });
+  // Abandonner seulement une fois la requete reellement partie : sinon elle n'atteint
+  // jamais le serveur et le test ne prouve rien.
+  await atteinte;
+  abandon.abort();
+  await assert.rejects(premier);
+
+  const second = await client.fetch(`${server.origin}/page`);
+  assert.equal(second.kind, "ok", "la seconde tentative doit repartir, pas resservir le rejet");
+  assert.equal(robotsVus, 2, "robots.txt doit etre redemande apres un abandon");
+});
+
+test("un 304 venu d'une cible de redirection ne fait pas servir le corps d'une autre page", async (t) => {
+  // Sans le controle, les validateurs de l'entree en cache partaient vers l'URL
+  // redirigee : un 304 de sa part faisait rendre le corps d'une **autre** page, avec un
+  // `touch()` qui repoussait le TTL — le mensonge se reconduisait a chaque run.
+  let cible = "/ancienne";
+  const { server, client } = await setup(t, {
+    "/entree": (_req, res) => {
+      res.writeHead(301, { location: cible });
+      res.end();
+    },
+    "/ancienne": text("CORPS ANCIEN", 200, { etag: '"v1"' }),
+    "/nouvelle": (req, res) => {
+      // Cette page-ci n'a jamais rien mis en cache : si elle recoit un validateur, c'est
+      // qu'il vient d'ailleurs. Elle repond alors 304, ce qui piegeait le client.
+      if (req.headers["if-none-match"] !== undefined) {
+        res.writeHead(304);
+        res.end();
+        return;
+      }
+      res.writeHead(200, { "content-type": "text/html" });
+      res.end("CORPS NOUVEAU");
+    },
+  }, { cacheTtlMs: 0 });
+
+  const premier = await client.fetch(`${server.origin}/entree`);
+  assert.equal(premier.kind === "ok" && premier.body.toString(), "CORPS ANCIEN");
+
+  cible = "/nouvelle";
+  const second = await client.fetch(`${server.origin}/entree`);
+
+  assert.equal(second.kind, "ok");
+  assert.equal(
+    second.kind === "ok" ? second.body.toString() : "",
+    "CORPS NOUVEAU",
+    "le corps servi doit venir de la page reellement atteinte",
+  );
+  assert.equal(
+    second.kind === "ok" ? second.meta.finalUrl : "",
+    `${server.origin}/nouvelle`,
+    "la provenance enregistree doit designer la page qui a produit ce corps (§4.5)",
+  );
+});
+
+test("un robots.txt servi en HTML fait s'abstenir plutot que tout autoriser", async (t) => {
+  // Soft-404 frequent sur les CMS de petites communes : un 200 qui rend la page
+  // d'accueil. Aucune directive n'y est lisible, donc « tout est permis » — a rebours de
+  // la doctrine du module, qui s'abstient en cas de doute sur la volonte du site.
+  const { server, client, counters } = await setup(t, {
+    "/robots.txt": text("<html><body>Page introuvable</body></html>", 200, { "content-type": "text/html" }),
+    "/page": text("<html>a</html>"),
+  });
+
+  const resultat = await client.fetch(`${server.origin}/page`);
+  assert.equal(resultat.kind, "blocked");
+  assert.equal(counters.get(ETAPE.http, "robots_illisible"), 1);
 });

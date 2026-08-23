@@ -67,6 +67,19 @@ h3 { font-size: 1rem; margin: 0 0 0.35rem; }
 
 .discret { color: var(--discret); font-size: 0.875rem; }
 .alerte { color: var(--alerte); }
+
+/* L'avertissement de l'ecran d'export (ADR-025). Encadre plutot que « discret » : il est
+   la pour etre lu au moment ou le fichier quitte l'outil, pas pour meubler le bas de page. */
+.avertissement {
+  border-left: 3px solid var(--alerte);
+  padding: 0.75rem 1rem;
+  margin-top: 1.5rem;
+  background: var(--fond-carte);
+  font-size: 0.9375rem;
+}
+
+/* « Oublier » supprime definitivement, la ou « rejeter » pose un statut. Le bouton le dit. */
+button.danger { color: var(--alerte); border-color: var(--alerte); }
 .bon { color: var(--bon); }
 
 .cartes { display: flex; flex-wrap: wrap; gap: 0.75rem; }

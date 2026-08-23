@@ -11,7 +11,6 @@
 
 import { toIso } from "../clock.ts";
 import { ETAPE } from "../metrics/counters.ts";
-import type { Database } from "../db/index.ts";
 import type { JobHandler } from "../jobs/worker.ts";
 import type { ContexteDecouverte } from "./contexte.ts";
 import { clePage, hashPage, lirePayloadDecouverte, prioritePage } from "./contexte.ts";
@@ -123,7 +122,3 @@ function analyserUrlMairie(brut: string): URL | undefined {
   return url;
 }
 
-/** Expose la lecture des communes pour les tests et la CLI. */
-export function communesAVisiter(db: Database, departement: string): readonly CommuneAVisiter[] {
-  return db.prepare(SQL_COMMUNES).all(departement) as unknown as CommuneAVisiter[];
-}

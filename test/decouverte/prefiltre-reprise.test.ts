@@ -93,12 +93,18 @@ function preparer(t: TestContext): { dbFile: string; cacheDir: string; urls: str
   return { dbFile, cacheDir, urls };
 }
 
+// Le garde-fou anti-reseau vit dans le processus de test ; ce sous-processus doit le
+// precharger a son tour. La fixture lit le cache disque et n'emet rien — mais elle
+// importe `src/http/cache.ts` et vit a cote du crawl : la frontiere est celle
+// d'aujourd'hui, pas une garantie.
+const GARDE_RESEAU = fileURLToPath(new URL("../helpers/pas-de-reseau.ts", import.meta.url));
+
 type Run = { code: number | null; signal: NodeJS.Signals | null };
 
 /** Lance le rejeu dans un sous-processus. En mode « crash », il s'abat tout seul. */
 function lancer(dbFile: string, cacheDir: string, mode: "crash" | "reprise" | "tout"): Promise<Run> {
   return new Promise((resolve, reject) => {
-    const child = spawn(process.execPath, [FIXTURE, dbFile, cacheDir, mode], {
+    const child = spawn(process.execPath, ["--import", GARDE_RESEAU, FIXTURE, dbFile, cacheDir, mode], {
       stdio: ["ignore", "ignore", "ignore"],
     });
     child.on("error", reject);

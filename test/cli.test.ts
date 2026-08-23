@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import { makeTempDir } from "./helpers/tmp.ts";
@@ -45,10 +45,24 @@ test("sans commande, l'aide s'affiche et le code de sortie est non nul", async (
 test("l'aide documente chaque commande", async () => {
   const { stdout, code } = await annuaire(["--help"]);
   assert.equal(code, 0);
-  for (const commande of [
-    "init", "run", "status", "metrics", "jobs", "purge", "fetch", "prefiltrer", "pages", "dormance",
-    "requeue", "normaliser", "exporter", "ui",
-  ]) {
+
+  // La liste est **derivee de la source**, et non recopiee. Recopiee, elle en comptait
+  // quatorze quand `src/cli.ts` en offrait dix-neuf : le nom du test promettait une
+  // exhaustivite qu'il n'avait pas, et cinq commandes — dont `decouvrir`, vers laquelle
+  // trois messages d'erreur renvoient — pouvaient disparaitre de l'aide sans rien casser.
+  const source = readFileSync(fileURLToPath(new URL("../src/cli.ts", import.meta.url)), "utf8");
+  // Le seul aiguillage qui nous interesse est celui des commandes : `cli.ts` en contient
+  // d'autres, sur des etats de reponse par exemple.
+  const debut = source.indexOf("switch (commande) {");
+  assert.notEqual(debut, -1, "l'aiguillage des commandes doit etre reperable");
+  const aiguillage = source.slice(debut, source.indexOf("\n    }", debut));
+  const commandes = [...aiguillage.matchAll(/^\s*case "([a-z-]+)":/gm)]
+    .map((trouve) => trouve[1])
+    .filter((nom): nom is string => nom !== undefined && nom !== "help");
+  const uniques = [...new Set(commandes)];
+  assert.ok(uniques.length >= 19, `seules ${uniques.length} commandes reperees dans la source`);
+
+  for (const commande of uniques) {
     assert.match(stdout, new RegExp(`\\b${commande}\\b`), `${commande} devrait etre documentee`);
   }
   assert.match(stdout, /--sans-navigateur/, "le drapeau du lot 8 doit etre documente");
@@ -106,7 +120,7 @@ test("un departement d'Alsace-Moselle est refuse avec son motif", async (t) => {
   for (const departement of ["57", "67", "68"]) {
     const { code, stderr } = await annuaire(
       ["run", "--departement", departement, "--data-dir", dataDir(t)],
-      { ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact" },
+      { ANNUAIRE_CONTACT_URL: "https://exemple.example/contact" },
     );
     assert.equal(code, 2, departement);
     assert.match(stderr, /hors du champ du RNA/);
@@ -115,7 +129,7 @@ test("un departement d'Alsace-Moselle est refuse avec son motif", async (t) => {
 
 test("un departement manquant ou mal forme est refuse", async (t) => {
   const dir = dataDir(t);
-  const env = { ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact" };
+  const env = { ANNUAIRE_CONTACT_URL: "https://exemple.example/contact" };
 
   assert.equal((await annuaire(["run", "--data-dir", dir], env)).code, 2);
   assert.equal((await annuaire(["run", "--departement", "trente-cinq", "--data-dir", dir], env)).code, 2);
@@ -127,7 +141,7 @@ test("un run se termine proprement meme quand la collecte echoue", async (t) => 
   const dir = dataDir(t);
   const { code, stdout } = await annuaire(
     ["run", "--departement", "35", "--data-dir", dir],
-    { ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact" },
+    { ANNUAIRE_CONTACT_URL: "https://exemple.example/contact" },
   );
 
   assert.equal(code, 0);
@@ -270,7 +284,7 @@ test("un fichier RNA inexistant est signale avant tout acces reseau", async (t) 
   const dir = dataDir(t);
   const { code, stderr } = await annuaire(
     ["run", "--departement", "35", "--rna-file", join(dir, "absent.zip"), "--data-dir", dir],
-    { ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact" },
+    { ANNUAIRE_CONTACT_URL: "https://exemple.example/contact" },
   );
   assert.equal(code, 2);
   assert.match(stderr, /Fichier RNA introuvable/);
@@ -279,7 +293,7 @@ test("un fichier RNA inexistant est signale avant tout acces reseau", async (t) 
 test("metrics --json produit un document exploitable sans journal parasite", async (t) => {
   const dir = dataDir(t);
   await annuaire(["run", "--departement", "35", "--data-dir", dir], {
-    ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact",
+    ANNUAIRE_CONTACT_URL: "https://exemple.example/contact",
   });
 
   const { code, stdout } = await annuaire(["metrics", "--json", "--data-dir", dir]);
@@ -330,7 +344,7 @@ test("purge s'execute et rend compte de sa borne", async (t) => {
 
 test("fetch exige une URL", async (t) => {
   const { code, stderr } = await annuaire(["fetch", "--data-dir", dataDir(t)], {
-    ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact",
+    ANNUAIRE_CONTACT_URL: "https://exemple.example/contact",
   });
   assert.equal(code, 2);
   assert.match(stderr, /Une URL est requise/);
@@ -401,4 +415,113 @@ test("un port invalide echoue avant d'ouvrir quoi que ce soit", async (t) => {
   const resultat = await annuaire(["ui", "--port", "quatre-vingt", "--data-dir", dataDir(t)]);
   assert.equal(resultat.code, 2);
   assert.match(resultat.stderr, /--port attend un entier/);
+});
+
+test("INVARIANT §4.8 : une commande qui n'est pas « purge » purge quand meme au demarrage", async (t) => {
+  // L'appel vivait dans cinq fonctions sur dix-neuf, et `exporter` n'en faisait pas
+  // partie — la seule commande dont la sortie quitte la machine pouvait donc livrer un
+  // CSV portant des contacts de plus de trois ans. Ce test vise `exporter` justement
+  // parce que c'est celle-la, et qu'aucune liste tenue a la main ne doit plus decider.
+  const dir = dataDir(t);
+  const init = await annuaire(["init", "--data-dir", dir]);
+  assert.equal(init.code, 0, init.stderr);
+
+  const { openDatabase } = await import("../src/db/index.ts");
+  const { toIso } = await import("../src/clock.ts");
+  const base = join(dir, "annuaire.sqlite");
+
+  const db = openDatabase(base);
+  const vieux = toIso(Date.now() - 4 * 365 * 86_400_000);
+  const recent = toIso(Date.now());
+  db.prepare(
+    "INSERT INTO commune (code_insee, nom, departement, created_at, updated_at) VALUES ('35001', 'X', '35', ?, ?)",
+  ).run(recent, recent);
+  for (const [valeur, date] of [["vieux@x.example", vieux], ["recent@x.example", recent]] as const) {
+    db.prepare(
+      `INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, source_url,
+                            methode_extraction, confiance, collected_at)
+       VALUES ('35001', 'email', ?, ?, 'https://mairie.example/a', 'dom:mailto', 0.8, ?)`,
+    ).run(valeur, valeur, date);
+  }
+  db.close();
+
+  const exporter = await annuaire(["exporter", "--departement", "35", "--data-dir", dir]);
+  assert.equal(exporter.code, 0, exporter.stderr);
+
+  const relu = openDatabase(base);
+  const restants = relu
+    .prepare("SELECT valeur_normalisee FROM contact ORDER BY valeur_normalisee")
+    .all() as { valeur_normalisee: string }[];
+  relu.close();
+
+  assert.deepEqual(
+    restants.map((ligne) => ligne.valeur_normalisee),
+    ["recent@x.example"],
+    "le contact de plus de trois ans devait disparaitre sans qu'on ait lance « purge »",
+  );
+  assert.doesNotMatch(exporter.stdout, /vieux@x\.example/);
+});
+
+test("INTERDIT §5 : « annuaire fetch » refuse un reseau social", async (t) => {
+  // Les trois chemins de crawl ecartent bien ces hotes ; cette commande de diagnostic,
+  // elle, les laissait passer — et ce qu'elle telecharge entre dans le cache, d'ou le
+  // rejeu peut le relire. Le refus doit tomber avant toute requete.
+  const dir = dataDir(t);
+  for (const url of [
+    "https://www.facebook.com/mairie",
+    "https://fr.linkedin.com/company/x",
+    "https://www.instagram.com/x/",
+  ]) {
+    const resultat = await annuaire(["fetch", url, "--data-dir", dir]);
+    assert.equal(resultat.code, 2, `${url} aurait du etre refuse`);
+    assert.match(resultat.stderr, /reseau social/);
+  }
+});
+
+test("« decouvrir » refuse un departement hors du champ du RNA, comme « run »", async (t) => {
+  // Cette commande collecte, et elle passait par un controle de forme qui avait perdu le
+  // refus d'Alsace-Moselle : le motif etait recopie au lieu d'etre partage.
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const resultat = await annuaire(["decouvrir", "--departement", "67", "--data-dir", dir]);
+  assert.equal(resultat.code, 2);
+  assert.match(resultat.stderr, /droit local d'Alsace-Moselle/);
+});
+
+test("« decouvrir » sur une base sans mairie oriente vers l'amorce", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const resultat = await annuaire(["decouvrir", "--departement", "35", "--data-dir", dir]);
+  assert.equal(resultat.code, 2);
+  assert.match(resultat.stderr, /Aucune URL de mairie/);
+  assert.match(resultat.stderr, /annuaire run --departement 35/);
+});
+
+test("« contacts » liste ce qui a ete collecte, avec sa provenance", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+
+  const { openDatabase } = await import("../src/db/index.ts");
+  const db = openDatabase(join(dir, "annuaire.sqlite"));
+  db.prepare(
+    "INSERT INTO commune (code_insee, nom, departement, created_at, updated_at) " +
+      "VALUES ('35047', 'Bruz', '35', 't', 't')",
+  ).run();
+  db.prepare(
+    `INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, source_url,
+                          methode_extraction, confiance, collected_at)
+     VALUES ('35047', 'email', 'contact@asso.example', 'contact@asso.example',
+             'https://bruz.example/assos', 'dom:mailto', 0.9, '2026-08-01T00:00:00.000Z')`,
+  ).run();
+  db.close();
+
+  const texte = await annuaire(["contacts", "--departement", "35", "--data-dir", dir]);
+  assert.equal(texte.code, 0, texte.stderr);
+  assert.match(texte.stdout, /contact@asso\.example/);
+
+  const json = await annuaire(["contacts", "--departement", "35", "--json", "--data-dir", dir]);
+  assert.equal(json.code, 0, json.stderr);
+  const lignes = JSON.parse(json.stdout) as { source_url: string; methode_extraction: string }[];
+  assert.equal(lignes[0]?.source_url, "https://bruz.example/assos", "la provenance doit sortir (§4.5)");
+  assert.equal(lignes[0]?.methode_extraction, "dom:mailto");
 });

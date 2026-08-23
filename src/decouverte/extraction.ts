@@ -16,6 +16,7 @@
  */
 
 import { MOBILE_PREFIXES } from "../invariants.ts";
+import { normaliserNom } from "../texte.ts";
 import type { Bloc, DocumentAnalyse } from "../parse/html.ts";
 
 export type KindContact = "email" | "phone";
@@ -45,22 +46,44 @@ const CONFIANCE_DOM = 0.9;
 const CONFIANCE_MOTIF = 0.6;
 const CONFIANCE_OBFUSQUE = 0.45;
 
-const EMAIL = /[A-Za-z0-9._%+-]+@[A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*\.[A-Za-z]{2,}/g;
+/**
+ * **Les quantificateurs sont bornes, et ce n'est pas de la coquetterie.**
+ *
+ * Un `+` gourmand sur une classe large, ancre par un caractere qui n'arrive jamais dans
+ * du texte ordinaire, coute O(reste) a chaque position de depart : le balayage devient
+ * quadratique. Mesure sur du texte sans aucune adresse, avant bornage — 20 000
+ * caracteres : 1,5 s ; 40 000 : 6 s ; 160 000 : 97 s. Or `MAX_RESPONSE_BYTES` vaut 5 Mo
+ * et `estHtml(null)` rend `true` : une page de mairie verbeuse suffisait a bloquer
+ * l'event loop plusieurs minutes, une page hostile plusieurs heures — et depuis
+ * l'ADR-024 le worker tourne dans le process de l'interface, qui gele avec lui.
+ *
+ * Les bornes ne sont pas arbitraires : RFC 5321 §4.5.3.1 fixe la partie locale a 64
+ * octets et chaque label de domaine a 63. Apres bornage, un million de caracteres se
+ * balaient en 227 ms.
+ */
+const EMAIL = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}/g;
 
 /**
  * Formes obfusquees courantes sur les sites de mairie : « nom [at] domaine [dot] fr ».
  * Reconstruire une adresse est une inference, d'ou la confiance la plus basse.
+ *
+ * Memes bornes que `EMAIL`, et pour la meme raison : ce motif-ci coutait 4,7 s sur
+ * 40 000 caracteres.
  */
 const EMAIL_OBFUSQUE =
-  /([A-Za-z0-9._%+-]+)\s*(?:\[|\()?\s*(?:at|arobase|chez)\s*(?:\]|\))?\s*([A-Za-z0-9-]+(?:\.[A-Za-z0-9-]+)*?)\s*(?:\[|\()?\s*(?:dot|point)\s*(?:\]|\))?\s*([A-Za-z]{2,})/gi;
+  /([A-Za-z0-9._%+-]{1,64})\s{0,8}(?:\[|\()?\s{0,8}(?:at|arobase|chez)\s{0,8}(?:\]|\))?\s{0,8}([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*?)\s{0,8}(?:\[|\()?\s{0,8}(?:dot|point)\s{0,8}(?:\]|\))?\s{0,8}([A-Za-z]{2,24})/gi;
 
 /** Fixe francais ou mobile, avec les separateurs usuels, ou forme internationale. */
 const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/g;
 
 /**
- * Parties locales qui designent une fonction et non une personne. La liste est
- * cherchee par inclusion : « vie.associative » porte « associ », « contact-mairie »
- * porte « contact ».
+ * Parties locales qui designent une fonction et non une personne.
+ *
+ * La liste est comparee aux **jetons** de la partie locale — les segments separes par
+ * `.`, `-` ou `_` — et non a la chaine compactee. La recherche par inclusion classait
+ * « p.deville » en generique parce que « pdeville » porte « ville », et « m.lecole »
+ * parce qu'il porte « ecole » : des adresses nominatives rangees sous le regime le plus
+ * permissif, soit exactement le risque que l'invariant 7 existe pour ecarter.
  */
 const RACINES_GENERIQUES: readonly string[] = [
   "contact", "mairie", "secretariat", "secretaire", "accueil", "info", "communication",
@@ -208,16 +231,47 @@ export function nettoyerEmail(brut: string): string | undefined {
   return valeur;
 }
 
-/** §4.7 — 1 generique, 0 nominatif, null quand la forme ne tranche pas. */
+/**
+ * §4.7 — 1 generique, 0 nominatif, null quand la forme ne tranche pas.
+ *
+ * L'ordre des tests est le sujet de cette fonction. L'ADR-012 pose que « quand la forme
+ * designe une personne, c'est le regime le plus strict qui s'applique » ; le code faisait
+ * l'inverse, en cherchant d'abord une racine de fonction. Quatre regles, dans cet ordre :
+ *
+ * 1. **Initiale puis patronyme** — « p.deville », « j.dupont ». La forme designe une
+ *    personne, et rien ne la deloge : c'est le cas que l'ADR nomme.
+ * 2. **Mot de fonction en tete** — « contact », « secretariat.mairie ». C'est ainsi que
+ *    s'ecrit une adresse de service.
+ * 3. **Mot de fonction ailleurs**, mais *derive* — « vie.associative » porte
+ *    « associative », qui prolonge la racine « associ ». Un derive ne se rencontre pas
+ *    comme patronyme : generique.
+ * 4. **Mot de fonction ailleurs, et mot exact** — « jean.bureau ». « Bureau » est un
+ *    patronyme francais courant autant qu'un mot de fonction. On ne tranche pas :
+ *    `null`, ce que l'export rend par « indetermine ». Mieux vaut avouer le doute que
+ *    ranger une personne sous le regime des adresses de service.
+ *
+ * La partie locale passe par `normaliserNom` : sans cela « emilie.dupont » et
+ * « francois.martin » — qui entrent bel et bien en base, `nettoyerEmail` les accepte et
+ * un `mailto:` percent-encode est decode en UTF-8 avant — tombaient en indetermine.
+ */
 export function classerEmail(adresse: string): 0 | 1 | null {
-  const local = (adresse.split("@")[0] ?? "").toLowerCase();
-  const compact = local.replace(/[^a-z0-9]/g, "");
-  if (RACINES_GENERIQUES.some((racine) => compact.includes(racine))) return 1;
-  // « marie.dupont », mais aussi « j.dupont » : l'initiale suivie du patronyme est une
-  // forme nominative courante. Dans le doute on ne tranche pas — mais quand la forme
-  // designe une personne, le regime le plus strict doit s'appliquer.
-  if (/^[a-z]+[.\-_][a-z]{2,}$/.test(local)) return 0;
-  return null;
+  const jetons = normaliserNom(adresse.split("@")[0] ?? "")
+    .split(" ")
+    .filter((jeton) => jeton !== "");
+  if (jetons.length === 0) return null;
+
+  if ((jetons[0] ?? "").length === 1 && jetons.length >= 2) return 0;
+
+  const fonctions = jetons.map((jeton) => RACINES_GENERIQUES.some((racine) => jeton.startsWith(racine)));
+  if (fonctions[0] === true) return 1;
+
+  const indexFonction = fonctions.indexOf(true);
+  if (indexFonction !== -1) {
+    const jeton = jetons[indexFonction] ?? "";
+    return RACINES_GENERIQUES.includes(jeton) ? null : 1;
+  }
+
+  return jetons.length >= 2 ? 0 : null;
 }
 
 /** Rend la forme internationale `+33XXXXXXXXX`, ou `undefined` si ce n'est pas un numero. */

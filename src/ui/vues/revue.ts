@@ -107,7 +107,15 @@ function carte(contact: ContactARevoir, departement: string): string {
     <button type="submit" name="action" value="rejete">Rejeter</button>
     <input type="text" name="valeur" placeholder="valeur corrigee" aria-label="valeur corrigee">
     <button type="submit" name="action" value="corrige">Corriger</button>
-    <input type="text" name="note" placeholder="note (facultative)" aria-label="note de revue">
+    <input type="text" name="note" placeholder="note (motif requis pour oublier)" aria-label="note de revue">
+    <!-- Oublier n'est pas rejeter. Rejeter ecrit un statut, que l'export sait remettre
+         et que le run suivant recouvre ; oublier supprime la ligne, efface la copie en
+         cache et inscrit l'exclusion (art. 17 et 21). D'ou le motif obligatoire, et la
+         mise en garde portee par le titre du bouton. -->
+    <button type="submit" name="action" value="oublie" class="danger"
+            title="Supprime definitivement ce contact et l'empeche de revenir. Le motif, saisi dans la note, est obligatoire.">
+      Oublier
+    </button>
   </form>
 </article>`;
 }

@@ -33,8 +33,8 @@ test("le decoupage en sous-reseau regroupe les hotes voisins", () => {
 });
 
 test("deux requetes vers le meme hote sont espacees du delai", async () => {
-  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.fr": "192.0.2.1" }) });
-  const url = new URL("https://a.fr/page");
+  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/page");
 
   await throttle.acquire(url);
   const attente = await mesurer(() => throttle.acquire(url));
@@ -45,11 +45,11 @@ test("deux requetes vers le meme hote sont espacees du delai", async () => {
 test("deux hotes distincts sur des reseaux distincts partent en parallele", async () => {
   const throttle = new DomainThrottle({
     minDelayMs: DELAI,
-    lookup: lookupFixe({ "a.fr": "192.0.2.1", "b.fr": "198.51.100.1" }),
+    lookup: lookupFixe({ "a.example": "192.0.2.1", "b.example": "198.51.100.1" }),
   });
 
-  await throttle.acquire(new URL("https://a.fr/"));
-  const attente = await mesurer(() => throttle.acquire(new URL("https://b.fr/")));
+  await throttle.acquire(new URL("https://a.example/"));
+  const attente = await mesurer(() => throttle.acquire(new URL("https://b.example/")));
 
   assert.ok(attente < DELAI / 2, `aucune attente attendue, obtenu ${attente.toFixed(0)} ms`);
 });
@@ -57,18 +57,18 @@ test("deux hotes distincts sur des reseaux distincts partent en parallele", asyn
 test("deux hotes du meme /24 sont espaces : l'hebergement mutualise ne contourne pas la regle", async () => {
   const throttle = new DomainThrottle({
     minDelayMs: DELAI,
-    lookup: lookupFixe({ "mairie-a.fr": "192.0.2.10", "mairie-b.fr": "192.0.2.11" }),
+    lookup: lookupFixe({ "mairie-a.example": "192.0.2.10", "mairie-b.example": "192.0.2.11" }),
   });
 
-  await throttle.acquire(new URL("https://mairie-a.fr/"));
-  const attente = await mesurer(() => throttle.acquire(new URL("https://mairie-b.fr/")));
+  await throttle.acquire(new URL("https://mairie-a.example/"));
+  const attente = await mesurer(() => throttle.acquire(new URL("https://mairie-b.example/")));
 
   assert.ok(attente >= DELAI - 5, `attendu >= ${DELAI} ms, obtenu ${attente.toFixed(0)} ms`);
 });
 
 test("des acquisitions concurrentes vers un meme hote se serialisent sans se chevaucher", async () => {
-  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.fr": "192.0.2.1" }) });
-  const url = new URL("https://a.fr/page");
+  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/page");
 
   const departs: number[] = [];
   await Promise.all(
@@ -99,8 +99,8 @@ test("une resolution DNS en echec n'empeche pas la requete mais garde le throttl
 });
 
 test("un delai superieur demande par le site est respecte", async () => {
-  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.fr": "192.0.2.1" }) });
-  const url = new URL("https://a.fr/");
+  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/");
 
   await throttle.acquire(url, DELAI * 3);
   const attente = await mesurer(() => throttle.acquire(url, DELAI * 3));
@@ -109,8 +109,8 @@ test("un delai superieur demande par le site est respecte", async () => {
 });
 
 test("un delai inferieur au plancher est ignore", async () => {
-  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.fr": "192.0.2.1" }) });
-  const url = new URL("https://a.fr/");
+  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/");
 
   await throttle.acquire(url, 1);
   const attente = await mesurer(() => throttle.acquire(url, 1));
@@ -119,8 +119,8 @@ test("un delai inferieur au plancher est ignore", async () => {
 });
 
 test("une penalite repousse le prochain creneau", async () => {
-  const throttle = new DomainThrottle({ minDelayMs: 1, lookup: lookupFixe({ "a.fr": "192.0.2.1" }) });
-  const url = new URL("https://a.fr/");
+  const throttle = new DomainThrottle({ minDelayMs: 1, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/");
 
   throttle.penalize(url, DELAI * 2);
   const attente = await mesurer(() => throttle.acquire(url));
@@ -129,8 +129,8 @@ test("une penalite repousse le prochain creneau", async () => {
 });
 
 test("l'attente est interruptible", async () => {
-  const throttle = new DomainThrottle({ minDelayMs: 5_000, lookup: lookupFixe({ "a.fr": "192.0.2.1" }) });
-  const url = new URL("https://a.fr/");
+  const throttle = new DomainThrottle({ minDelayMs: 5_000, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/");
   await throttle.acquire(url);
 
   const controller = new AbortController();

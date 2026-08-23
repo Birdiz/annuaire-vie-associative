@@ -17,11 +17,12 @@
  * cible Windows fabriquerait un executable qui echoue au demarrage.
  */
 import { createHash } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, statSync, writeFileSync, existsSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, realpathSync, statSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
 import { inject } from "postject";
-import { construireBundle, DIST, NOM_BUNDLE, formaterOctets } from "./build.ts";
+import { construireBundle, DIST, NOM_BUNDLE } from "./build.ts";
+import { formaterOctets } from "../src/texte.ts";
 import { nomsAssets } from "../src/ui/assets.ts";
 
 /**
@@ -173,6 +174,22 @@ async function construireExecutable(): Promise<void> {
   );
 }
 
-if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) {
+if (lanceDirectement()) {
   await construireExecutable();
+}
+
+/**
+ * Vrai quand ce module est le point d'entree. La comparaison passe par `realpathSync` :
+ * atteint par un lien symbolique — un `node_modules` lie, un depot range ailleurs —
+ * `import.meta.filename` et `process.argv[1]` ne designent pas la meme chaine, et le
+ * script se taisait sans rien dire.
+ */
+function lanceDirectement(): boolean {
+  const argv = process.argv[1];
+  if (argv === undefined) return false;
+  try {
+    return realpathSync(import.meta.filename) === realpathSync(argv);
+  } catch {
+    return import.meta.filename === argv;
+  }
 }

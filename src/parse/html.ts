@@ -13,6 +13,20 @@
 
 import { parse } from "node-html-parser";
 
+/**
+ * Profondeur d'imbrication acceptee. Les sites de mairie tournent autour de trente
+ * niveaux ; ce plafond laisse un ordre de grandeur, et borne la recursion de `parcourir`.
+ */
+const PROFONDEUR_MAX = 500;
+
+/** Document que l'adaptateur refuse de lire. Typee, pour ne pas ressembler a une panne. */
+export class HtmlError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "HtmlError";
+  }
+}
+
 /** Un lien, resolu en absolu. `mailto:` et `tel:` sont conserves tels quels. */
 export type Lien = { href: string; ancre: string };
 
@@ -150,7 +164,16 @@ export function analyser(html: string, base: string): DocumentAnalyse {
   const liens: { lien: Lien; position: number }[] = [];
   const blocs: Bloc[] = [];
 
-  const parcourir = (noeud: unknown): void => {
+  const parcourir = (noeud: unknown, profondeur: number): void => {
+    // La descente est recursive, et un HTML profondement imbrique la faisait deborder la
+    // pile : un `RangeError` de V8, ni typé ni attendu, rejoue cinq fois avant que le job
+    // ne meure. Le plafond transforme cela en un refus net et diagnosticable. Il est pose
+    // tres au-dessus de tout document reel — les CMS de mairie tournent autour de 30
+    // niveaux — et il vaut mieux qu'une reecriture iterative de la porte d'entree DOM,
+    // dont le pre- et le post-traitement par noeud sont la vraie subtilite.
+    if (profondeur > PROFONDEUR_MAX) {
+      throw new HtmlError(`Document imbrique au-dela de ${PROFONDEUR_MAX} niveaux`);
+    }
     const n = noeud as { nodeType: number; rawTagName?: string; rawText?: string; childNodes?: unknown[] };
 
     if (n.nodeType === NOEUD_TEXTE) {
@@ -178,7 +201,7 @@ export function analyser(html: string, base: string): DocumentAnalyse {
       }
     }
 
-    for (const enfant of n.childNodes ?? []) parcourir(enfant);
+    for (const enfant of n.childNodes ?? []) parcourir(enfant, profondeur + 1);
 
     if (balise === "a" && liens.length > debutLiens) {
       const entree = liens[debutLiens];
@@ -195,7 +218,7 @@ export function analyser(html: string, base: string): DocumentAnalyse {
     }
   };
 
-  parcourir(racine);
+  parcourir(racine, 0);
 
   return {
     texte: normaliser(morceaux.join("")),
@@ -238,7 +261,12 @@ function decoderEntites(texte: string): string {
   return texte.replace(/&(#x?[0-9a-f]+|\w+);/gi, (entier, corps: string) => {
     if (corps.startsWith("#")) {
       const code = corps[1]?.toLowerCase() === "x" ? parseInt(corps.slice(2), 16) : parseInt(corps.slice(1), 10);
-      return Number.isFinite(code) && code > 0 && code <= 0x10ffff ? String.fromCodePoint(code) : entier;
+      // Les demi-surrogates isoles (D800–DFFF) sont acceptes par `fromCodePoint` et
+      // produisent une chaine mal formee, qui voyagerait ensuite jusqu'en base et dans
+      // l'export CSV. Une entite qui les designe n'est pas decodable : on la laisse telle.
+      const decodable =
+        Number.isFinite(code) && code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff);
+      return decodable ? String.fromCodePoint(code) : entier;
     }
     return ENTITES[corps.toLowerCase()] ?? entier;
   });

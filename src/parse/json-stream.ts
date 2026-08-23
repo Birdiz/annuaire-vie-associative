@@ -27,6 +27,13 @@ const ANTISLASH = 0x5c;
 /** Au-dela, on considere que la cle attendue est absente plutot que d'accumuler sans fin. */
 const FENETRE_RECHERCHE_MAX = 64 * 1024;
 
+/**
+ * Taille maximale d'un objet en cours de lecture. Un objet du RNA pese quelques centaines
+ * d'octets ; ce plafond laisse trois ordres de grandeur de marge, et borne l'accumulation
+ * quand le flux n'a pas la forme annoncee.
+ */
+const OBJET_MAX_OCTETS = 4 * 1024 * 1024;
+
 export class JsonArrayError extends Error {
   constructor(message: string) {
     super(message);
@@ -144,6 +151,14 @@ export class JsonArraySplitter {
 
       if (octet === ACCOLADE_FERMANTE) {
         this.#profondeur--;
+        // Une accolade fermante de trop — JSON tronque, ou hostile — faisait passer la
+        // profondeur sous zero. La condition de fin `] a la profondeur 0` n'etait alors
+        // plus jamais vraie : rien n'etait consomme, le tampon accumulait les centaines
+        // de mega-octets restants du dump, et **aucune exception n'etait levee**. Le job
+        // tournait jusqu'a l'OOM. Mieux vaut echouer tout de suite, et le dire.
+        if (this.#profondeur < 0) {
+          throw new JsonArrayError("Accolade fermante en trop : le flux JSON est malforme");
+        }
         if (this.#profondeur === 0 && this.#debutObjet !== null) {
           objets.push(tampon.subarray(this.#debutObjet, i + 1).toString("utf8"));
           this.#debutObjet = null;
@@ -167,6 +182,17 @@ export class JsonArraySplitter {
       this.#tampon = tampon.subarray(garde);
       if (this.#debutObjet !== null) this.#debutObjet -= garde;
     }
+
+    // Second garde-fou, celui-la sans hypothese sur la cause : un tableau d'elements qui
+    // ne sont pas des objets n'avance jamais `consomme` non plus, et accumule pareil. Un
+    // objet du RNA pese quelques centaines d'octets ; ce plafond est trois ordres de
+    // grandeur au-dessus.
+    if (this.#tampon.length > OBJET_MAX_OCTETS) {
+      throw new JsonArrayError(
+        `Aucun objet complet apres ${OBJET_MAX_OCTETS} octets : le flux JSON n'a pas la forme attendue`,
+      );
+    }
+
     this.#scan = this.#tampon.length;
   }
 }

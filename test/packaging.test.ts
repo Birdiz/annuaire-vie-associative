@@ -30,6 +30,17 @@ after(() => {
   if (dossier !== undefined) rmSync(dossier, { recursive: true, force: true });
 });
 
+/**
+ * Vrai quand le paquet declare la dependance. Elle doit alors etre installee : son
+ * absence est un environnement casse, et cela se dit.
+ */
+function declareeDansPackageJson(nom: string): boolean {
+  const pkg = JSON.parse(readFileSync(fileURLToPath(new URL("../package.json", import.meta.url)), "utf8")) as {
+    devDependencies?: Record<string, string>;
+  };
+  return pkg.devDependencies?.[nom] !== undefined;
+}
+
 /** Construit une fois pour tout le fichier : esbuild coute quelques centaines de ms. */
 async function construireUneFois(): Promise<{ dossier: string; bundle: string } | undefined> {
   if (dossier !== undefined && bundle !== undefined) return { dossier, bundle };
@@ -37,8 +48,18 @@ async function construireUneFois(): Promise<{ dossier: string; bundle: string } 
   let build: typeof import("../scripts/build.ts");
   try {
     build = await import("../scripts/build.ts");
-  } catch {
-    // node_modules partiel : la suite reste verte, la construction se verifie ailleurs.
+  } catch (cause) {
+    // Une dependance declaree mais absente est une installation incomplete, pas une
+    // dispense. Sauter en silence rendait `npm test` vert alors qu'un pan entier de
+    // l'ADR-022 n'avait pas ete verifie : format CommonJS du bundle, shebang, bit
+    // d'execution, absence d'`import.meta`, survie de node:sqlite et des migrations,
+    // liste blanche des assets. Rien dans la sortie ne le disait.
+    if (declareeDansPackageJson("esbuild")) {
+      throw new Error(
+        "esbuild est declare dans les devDependencies mais introuvable : lancez `npm ci`.\n" +
+          `  Cause : ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
     return undefined;
   }
 
@@ -121,7 +142,13 @@ test("la configuration SEA declare exactement les ressources que l'UI sait servi
   let sea: typeof import("../scripts/sea.ts");
   try {
     sea = await import("../scripts/sea.ts");
-  } catch {
+  } catch (cause) {
+    if (declareeDansPackageJson("postject")) {
+      throw new Error(
+        "postject est declare dans les devDependencies mais introuvable : lancez `npm ci`.\n" +
+          `  Cause : ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
     return t.skip("postject n'est pas installe");
   }
 
@@ -167,7 +194,13 @@ test("la signature Authenticode est retiree, et l'en-tete cesse d'en annoncer un
   let sea: typeof import("../scripts/sea.ts");
   try {
     sea = await import("../scripts/sea.ts");
-  } catch {
+  } catch (cause) {
+    if (declareeDansPackageJson("postject")) {
+      throw new Error(
+        "postject est declare dans les devDependencies mais introuvable : lancez `npm ci`.\n" +
+          `  Cause : ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
     return t.skip("postject n'est pas installe");
   }
 
@@ -195,7 +228,13 @@ test("la sentinelle SEA est lue dans le binaire, jamais recopiee de la documenta
   let sea: typeof import("../scripts/sea.ts");
   try {
     sea = await import("../scripts/sea.ts");
-  } catch {
+  } catch (cause) {
+    if (declareeDansPackageJson("postject")) {
+      throw new Error(
+        "postject est declare dans les devDependencies mais introuvable : lancez `npm ci`.\n" +
+          `  Cause : ${cause instanceof Error ? cause.message : String(cause)}`,
+      );
+    }
     return t.skip("postject n'est pas installe");
   }
 

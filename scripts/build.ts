@@ -18,7 +18,11 @@ import { build } from "esbuild";
 import { copyFileSync, mkdirSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { realpathSync } from "node:fs";
 import { nomsAssets } from "../src/ui/assets.ts";
+// Le formatage vient de `src/` : ce module en importe deja, et deux tailles affichees
+// differemment selon l'outil qui les imprime n'aide personne.
+import { formaterOctets } from "../src/texte.ts";
 
 export const RACINE = fileURLToPath(new URL("..", import.meta.url));
 export const DIST = join(RACINE, "dist");
@@ -68,15 +72,27 @@ export function copierAssets(destination: string): readonly string[] {
   return noms;
 }
 
-export function formaterOctets(valeur: number): string {
-  if (valeur < 1024) return `${valeur} o`;
-  if (valeur < 1024 * 1024) return `${(valeur / 1024).toFixed(1)} Ko`;
-  return `${(valeur / (1024 * 1024)).toFixed(1)} Mo`;
-}
 
-if (process.argv[1] !== undefined && import.meta.filename === process.argv[1]) {
+
+if (lanceDirectement()) {
   const resultat = await construireBundle();
   process.stdout.write(
     `${resultat.fichier}\n${formaterOctets(resultat.octets)}, plus ${nomsAssets().length} fichiers statiques.\n`,
   );
+}
+
+/**
+ * Vrai quand ce module est le point d'entree. La comparaison passe par `realpathSync` :
+ * atteint par un lien symbolique — un `node_modules` lie, un depot range ailleurs —
+ * `import.meta.filename` et `process.argv[1]` ne designent pas la meme chaine, et le
+ * script se taisait sans rien dire.
+ */
+function lanceDirectement(): boolean {
+  const argv = process.argv[1];
+  if (argv === undefined) return false;
+  try {
+    return realpathSync(import.meta.filename) === realpathSync(argv);
+  } catch {
+    return import.meta.filename === argv;
+  }
 }

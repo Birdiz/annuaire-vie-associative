@@ -54,7 +54,7 @@ function appFictive(contactUrl: string | undefined): App {
 /** `sansContact` plutot qu'un parametre `undefined` : celui-ci retomberait sur le defaut. */
 function pilote(sansContact = false): [PiloteRun, Espion] {
   const e = espion();
-  const app = appFictive(sansContact ? undefined : "https://exemple.fr/contact");
+  const app = appFictive(sansContact ? undefined : "https://exemple.example/contact");
   return [new PiloteRun(app, e.executer), e];
 }
 
@@ -159,4 +159,17 @@ test("un run mene a terme efface le refus precedent", async () => {
 test("attendre ne bloque pas quand rien ne tourne", async () => {
   const [p] = pilote();
   await p.attendre();
+});
+
+test("une fois l'interface en cours d'arret, plus aucun run ne demarre", () => {
+  // La fenetre etait etroite — un microtask entre `attendre()` et `fermer()` — mais elle
+  // suffisait : le depart etait accepte, un nouveau worker naissait, et `app.close()`
+  // fermait la base sous lui. Un drapeau consulte en premier la referme.
+  const [p] = pilote();
+  p.fermer();
+
+  const depart = p.demarrer("35");
+  assert.equal(depart.kind, "refus");
+  assert.match(p.refus() ?? "", /en cours d'arret/);
+  assert.equal(p.etat().kind, "inactif", "aucun run ne doit avoir ete ouvert");
 });

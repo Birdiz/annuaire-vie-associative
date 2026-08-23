@@ -14,22 +14,22 @@ const PAGE = `<html><head><title>Mairie de Bruz</title><style>a { color: red }</
 </body></html>`;
 
 test("le contenu des script et des style n'est pas du texte de page", () => {
-  const doc = analyser(PAGE, "https://exemple.fr/accueil");
+  const doc = analyser(PAGE, "https://exemple.example/accueil");
   assert.ok(!doc.texte.includes("pisteur"), "une adresse de regie ne doit pas etre collectee");
   assert.ok(!doc.texte.includes("color"), "les regles CSS ne sont pas du texte");
 });
 
 test("les liens sont resolus en absolu et portent leur texte d'ancre", () => {
-  const doc = analyser(PAGE, "https://exemple.fr/accueil");
+  const doc = analyser(PAGE, "https://exemple.example/accueil");
   assert.deepEqual(doc.liens.slice(0, 2), [
-    { href: "https://exemple.fr/vie-associative", ancre: "Vie associative" },
+    { href: "https://exemple.example/vie-associative", ancre: "Vie associative" },
     { href: "https://ailleurs.example/x", ancre: "Ailleurs" },
   ]);
   assert.equal(doc.liens[2]?.href, "mailto:contact@club.example", "mailto est conserve tel quel");
 });
 
 test("un element en ligne ne coupe pas une adresse, un element de bloc separe deux cellules", () => {
-  const doc = analyser(PAGE, "https://exemple.fr/accueil");
+  const doc = analyser(PAGE, "https://exemple.example/accueil");
   assert.ok(
     doc.texte.includes("amicale@bruz.example"),
     `un <span> au milieu d'une adresse ne doit pas la couper : ${doc.texte}`,
@@ -41,7 +41,7 @@ test("un element en ligne ne coupe pas une adresse, un element de bloc separe de
 });
 
 test("les blocs vont du plus etroit au plus large et portent leurs liens", () => {
-  const doc = analyser(PAGE, "https://exemple.fr/accueil");
+  const doc = analyser(PAGE, "https://exemple.example/accueil");
   const ligne = doc.blocs.find((bloc) => bloc.texte.includes("Club de Bruz") && bloc.texte.includes("crire"));
   assert.ok(ligne !== undefined, "la ligne de tableau doit etre un bloc");
   assert.deepEqual(
@@ -54,7 +54,7 @@ test("les blocs vont du plus etroit au plus large et portent leurs liens", () =>
 });
 
 test("les entites HTML sont decodees, y compris les references numeriques", () => {
-  const doc = analyser("<p>Th&eacute;&acirc;tre &#38; danse &#x40; Bruz</p>", "https://exemple.fr/");
+  const doc = analyser("<p>Th&eacute;&acirc;tre &#38; danse &#x40; Bruz</p>", "https://exemple.example/");
   assert.equal(doc.texte, "Théâtre & danse @ Bruz");
 });
 
@@ -64,7 +64,7 @@ test("des items de liste non fermes restent des blocs distincts", () => {
   const doc = analyser(
     `<ul><li>Club de Bruz <a href="mailto:club@a.example">ecrire</a>` +
       `<li>Amicale laique <a href="mailto:amicale@a.example">ecrire</a></ul>`,
-    "https://exemple.fr/",
+    "https://exemple.example/",
   );
   assert.deepEqual(
     doc.blocs.map((bloc) => bloc.texte),
@@ -80,7 +80,7 @@ test("des items de liste non fermes restent des blocs distincts", () => {
 test("une ancre interne ou un lien sans href ne produit aucun candidat", () => {
   const doc = analyser(
     `<a href="#contenu">Aller au contenu</a><a>sans href</a><a href="  ">vide</a>`,
-    "https://exemple.fr/",
+    "https://exemple.example/",
   );
   assert.deepEqual(doc.liens, [], "rien a suivre, et aucune exception");
 });
@@ -124,4 +124,19 @@ test("seul du HTML est analyse", () => {
   assert.ok(!estHtml("application/pdf"), "les sites de mairie sont pleins de PDF");
   assert.ok(!estHtml("text/plain"));
   assert.ok(!estHtml("image/png"));
+});
+
+test("un document trop imbrique est refuse au lieu de faire deborder la pile", () => {
+  // Un `RangeError` de V8 n'est ni type ni attendu : le job partait en `dead` apres cinq
+  // tentatives sur une erreur pourtant deterministe. Un refus net se diagnostique.
+  const profond = `${"<div>".repeat(2000)}texte${"</div>".repeat(2000)}`;
+  assert.throws(() => analyser(profond, "https://exemple.example/"), /imbrique au-dela/);
+});
+
+test("un demi-surrogate isole n'entre pas dans le texte", () => {
+  // `String.fromCodePoint(0xD800)` rend une chaine mal formee, qui traverserait ensuite
+  // la base et l'export CSV. L'entite reste litterale.
+  const doc = analyser("<p>a&#xD800;b</p>", "https://exemple.example/");
+  assert.ok(!/[\uD800-\uDFFF]/.test(doc.texte), `texte mal forme : ${JSON.stringify(doc.texte)}`);
+  assert.match(doc.texte, /&#xD800;/);
 });

@@ -19,6 +19,7 @@ import { createHash } from "node:crypto";
 
 import { toIso } from "../clock.ts";
 import { ETAPE } from "../metrics/counters.ts";
+import { SQL_EST_EXCLU } from "../oubli.ts";
 import { analyser, decoder, estHtml } from "../parse/html.ts";
 import type { Database } from "../db/index.ts";
 import type { JobHandler } from "../jobs/worker.ts";
@@ -43,7 +44,7 @@ type ContactRattache = {
 
 const SQL_MAJ_PAGE = `
   UPDATE page
-     SET statut = ?, http_status = ?, content_hash = ?, cache_path = ?, fetched_at = ?
+     SET statut = ?, http_status = ?, content_hash = ?, cache_path = ?, final_url = ?, fetched_at = ?
    WHERE url_hash = ?
 `;
 
@@ -205,6 +206,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
           contentHash,
           httpStatus: resultat.meta.status,
           cachePath: ctx.client.cachePathFor(payload.url),
+          sourceUrl: resultat.meta.finalUrl,
           contacts,
           verdict,
           selection: selection.retenus,
@@ -240,6 +242,8 @@ function terminer(
         echec.statut,
         echec.httpStatus ?? null,
         null,
+        null,
+        // Une page qui n'a pas abouti n'a pas d'URL d'arrivee a retenir.
         null,
         maintenant,
         hash,
@@ -284,6 +288,13 @@ type Succes = {
   selection: readonly LienScore[];
   horsDomaine: number;
   mobilesExclus: number;
+  /**
+   * URL reellement atteinte apres redirections. C'est elle qui a produit le corps, donc
+   * elle que la provenance doit nommer (§4.5) : enregistrer l'URL demandee envoyait la
+   * personne concernee — ou le webmestre — verifier une adresse qui ne porte pas la
+   * donnee.
+   */
+  sourceUrl: string;
 };
 
 function persister(
@@ -300,6 +311,7 @@ function persister(
     succes.httpStatus,
     succes.contentHash,
     succes.cachePath,
+    succes.sourceUrl,
     maintenant,
     hash,
   );
@@ -328,7 +340,7 @@ function persister(
     return;
   }
 
-  ecrireContacts(ctx, db, payload, succes.contacts, maintenant);
+  ecrireContacts(ctx, db, payload, succes.contacts, succes.sourceUrl, maintenant);
   enfilerFilles(ctx, db, payload, succes.selection, maintenant);
 }
 
@@ -369,11 +381,15 @@ function ecrireContacts(
   db: Database,
   payload: PayloadPage,
   contacts: readonly ContactRattache[],
+  sourceUrl: string,
   maintenant: string,
 ): void {
   const rattache = db.prepare(sqlContact(true));
   const orphelin = db.prepare(sqlContact(false));
   const resoudre = db.prepare(SQL_RESOUDRE_ASSOCIATION);
+  // Une opposition doit survivre a la campagne suivante : sans cette consultation,
+  // effacer un contact ne servirait a rien, le crawl le retrouverait et le reecrirait.
+  const exclu = db.prepare(SQL_EST_EXCLU);
 
   let ecrits = 0;
   let versAssociation = 0;
@@ -381,7 +397,13 @@ function ecrireContacts(
   let generiques = 0;
   let nominatifs = 0;
 
+  let exclus = 0;
   for (const { contact, nomAssociation } of contacts) {
+    if (exclu.get(contact.valeurNormalisee, payload.codeInsee) !== undefined) {
+      exclus += 1;
+      continue;
+    }
+
     // L'identifiant est resolu ici, dans la transaction : une association disparue
     // entre la lecture et le commit ferait echouer la cle etrangere, et le job
     // repartirait en boucle sans jamais pouvoir aboutir.
@@ -406,7 +428,7 @@ function ecrireContacts(
       contact.valeur,
       contact.valeurNormalisee,
       contact.isGenerique,
-      payload.url,
+      sourceUrl,
       methode,
       confiance,
       maintenant,
@@ -433,6 +455,9 @@ function ecrireContacts(
   ctx.counters.inc(ETAPE.extraction, "emails_nominatifs", nominatifs);
   ctx.counters.inc(ETAPE.extraction, "rattaches_association", versAssociation);
   ctx.counters.inc(ETAPE.extraction, "rattaches_commune", ecrits - versAssociation);
+  // §8 : ce que l'outil refuse de retenir se compte aussi. Sans ce compteur, une
+  // exclusion trop large passerait inapercue.
+  ctx.counters.inc(ETAPE.extraction, "contacts_exclus", exclus);
 }
 
 function enfilerFilles(

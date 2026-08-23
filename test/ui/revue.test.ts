@@ -228,3 +228,53 @@ test("la saisie humaine passe par les regles de forme de l'extraction", () => {
   });
   assert.equal(normaliserSaisie("phone", "12345").kind, "refus");
 });
+
+test("« oublier » supprime la ligne et inscrit l'exclusion, la ou « rejeter » n'ecrit qu'un statut", async (t) => {
+  // La distinction est tout l'objet du lot 9 : rejeter laisse une ligne que
+  // `--avec-rejetes` remet dans l'export et que le run suivant recouvre.
+  const db = ouvrir(t);
+  const counters = new Counters(db, null);
+  const { exclusions, SQL_EST_EXCLU } = await import("../../src/oubli.ts");
+  const contact = premierContact(db);
+
+  const rejet = arbitrer(db, HORLOGE, counters, { id: contact.id, action: "rejete" });
+  assert.equal(rejet.kind, "ok");
+  assert.notEqual(
+    db.prepare("SELECT id FROM contact WHERE id = ?").get(contact.id),
+    undefined,
+    "rejeter conserve la ligne",
+  );
+
+  const oubli = arbitrer(db, HORLOGE, counters, {
+    id: contact.id,
+    action: "oublie",
+    note: "opposition recue le 12/03",
+  });
+
+  assert.equal(oubli.kind, "ok");
+  assert.equal(db.prepare("SELECT id FROM contact WHERE id = ?").get(contact.id), undefined, "la ligne doit partir");
+  assert.equal(exclusions(db).length, 1);
+  assert.notEqual(
+    db.prepare(SQL_EST_EXCLU).get(contact.valeur_normalisee, contact.code_insee),
+    undefined,
+    "la campagne suivante doit voir l'exclusion",
+  );
+});
+
+test("oublier sans motif est refuse : le motif fait la preuve de la demande", (t) => {
+  const db = ouvrir(t);
+  const counters = new Counters(db, null);
+  const contact = premierContact(db);
+  const resultat = arbitrer(db, HORLOGE, counters, { id: contact.id, action: "oublie", note: "   " });
+  assert.equal(resultat.kind, "refus");
+  assert.match(resultat.kind === "refus" ? resultat.message : "", /motif est requis/);
+  assert.notEqual(db.prepare("SELECT id FROM contact WHERE id = ?").get(contact.id), undefined);
+});
+
+function premierContact(db: Database) {
+  const ligne = db
+    .prepare("SELECT id, valeur_normalisee, code_insee FROM contact WHERE kind = 'email' ORDER BY id LIMIT 1")
+    .get() as { id: number; valeur_normalisee: string; code_insee: string } | undefined;
+  assert.ok(ligne, "le corpus doit contenir au moins un email");
+  return ligne;
+}

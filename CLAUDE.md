@@ -38,14 +38,26 @@ boucle locale du conteneur, et l'adresse d'ecoute n'est pas negociable (ADR-023)
 7. **Classification des emails** : generique vs nominative — le regime juridique differe.
 8. **Purge** des donnees de plus de 3 ans, executee au demarrage.
 9. **Idempotence et reprise** : toute etape se relance sans doublon ni perte, apres crash.
+10. **Droit a l'effacement** (lot 9, ADR-026) : `annuaire oublier` supprime la donnee,
+    efface sa copie en cache et **inscrit une exclusion** consultee a chaque ecriture de
+    contact. Sans cette consultation, effacer ne durerait que jusqu'au run suivant.
 
 Les invariants 2, 3 et 8 sont tenus **par construction** : ils ne sont pas exposes dans
 la surface de configuration. C'est leur absence du fichier de config qui les rend
 non contournables, pas un commentaire dans le code. Ne pas les y ajouter.
 
-De meme, l'invariant 5 est une contrainte `NOT NULL` du schema et l'invariant 9 repose
-sur des contraintes `UNIQUE` : une donnee sans provenance ou un doublon apres reprise
-doit echouer au niveau de la base, pas etre evite par de la logique applicative.
+De meme, l'invariant 5 est une contrainte `NOT NULL` du schema — les quatre elements, y
+compris la methode et le score, depuis la migration 8 — et l'invariant 9 repose sur des
+contraintes `UNIQUE` : une donnee sans provenance ou un doublon apres reprise doit
+echouer au niveau de la base, pas etre evite par de la logique applicative.
+
+**« Par construction » veut dire qu'un mecanisme l'empeche, pas qu'un commentaire le
+demande.** La revue du lot 9 a trouve trois invariants qui n'etaient tenus que par
+discipline, et les a refermes : la purge vit desormais dans le `ouvrir()` commun de
+`cli.ts` — dix commandes sur dix-neuf l'oubliaient, dont `exporter` ; le plancher de 2 s
+est interdit de parametrage depuis `src/` par un test ; le detecteur d'imports reseau
+compare des specifieurs et non des sous-chaines. Avant d'ecrire qu'une regle est tenue par
+construction, verifier qu'un test rougit quand on la viole.
 
 ## Interdits absolus
 
@@ -57,9 +69,11 @@ doit echouer au niveau de la base, pas etre evite par de la logique applicative.
 - Aucun appel reseau sortant vers une infra de l'editeur (telemetrie, phone-home).
 - **La suite de tests ne sort jamais sur Internet.** Tout ce qui touche au reseau se
   teste contre un serveur HTTP local jetable. Cet interdit est tenu **par construction**
-  depuis le lot 2 : `npm test` precharge `test/helpers/pas-de-reseau.ts`, qui refuse
-  tout hote hors boucle locale. Les tests qui lancent la CLI en sous-processus doivent
-  le precharger aussi.
+  depuis le lot 2 : `npm test` precharge `test/helpers/pas-de-reseau.ts`. Depuis le lot 9,
+  la garde porte sur **`net.Socket.prototype.connect`** et non plus sur le seul `fetch` :
+  elle couvre donc du meme geste `node:http`, `node:https`, `node:http2`, `undici` et tout
+  client a venir. Les tests qui lancent un sous-processus doivent la precharger aussi, et
+  un test d'architecture le verifie.
 
 ## Decisions techniques
 

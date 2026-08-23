@@ -15,6 +15,14 @@
 const GUILLEMET = 0x22;
 const CR = 0x0d;
 const LF = 0x0a;
+const ESPACE = 0x20;
+
+/**
+ * Taille maximale d'une ligne en cours. Un mega-octet : trois ordres de grandeur au-dessus
+ * de la plus longue ligne du RNA, et trois ordres de grandeur en dessous de ce qui met le
+ * process a genoux.
+ */
+const LIGNE_MAX_OCTETS = 1024 * 1024;
 
 export type CsvStreamParserOptions = {
   /** Un seul caractere ASCII. Defaut : la virgule. */
@@ -38,6 +46,8 @@ export class CsvStreamParser {
     this.#delimiter = code;
   }
 
+  #lignesRepliees = 0;
+
   /** Octets consommes jusqu'a la fin de la derniere ligne rendue, separateur compris. */
   get consumedBytes(): number {
     return this.#consumedBytes;
@@ -46,7 +56,37 @@ export class CsvStreamParser {
   /** Rend les lignes completes contenues dans le morceau ; le reste attend la suite. */
   push(chunk: Uint8Array): string[][] {
     this.#tampon = this.#tampon.length === 0 ? Buffer.from(chunk) : Buffer.concat([this.#tampon, chunk]);
-    return this.#extraire(false);
+    const lignes = this.#extraire(false);
+    this.#refermerSiDemesure();
+    return lignes;
+  }
+
+  /**
+   * Un guillemet ouvert et jamais referme fait que plus aucune ligne ne se termine : le
+   * tampon garde tout, chaque `push` reconcatene et rescanne depuis l'octet zero, et
+   * `consumedBytes` cesse d'avancer. Mesure sur un dump volontairement casse : 13 Mo
+   * d'entree apres un seul guillemet orphelin donnaient 697 Mo de RSS, un offset de
+   * reprise fige a 4, et un cout quadratique en temps. Sur le dump RNA de 1,25 Go, c'est
+   * un OOM certain — et comme l'offset n'avance pas, la reprise par `Range` rejoue le
+   * meme OOM jusqu'au `dead`.
+   *
+   * Passe le plafond, on tranche : le guillemet est tenu pour litteral et le tampon est
+   * rescanne sans lui. Un dump public malformé ne doit pas faire tomber le process.
+   */
+  #refermerSiDemesure(): void {
+    if (this.#tampon.length <= LIGNE_MAX_OCTETS) return;
+    const premierGuillemet = this.#tampon.indexOf(GUILLEMET);
+    if (premierGuillemet === -1) return;
+    this.#lignesRepliees += 1;
+    // Neutraliser le guillemet ouvrant : le reste du tampon redevient decoupable.
+    const copie = Buffer.from(this.#tampon);
+    copie[premierGuillemet] = ESPACE;
+    this.#tampon = copie;
+  }
+
+  /** Nombre de fois qu'un guillemet non referme a du etre neutralise. */
+  get lignesRepliees(): number {
+    return this.#lignesRepliees;
   }
 
   /** Rend l'eventuelle derniere ligne, non terminee par un saut de ligne. */

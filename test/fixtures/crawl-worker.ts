@@ -44,7 +44,7 @@ const ctx: ContexteDecouverte = {
     // rendrait le test de reprise plus long qu'un run reel, pour la meme garantie.
     throttle: new DomainThrottle({ minDelayMs: 1, lookup: async () => ({ address: "127.0.0.1", family: 4 }) }),
     counters,
-    userAgent: buildUserAgent("0.1.0", "https://exemple.fr/contact"),
+    userAgent: buildUserAgent("0.1.0", "https://exemple.example/contact"),
     cacheTtlMs: 3_600_000,
   }),
   counters,

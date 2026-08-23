@@ -79,6 +79,11 @@ export type ContexteUi = {
   pilote: SurfacePilote;
   /** L'URL de contact du §4.4, lue et ecrite depuis l'ecran. */
   reglages: SurfaceReglages;
+  /**
+   * Efface une entree du cache HTTP, designee par le chemin relatif de `page.cache_path`.
+   * Sert a l'oubli : le cache garde le HTML brut, donc la donnee elle-meme.
+   */
+  supprimerCache: (cheminRelatif: string) => boolean;
 };
 
 export type SurfaceReglages = {
@@ -218,17 +223,7 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
         onglet: "synthese",
         departement,
         version: ctx.version,
-        contenu: ecranSynthese({
-          departement,
-          departements,
-          suivi: donneesSuivi(ctx, departement),
-          reglages: donneesReglages(ctx),
-          couverture: mesurerCouverture(ctx.db, departement),
-          dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
-          prefiltre: distributionDuJour(ctx, departement),
-          normalisation: distributionNormalisation(ctx.db, departement),
-          revue: distributionRevue(ctx.db, departement),
-        }),
+        contenu: syntheseComplete(ctx, departement, departements, donneesReglages(ctx)),
       }),
     );
   }
@@ -275,7 +270,7 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     const avecRejetes = requete.requete.get("avec-rejetes") === "1";
     const options = {
       departement,
-      scoreMin: lireScoreMin(scoreMin),
+      scoreMin: seuilTolerant(scoreMin),
       avecRejetes,
     };
     return html(
@@ -299,7 +294,7 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   if (requete.methode === "GET" && requete.chemin === "/export.csv") {
     const options = {
       departement,
-      scoreMin: lireScoreMin(requete.requete.get("score-min") ?? ""),
+      scoreMin: seuilTolerant(requete.requete.get("score-min") ?? ""),
       avecRejetes: requete.requete.get("avec-rejetes") === "1",
     };
     return {
@@ -314,6 +309,29 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   }
 
   return texte("Introuvable.\n", 404);
+}
+
+/**
+ * L'ecran de synthese au complet. Huit champs, ecrits deux fois a l'identique : la seule
+ * chose qui variait entre les deux appels etait le bloc de reglages.
+ */
+function syntheseComplete(
+  ctx: ContexteUi,
+  departement: string,
+  departements: readonly string[],
+  reglages: DonneesReglages,
+): string {
+  return ecranSynthese({
+    departement,
+    departements,
+    suivi: donneesSuivi(ctx, departement),
+    reglages,
+    couverture: mesurerCouverture(ctx.db, departement),
+    dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
+    prefiltre: distributionDuJour(ctx, departement),
+    normalisation: distributionNormalisation(ctx.db, departement),
+    revue: distributionRevue(ctx.db, departement),
+  });
 }
 
 function donneesSuivi(ctx: ContexteUi, departement: string): DonneesSuivi {
@@ -396,17 +414,7 @@ function enregistrerReglages(
       onglet: "synthese",
       departement,
       version: ctx.version,
-      contenu: ecranSynthese({
-        departement,
-        departements,
-        suivi: donneesSuivi(ctx, departement),
-        reglages: donnees,
-        couverture: mesurerCouverture(ctx.db, departement),
-        dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
-        prefiltre: distributionDuJour(ctx, departement),
-        normalisation: distributionNormalisation(ctx.db, departement),
-        revue: distributionRevue(ctx.db, departement),
-      }),
+      contenu: syntheseComplete(ctx, departement, departements, donnees),
     }),
     statut,
   );
@@ -447,12 +455,18 @@ function arbitrage(
   const action = champs.get("action") ?? "";
   if (!estActionRevue(action)) return rendre("Action de revue inconnue.", 400);
 
-  const resultat = arbitrer(ctx.db, ctx.clock, ctx.counters, {
-    id,
-    action,
-    valeur: champs.get("valeur") ?? undefined,
-    note: champs.get("note") ?? undefined,
-  });
+  const resultat = arbitrer(
+    ctx.db,
+    ctx.clock,
+    ctx.counters,
+    {
+      id,
+      action,
+      valeur: champs.get("valeur") ?? undefined,
+      note: champs.get("note") ?? undefined,
+    },
+    ctx.supprimerCache,
+  );
 
   if (resultat.kind === "introuvable") return rendre("Ce contact n'existe plus.", 404);
   if (resultat.kind === "refus") return rendre(resultat.message, 422);
@@ -460,8 +474,15 @@ function arbitrage(
   return redirection(`/revue?departement=${encodeURIComponent(departement)}`);
 }
 
-/** Un seuil illisible ne filtre rien : mieux vaut tout sortir que sortir au hasard. */
-function lireScoreMin(brut: string): number | undefined {
+/**
+ * Un seuil illisible ne filtre rien : mieux vaut tout sortir que sortir au hasard.
+ *
+ * Le nom dit « tolerant » a dessein. La CLI a sa propre lecture, `lireScoreMin`, qui rend
+ * elle aussi `undefined` sur une valeur invalide — mais pour en faire une erreur d'usage
+ * et sortir en code 2. Meme signature, decisions opposees : les deux se defendent, ce qui
+ * ne se defendait pas etait qu'elles portent le meme nom.
+ */
+function seuilTolerant(brut: string): number | undefined {
   if (brut.trim() === "") return undefined;
   const valeur = Number(brut.replace(",", "."));
   if (!Number.isFinite(valeur) || valeur < 0 || valeur > 1) return undefined;

@@ -35,8 +35,9 @@ async function servir(t: TestContext): Promise<ServeurUi> {
     clock: HORLOGE,
     version: "0.1.0",
     departementSecours: DEPARTEMENT,
+    supprimerCache: () => false,
     pilote: piloteDouble(),
-    reglages: reglagesDouble("https://exemple.fr/contact"),
+    reglages: reglagesDouble("https://exemple.example/contact"),
   });
   t.after(() => serveur.fermer());
   return serveur;

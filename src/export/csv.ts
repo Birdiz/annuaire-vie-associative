@@ -93,6 +93,12 @@ export type OptionsExport = {
  * Rend les lignes du fichier, en-tete comprise, une par une. Un generateur plutot qu'une
  * chaine : un departement entier tient largement en memoire, la France entiere non, et
  * le §1 du brief demande que le pipeline reste correct a cette echelle.
+ *
+ * La lecture est un **curseur** (`iterate`) et non un `all()`. Avec `all()`, la promesse
+ * de l'alinea precedent n'etait tenue qu'a moitie : la retro-pression fonctionnait cote
+ * ecriture, mais l'integralite du resultat etait chargee avant la premiere ligne rendue.
+ * Contrepartie assumee : la lecture reste ouverte pendant tout le telechargement, ce qui
+ * ne gene pas — SQLite en WAL laisse un lecteur et un ecrivain coexister.
  */
 export function* lignesCsv(db: Database, options: OptionsExport): Generator<string> {
   yield `${BOM}${COLONNES.join(SEPARATEUR)}${FIN_DE_LIGNE}`;
@@ -100,7 +106,7 @@ export function* lignesCsv(db: Database, options: OptionsExport): Generator<stri
   const seuil = options.scoreMin ?? null;
   const lignes = db
     .prepare(SQL_CONTACTS)
-    .all(options.departement, seuil, seuil, options.avecRejetes === true ? 1 : 0) as unknown as LigneExport[];
+    .iterate(options.departement, seuil, seuil, options.avecRejetes === true ? 1 : 0) as unknown as Iterable<LigneExport>;
 
   for (const ligne of lignes) {
     yield `${[

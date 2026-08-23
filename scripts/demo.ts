@@ -125,11 +125,13 @@ function amorcer(dataDir: string, urlMairie: string): void {
     const maintenant = new Date().toISOString();
     app.db
       .prepare(
+        // La provenance est complete : depuis la migration 8, le schema exige les quatre
+        // elements du §4.5, methode et score compris.
         `INSERT OR REPLACE INTO commune
            (code_insee, nom, departement, url_mairie, statut_resolution,
-            resolution_source_url, resolution_collected_at, resolution_confiance,
-            created_at, updated_at)
-         VALUES ('35999', 'Sainte-Colombe', '35', ?, 'resolue', ?, ?, 0.9, ?, ?)`,
+            resolution_source_url, resolution_collected_at, source_resolution,
+            resolution_confiance, created_at, updated_at)
+         VALUES ('35999', 'Sainte-Colombe', '35', ?, 'resolue', ?, ?, 'demo', 0.9, ?, ?)`,
       )
       .run(urlMairie, "https://exemple.fr/demo", maintenant, maintenant, maintenant);
 

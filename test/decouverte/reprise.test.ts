@@ -64,8 +64,9 @@ function preparer(t: TestContext, server: TestServer): { dbFile: string; cacheDi
 
   db.prepare(
     `INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution,
-       resolution_source_url, resolution_collected_at, created_at, updated_at)
-     VALUES ('35047', 'Bruz', '35', ?, 'resolue', 'https://exemple.fr/dump', ?, ?, ?)`,
+       resolution_source_url, resolution_collected_at, source_resolution, resolution_confiance,
+       created_at, updated_at)
+     VALUES ('35047', 'Bruz', '35', ?, 'resolue', 'https://exemple.example/dump', ?, 'annuaire', 0.9, ?, ?)`,
   ).run(`${server.origin}/`, "2026-08-18T00:00:00.000Z", "2026-08-18T00:00:00.000Z", "2026-08-18T00:00:00.000Z");
 
   const inserer = db.prepare(

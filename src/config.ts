@@ -1,4 +1,6 @@
-import { readFileSync, writeFileSync, existsSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
+import { writeAtomic } from "./http/cache.ts";
+import { messageDe } from "./log.ts";
 
 /**
  * Configuration de l'utilisateur.
@@ -87,7 +89,7 @@ function readConfigFile(configFile: string, problems: string[]): Record<string, 
   try {
     text = readFileSync(configFile, "utf8");
   } catch (cause) {
-    problems.push(`${configFile} est illisible : ${(cause as Error).message}`);
+    problems.push(`${configFile} est illisible : ${messageDe(cause)}`);
     return {};
   }
   try {
@@ -98,7 +100,7 @@ function readConfigFile(configFile: string, problems: string[]): Record<string, 
     }
     return parsed as Record<string, unknown>;
   } catch (cause) {
-    problems.push(`${configFile} n'est pas un JSON valide : ${(cause as Error).message}`);
+    problems.push(`${configFile} n'est pas un JSON valide : ${messageDe(cause)}`);
     return {};
   }
 }
@@ -125,7 +127,31 @@ export function validerContactUrl(value: string): { url: string } | { erreur: st
   if (url.protocol !== "http:" && url.protocol !== "https:") {
     return { erreur: `contactUrl doit etre en http ou https : ${value}` };
   }
+  // §4.4 demande une URL **joignable**. Une adresse de boucle locale, une plage privee
+  // ou un nom sans point passaient : le User-Agent etait alors syntaxiquement conforme et
+  // fonctionnellement anonyme, ce qui vide l'invariant de son objet — un webmestre doit
+  // pouvoir joindre quelqu'un.
+  if (!estJoignableDepuisInternet(url.hostname)) {
+    return {
+      erreur:
+        `contactUrl doit etre joignable depuis Internet : ${value}\n` +
+        "  Une adresse locale ou privee ne permet a personne de vous ecrire, et c'est " +
+        "tout l'objet de l'invariant §4.4.",
+    };
+  }
   return { url: url.toString() };
+}
+
+/** Boucle locale, adresses privees (RFC 1918), lien-local, et noms sans point. */
+function estJoignableDepuisInternet(hostname: string): boolean {
+  const hote = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+  if (hote === "localhost" || hote === "::1" || hote.endsWith(".localhost")) return false;
+  if (/^127\./.test(hote) || hote === "0.0.0.0") return false;
+  if (/^10\./.test(hote) || /^192\.168\./.test(hote) || /^169\.254\./.test(hote)) return false;
+  if (/^172\.(1[6-9]|2\d|3[01])\./.test(hote)) return false;
+  if (/^(fc|fd|fe80)/.test(hote)) return false;
+  // Un nom sans point ne se resout que sur un reseau local.
+  return hote.includes(".") || /^\d+\.\d+\.\d+\.\d+$/.test(hote);
 }
 
 function parseContactUrl(value: unknown, problems: string[]): string | undefined {
@@ -213,7 +239,7 @@ export function writeConfigTemplate(configFile: string): boolean {
     cacheTtlHours: DEFAULTS.cacheTtlHours,
     llm: { provider: "none" },
   };
-  writeFileSync(configFile, `${JSON.stringify(template, null, 2)}\n`, "utf8");
+  writeAtomic(configFile, Buffer.from(`${JSON.stringify(template, null, 2)}\n`, "utf8"));
   return true;
 }
 
@@ -234,9 +260,12 @@ export function ecrireContactUrl(configFile: string, valeur: string): { url: str
 
   const contenu = { ...actuel, contactUrl: resultat.url };
   try {
-    writeFileSync(configFile, `${JSON.stringify(contenu, null, 2)}\n`, "utf8");
+    // Temporaire puis `rename`, comme le cache : une interruption pendant cette ecriture
+    // — elle vient de l'interface, donc d'un clic — laissait un config.json tronque, et
+    // le demarrage suivant echouait sur un ConfigError incomprehensible.
+    writeAtomic(configFile, Buffer.from(`${JSON.stringify(contenu, null, 2)}\n`, "utf8"));
   } catch (cause) {
-    return { erreur: `${configFile} n'a pas pu etre ecrit : ${(cause as Error).message}` };
+    return { erreur: `${configFile} n'a pas pu etre ecrit : ${messageDe(cause)}` };
   }
   return resultat;
 }

@@ -29,7 +29,15 @@ import type { Database } from "../db/index.ts";
 import type { HttpCache } from "../http/cache.ts";
 import type { IndexAssociations } from "./rattachement.ts";
 
-/** Pages ecrites par transaction. Assez pour amortir, assez peu pour ne pas tenir la base. */
+/**
+ * Pages ecrites par transaction.
+ *
+ * Plus basse qu'en normalisation (500) : chaque page relue depuis le cache coute une
+ * lecture disque et une analyse DOM, la tranche met donc bien plus longtemps a se
+ * remplir. La tenir courte borne ce qu'un `kill -9` fait perdre, et surtout la duree
+ * pendant laquelle l'event loop est immobilisee — depuis l'ADR-024, c'est l'interface
+ * qui cesse de repondre.
+ */
 const TAILLE_TRANCHE = 200;
 
 const SQL_PAGES = `

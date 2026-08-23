@@ -83,7 +83,7 @@ export function purge(
   // demarrage suivant reprend le travail — elle est idempotente par construction.
   let entreesCache = 0;
   if (cache !== undefined) {
-    entreesCache = cache.pruneOlderThan(cutoffMs);
+    entreesCache = cache.pruneOlderThan(cutoffMs, clock.now());
     if (entreesCache > 0) {
       transaction(db, () => {
         counters.inc(ETAPE.purge, "entrees_cache_supprimees", entreesCache);

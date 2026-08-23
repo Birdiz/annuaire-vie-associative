@@ -55,5 +55,18 @@ Equivalent en ligne de commande :
 
 <p class="discret">Les contacts rejetes en revue sont exclus par defaut : un arbitrage humain
 qui ne changerait rien au fichier livre ne servirait a rien. <a href="/revue?departement=${dept}">Aller a la revue</a>.</p>
+
+<!-- L'avertissement est ici, et pas seulement dans le README : c'est le moment ou le
+     fichier quitte l'outil, donc le seul ou il sera lu par quelqu'un qui est sur le point
+     d'en avoir besoin. Voir ADR-025. -->
+<p class="avertissement">
+<strong>Ce fichier contient des donnees personnelles, et vous en etes responsable de
+traitement.</strong> La colonne <code>regime</code> distingue les adresses de fonction
+(<code>generique</code>) de celles qui designent une personne (<code>nominatif</code>) ;
+<code>indetermine</code> signale un cas que l'outil refuse de trancher. Avant tout usage,
+vous devez informer les personnes concernees au titre de l'article 14 du RGPD — collecte
+indirecte, dans un delai d'un mois ou des la premiere communication. Cet outil ne prospecte
+pas, et ce fichier n'est pas un fichier de prospection.
+</p>
 `;
 }

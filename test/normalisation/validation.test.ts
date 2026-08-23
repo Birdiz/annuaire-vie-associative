@@ -6,7 +6,7 @@ import { valider, validerEmail, validerTelephone } from "../../src/normalisation
 /**
  * Etape [7], volet syntaxique. Le cas qui a motive ce module est reel et mesure :
  * un CMS repandu chez les petites communes ecrit ses `mailto:` sous la forme
- * `nom[^@]domaine.fr`, qu'un script repare cote client. Le motif large de l'etape [5]
+ * `nom[^@]domaine.example`, qu'un script repare cote client. Le motif large de l'etape [5]
  * les acceptait, et 138 contacts d'Ille-et-Vilaine comptaient dans la couverture.
  */
 
@@ -14,7 +14,7 @@ test("une adresse ordinaire est valide", () => {
   for (const adresse of [
     "contact@mairie.example",
     "prenom.nom@asso-du-bourg.example",
-    "c@a.fr",
+    "c@a.example",
     "vie.associative+asso@ville.example.org",
     "l'inutile-mais-legal_1@a-b.example",
   ]) {

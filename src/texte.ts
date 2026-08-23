@@ -20,3 +20,15 @@ export function normaliserNom(nom: string): string {
     .replace(/[^a-z0-9]+/g, " ")
     .trim();
 }
+
+/**
+ * Taille lisible. Partagee par la CLI et par les scripts d'emballage : deux formatages
+ * distincts pour la meme grandeur donnaient deux chiffres differents selon l'outil qui
+ * imprimait, ce que personne ne peut recouper.
+ */
+export function formaterOctets(valeur: number): string {
+  if (valeur < 1024) return `${valeur} o`;
+  if (valeur < 1024 * 1024) return `${(valeur / 1024).toFixed(1)} Ko`;
+  if (valeur < 1024 * 1024 * 1024) return `${(valeur / (1024 * 1024)).toFixed(1)} Mo`;
+  return `${(valeur / (1024 * 1024 * 1024)).toFixed(2)} Go`;
+}

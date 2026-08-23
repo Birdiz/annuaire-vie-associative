@@ -16,13 +16,28 @@
  *   importe, il est toujours lance.
  */
 import { main } from "./cli.ts";
+import { messageDe } from "./log.ts";
+
+/**
+ * `annuaire jobs | head` : la sortie se ferme avant nous, et la prochaine ecriture leve
+ * EPIPE. Sans ecouteur, `process.stdout` en fait une exception non attrapee — le travail
+ * etait fait, et le programme mourait quand meme sur une trace de pile. Toutes les
+ * commandes de listing sont concernees des qu'on les branche a `head` ou a un `less`
+ * qu'on quitte. C'est ici que cela se traite : le seul point commun aux trois emballages.
+ */
+for (const flux of [process.stdout, process.stderr]) {
+  flux.on("error", (erreur: NodeJS.ErrnoException) => {
+    if (erreur.code === "EPIPE") process.exit(0);
+    throw erreur;
+  });
+}
 
 main(process.argv.slice(2)).then(
   (code) => {
     process.exitCode = code;
   },
   (erreur: unknown) => {
-    process.stderr.write(`Echec : ${(erreur as Error).message}\n`);
+    process.stderr.write(`Echec : ${messageDe(erreur)}\n`);
     process.exitCode = 1;
   },
 );

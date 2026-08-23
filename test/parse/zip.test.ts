@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { writeFileSync } from "node:fs";
+import { writeFileSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { crc32, deflateRawSync } from "node:zlib";
 import { ZipReader, ZipError } from "../../src/parse/zip.ts";
@@ -126,4 +126,25 @@ test("une archive Zip64 est rejetee explicitement", (t) => {
   const chemin = join(makeTempDir(t), "zip64.zip");
   writeFileSync(chemin, base);
   assert.throws(() => ZipReader.ouvrir(chemin), /Zip64/);
+});
+
+test("un catalogue qui annonce plus que le fichier ne contient echoue proprement", (t) => {
+  // `Buffer.alloc` sur un uint32 non borne levait un `RangeError` de V8 : ni une
+  // `ZipError`, ni quelque chose que les appelants attrapent. Un catalogue est
+  // declaratif et vient du meme fichier que les donnees ; il ne se croit pas sur parole.
+  const chemin = join(makeTempDir(t), "casse.zip");
+  const original = readFileSync(ecrireZip(t, [{ nom: "rna_35.csv", contenu: Buffer.from("id,nom\n1,X\n") }]));
+
+  // Le champ « compressed size » de l'en-tete central, pousse a 0xFFFFFFFF.
+  const casse = Buffer.from(original);
+  const central = casse.indexOf(Buffer.from([0x50, 0x4b, 0x01, 0x02]));
+  assert.notEqual(central, -1, "l'archive de test doit avoir un catalogue");
+  casse.writeUInt32LE(0xffffffff, central + 20);
+  writeFileSync(chemin, casse);
+
+  const lecteur = ZipReader.ouvrir(chemin);
+  t.after(() => lecteur.fermer());
+  const entree = lecteur.entrees()[0];
+  assert.ok(entree);
+  assert.throws(() => lecteur.lire(entree), ZipError);
 });

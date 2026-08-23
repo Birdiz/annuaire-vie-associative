@@ -81,3 +81,36 @@ test("un contact rejete en revue ne compte plus", async (t) => {
   const mesure = mesurerCouverture(db, DEPARTEMENT);
   assert.equal(mesure.avecEmail, 1, "un arbitrage humain doit se voir dans la mesure");
 });
+
+test("un rejet en revue fait bouger le meme chiffre partout", async (t) => {
+  // La CLI recalculait son propre taux, sans le filtre sur les contacts rejetes : des
+  // qu'un humain arbitrait, `annuaire run` et l'ecran de synthese annoncaient deux
+  // valeurs differentes pour la meme base — sur la metrique que le §8 designe comme
+  // celle qui fera le README.
+  const db = await corpus(t, () => true);
+  const avant = mesurerCouverture(db, DEPARTEMENT);
+  assert.ok(avant.avecEmail > 0, "le corpus doit partir d'une couverture non nulle");
+
+  db.prepare("UPDATE contact SET review_statut = 'rejete' WHERE kind = 'email'").run();
+  const apres = mesurerCouverture(db, DEPARTEMENT);
+
+  assert.equal(apres.avecEmail, 0, "un contact rejete ne couvre plus rien");
+  assert.equal(apres.avecEmailJoignable, 0);
+});
+
+test("le numerateur qualifie suit la borne de dormance", async (t) => {
+  const db = await corpus(t, () => true);
+  const sansBorne = mesurerCouverture(db, DEPARTEMENT);
+  assert.equal(sansBorne.avecEmailNonDormantes, undefined, "sans borne, pas de taux qualifie");
+
+  // Sans date de declaration, une association ne peut pas etre dite non dormante :
+  // c'est le comportement de l'ADR-013, et il vaut aussi bien ici que dans la CLI.
+  assert.equal(mesurerCouverture(db, DEPARTEMENT, "1900-01-01").avecEmailNonDormantes, 0);
+
+  db.prepare("UPDATE association SET date_declaration = '2025-06-01'").run();
+  const large = mesurerCouverture(db, DEPARTEMENT, "1900-01-01");
+  assert.equal(large.avecEmailNonDormantes, large.avecEmail, "une borne ancienne ne retire personne");
+
+  const stricte = mesurerCouverture(db, DEPARTEMENT, "2999-01-01");
+  assert.equal(stricte.avecEmailNonDormantes, 0, "une borne future ne laisse personne");
+});

@@ -579,4 +579,111 @@ CREATE INDEX idx_contact_a_revoir
 ALTER TABLE run ADD COLUMN phase TEXT;
 `,
   },
+  {
+    version: 8,
+    name: "provenance-complete-de-la-commune",
+    sql: `
+--------------------------------------------------------------------------------
+-- Provenance de la resolution : les quatre elements, pas deux
+--------------------------------------------------------------------------------
+
+-- Les triggers de la migration 2 ne controlaient que l'URL source et l'horodatage.
+-- L'invariant 5 en demande quatre : « URL source, horodatage, methode d'extraction,
+-- score de confiance ». La methode (source_resolution) et le score (resolution_confiance)
+-- existaient en colonnes, et le code les renseignait toujours — mais par discipline
+-- applicative, ce que le CLAUDE.md interdit explicitement pour cet invariant : c'est la
+-- base qui doit refuser, pas l'applicatif qui doit penser.
+--
+-- Un trigger se remplace ; la migration 2 n'est pas touchee, et une base deja migree
+-- recoit simplement la version complete.
+
+DROP TRIGGER commune_resolution_provenance_insert;
+DROP TRIGGER commune_resolution_provenance_update;
+
+CREATE TRIGGER commune_resolution_provenance_insert
+BEFORE INSERT ON commune
+WHEN NEW.statut_resolution = 'resolue'
+ AND (NEW.url_mairie IS NULL
+   OR NEW.resolution_source_url IS NULL
+   OR NEW.resolution_collected_at IS NULL
+   OR NEW.source_resolution IS NULL
+   OR NEW.resolution_confiance IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'commune resolue sans provenance complete');
+END;
+
+CREATE TRIGGER commune_resolution_provenance_update
+BEFORE UPDATE ON commune
+WHEN NEW.statut_resolution = 'resolue'
+ AND (NEW.url_mairie IS NULL
+   OR NEW.resolution_source_url IS NULL
+   OR NEW.resolution_collected_at IS NULL
+   OR NEW.source_resolution IS NULL
+   OR NEW.resolution_confiance IS NULL)
+BEGIN
+  SELECT RAISE(ABORT, 'commune resolue sans provenance complete');
+END;
+`,
+  },
+  {
+    version: 9,
+    name: "url-finale-de-la-page",
+    sql: `
+--------------------------------------------------------------------------------
+-- L'URL reellement atteinte, distincte de celle qui a ete demandee
+--------------------------------------------------------------------------------
+
+-- La provenance d'un contact (§4.5) doit nommer la page qui porte la donnee, donc l'URL
+-- d'arrivee et non celle de depart : apres redirection, la premiere ne contient rien de
+-- ce qu'on lui attribue. Mais \`page.url\` est la cle de planification — elle porte
+-- l'index unique par campagne, et c'est elle qui rend le crawl reprenable —, elle ne
+-- peut donc pas changer de sens.
+--
+-- D'ou cette colonne. Elle vaut \`url\` quand il n'y a pas eu de redirection, et la
+-- normalisation joint desormais sur \`coalesce(final_url, url)\` : les lignes ecrites
+-- avant cette migration continuent de se rattacher par \`url\`, sans reprise de donnees.
+ALTER TABLE page ADD COLUMN final_url TEXT;
+`,
+  },
+  {
+    version: 10,
+    name: "liste-d-exclusion",
+    sql: `
+--------------------------------------------------------------------------------
+-- Droit d'opposition et d'effacement : ce qui ne doit plus jamais entrer
+--------------------------------------------------------------------------------
+
+-- L'outil produit un fichier de donnees personnelles collectees indirectement. Son
+-- utilisateur est responsable de traitement, et devra honorer des demandes d'opposition
+-- (art. 21) et d'effacement (art. 17). Jusqu'ici il ne le pouvait pas : « rejeter » en
+-- revue n'ecrit qu'un \`review_statut\`, que l'option \`--avec-rejetes\` remet dans le CSV,
+-- et le run suivant recollecte l'adresse.
+--
+-- D'ou cette table, et non une simple suppression. Supprimer une ligne ne survit pas a
+-- la campagne suivante : sans trace de l'opposition, le crawl la retrouve et la reecrit.
+-- L'exclusion est donc l'objet durable, et la suppression n'en est que la consequence
+-- immediate.
+--
+-- Ce n'est pas une liste noire de collecte : elle ne dit pas ou l'outil a le droit
+-- d'aller — robots.txt seul en decide (§4.2) — mais ce qu'il n'a pas le droit de
+-- **retenir**. Voir docs/adr/026-droit-a-l-effacement.md.
+
+CREATE TABLE exclusion (
+  id         INTEGER PRIMARY KEY,
+  -- 'contact' : une valeur normalisee precise. 'domaine' : tout ce qui vient d'un
+  -- domaine de messagerie. 'commune' : tout ce qui est rattache a un code INSEE.
+  portee     TEXT NOT NULL CHECK (portee IN ('contact', 'domaine', 'commune')),
+  valeur     TEXT NOT NULL,
+  -- Le motif est obligatoire : un responsable de traitement doit pouvoir dire au nom de
+  -- quoi il a efface, et le prouver.
+  motif      TEXT NOT NULL,
+  origine    TEXT NOT NULL CHECK (origine IN ('cli', 'revue')),
+  created_at TEXT NOT NULL,
+  UNIQUE (portee, valeur)
+) STRICT;
+
+-- La consultation a lieu a chaque ecriture de contact : elle doit etre gratuite.
+CREATE INDEX idx_exclusion_portee_valeur ON exclusion (portee, valeur);
+`,
+  },
 ];

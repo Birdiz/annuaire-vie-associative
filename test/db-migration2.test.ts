@@ -30,7 +30,7 @@ test("une commune resolue sans provenance est refusee par la base", (t) => {
     () =>
       db
         .prepare("UPDATE commune SET statut_resolution = 'resolue', url_mairie = ? WHERE code_insee = '35001'")
-        .run("https://mairie.fr"),
+        .run("https://mairie.example"),
     /provenance/,
   );
 });
@@ -57,7 +57,7 @@ test("l'insertion directe d'une commune resolue sans provenance est refusee", (t
       db
         .prepare(
           "INSERT INTO commune (code_insee, nom, departement, statut_resolution, url_mairie, created_at, updated_at) " +
-            "VALUES ('35003', 'X', '35', 'resolue', 'https://x.fr', 't', 't')",
+            "VALUES ('35003', 'X', '35', 'resolue', 'https://x.example', 't', 't')",
         )
         .run(),
     /provenance/,
@@ -69,8 +69,9 @@ test("une commune resolue avec provenance complete est acceptee", (t) => {
   insererCommune(db, "35004");
   db.prepare(
     "UPDATE commune SET statut_resolution = 'resolue', url_mairie = ?, resolution_source_url = ?, " +
-      "resolution_collected_at = ?, resolution_confiance = 1.0 WHERE code_insee = '35004'",
-  ).run("https://mairie.fr", "https://source.fr/dump", "2026-08-18T00:00:00.000Z");
+      "resolution_collected_at = ?, source_resolution = 'annuaire', resolution_confiance = 1.0 " +
+      "WHERE code_insee = '35004'",
+  ).run("https://mairie.example", "https://source.example/dump", "2026-08-18T00:00:00.000Z");
   const ligne = db.prepare("SELECT statut_resolution, resolution_confiance FROM commune WHERE code_insee = '35004'").get();
   assert.equal(ligne?.statut_resolution, "resolue");
 });
@@ -86,19 +87,19 @@ test("une commune sans site n'exige aucune provenance", (t) => {
 test("un seul dump en cours par source", (t) => {
   const db = base(t);
   const inserer = db.prepare("INSERT INTO dump (source, url, started_at) VALUES (?, ?, 't')");
-  inserer.run("rna_waldec", "https://exemple.fr/waldec.csv");
-  assert.throws(() => inserer.run("rna_waldec", "https://exemple.fr/waldec.csv"), /UNIQUE/);
+  inserer.run("rna_waldec", "https://exemple.example/waldec.csv");
+  assert.throws(() => inserer.run("rna_waldec", "https://exemple.example/waldec.csv"), /UNIQUE/);
   // Une autre source reste possible, et un dump termine ne bloque plus.
-  inserer.run("annuaire_local", "https://exemple.fr/local.json");
+  inserer.run("annuaire_local", "https://exemple.example/local.json");
   db.prepare("UPDATE dump SET statut = 'termine' WHERE source = 'rna_waldec'").run();
-  inserer.run("rna_waldec", "https://exemple.fr/waldec.csv");
+  inserer.run("rna_waldec", "https://exemple.example/waldec.csv");
   const compte = db.prepare("SELECT count(*) AS n FROM dump WHERE source = 'rna_waldec'").get();
   assert.equal(compte?.n, 2);
 });
 
 test("un offset de reprise negatif est refuse", (t) => {
   const db = base(t);
-  db.prepare("INSERT INTO dump (source, url, started_at) VALUES ('rna_import', 'https://x.fr', 't')").run();
+  db.prepare("INSERT INTO dump (source, url, started_at) VALUES ('rna_import', 'https://x.example', 't')").run();
   assert.throws(() => db.prepare("UPDATE dump SET consumed_bytes = -1 WHERE source = 'rna_import'").run(), /CHECK/);
 });
 

@@ -7,6 +7,7 @@ import {
   requireContactUrl,
   writeConfigTemplate,
   ecrireContactUrl,
+  validerContactUrl,
   ConfigError,
 } from "../src/config.ts";
 import { makeTempDir } from "./helpers/tmp.ts";
@@ -36,14 +37,14 @@ test("requireContactUrl echoue tant que l'URL de contact manque", (t) => {
   assert.throws(() => requireContactUrl(config), ConfigError);
 
   const ok = loadConfig(join(makeTempDir(t), "absent.json"), {
-    ANNUAIRE_CONTACT_URL: "https://exemple.fr/contact",
+    ANNUAIRE_CONTACT_URL: "https://exemple.example/contact",
   });
-  assert.equal(requireContactUrl(ok), "https://exemple.fr/contact");
+  assert.equal(requireContactUrl(ok), "https://exemple.example/contact");
 });
 
 test("une URL de contact non absolue ou non http est refusee", (t) => {
   const dir = makeTempDir(t);
-  for (const value of ["pas-une-url", "ftp://exemple.fr", "mailto:a@b.fr"]) {
+  for (const value of ["pas-une-url", "ftp://exemple.example", "mailto:a@b.example"]) {
     assert.throws(
       () => loadConfig(writeConfig(dir, { contactUrl: value }), {}),
       ConfigError,
@@ -115,23 +116,23 @@ test("ecrire l'URL de contact preserve le reste du fichier", (t) => {
   const file = join(makeTempDir(t), "config.json");
   writeConfigTemplate(file);
 
-  const resultat = ecrireContactUrl(file, "  https://exemple.fr/nous-ecrire  ");
+  const resultat = ecrireContactUrl(file, "  https://exemple.example/nous-ecrire  ");
 
-  assert.deepEqual(resultat, { url: "https://exemple.fr/nous-ecrire" });
+  assert.deepEqual(resultat, { url: "https://exemple.example/nous-ecrire" });
   const relu = JSON.parse(readFileSync(file, "utf8")) as Record<string, unknown>;
-  assert.equal(relu["contactUrl"], "https://exemple.fr/nous-ecrire");
+  assert.equal(relu["contactUrl"], "https://exemple.example/nous-ecrire");
   assert.ok(Array.isArray(relu["_aide"]), "l'aide du gabarit ne doit pas disparaitre");
   assert.deepEqual(relu["llm"], { provider: "none" });
-  assert.equal(loadConfig(file, {}).contactUrl, "https://exemple.fr/nous-ecrire");
+  assert.equal(loadConfig(file, {}).contactUrl, "https://exemple.example/nous-ecrire");
 });
 
 test("ecrire l'URL de contact cree le fichier quand il n'existe pas encore", (t) => {
   const file = join(makeTempDir(t), "config.json");
 
-  assert.deepEqual(ecrireContactUrl(file, "https://exemple.fr/contact"), {
-    url: "https://exemple.fr/contact",
+  assert.deepEqual(ecrireContactUrl(file, "https://exemple.example/contact"), {
+    url: "https://exemple.example/contact",
   });
-  assert.equal(loadConfig(file, {}).contactUrl, "https://exemple.fr/contact");
+  assert.equal(loadConfig(file, {}).contactUrl, "https://exemple.example/contact");
 });
 
 test("une URL de contact invalide est refusee sans toucher au fichier", (t) => {
@@ -141,9 +142,35 @@ test("une URL de contact invalide est refusee sans toucher au fichier", (t) => {
 
   // Le meme controle que le chargement : un User-Agent qui ne mene nulle part vaut un
   // User-Agent anonyme, que le §4.4 interdit.
-  for (const saisie of ["mairie-de-bruzou", "ftp://exemple.fr/contact", ""]) {
+  for (const saisie of ["mairie-de-bruzou", "ftp://exemple.example/contact", ""]) {
     const resultat = ecrireContactUrl(file, saisie);
     assert.ok("erreur" in resultat, saisie);
   }
   assert.equal(readFileSync(file, "utf8"), avant);
+});
+
+test("INVARIANT §4.4 : une URL de contact qui ne mene nulle part est refusee", () => {
+  // Le controle ne portait que sur la forme absolue et le schema. Une adresse locale
+  // rendait le User-Agent syntaxiquement conforme et fonctionnellement anonyme, ce qui
+  // vide l'invariant de son objet : personne ne peut ecrire a « http://localhost ».
+  for (const valeur of [
+    "http://localhost",
+    "http://localhost:8080/contact",
+    "http://127.0.0.1/contact",
+    "https://192.168.1.10/contact",
+    "https://10.0.0.5/",
+    "https://172.16.3.1/",
+    "http://intranet",
+    "http://[::1]/",
+  ]) {
+    const resultat = validerContactUrl(valeur);
+    assert.ok("erreur" in resultat, `${valeur} aurait du etre refusee`);
+  }
+});
+
+test("une URL de contact publique reste acceptee", () => {
+  for (const valeur of ["https://mairie-bruz.example/contact", "http://exemple.example", "https://93.184.216.34/x"]) {
+    const resultat = validerContactUrl(valeur);
+    assert.ok("url" in resultat, `${valeur} aurait du etre acceptee`);
+  }
 });

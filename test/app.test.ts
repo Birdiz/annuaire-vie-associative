@@ -23,12 +23,12 @@ test("sans URL de contact, aucun client n'existe — et il apparait des qu'elle 
   const app = application(t);
   assert.equal(app.client, undefined, "un client sans URL de contact emettrait des requetes anonymes");
 
-  const resultat = app.configurerContactUrl("https://exemple.fr/contact");
+  const resultat = app.configurerContactUrl("https://exemple.example/contact");
 
-  assert.deepEqual(resultat, { url: "https://exemple.fr/contact" });
+  assert.deepEqual(resultat, { url: "https://exemple.example/contact" });
   assert.notEqual(app.client, undefined);
-  assert.equal(app.config.contactUrl, "https://exemple.fr/contact");
-  assert.match(readFileSync(app.paths.configFile, "utf8"), /exemple\.fr/);
+  assert.equal(app.config.contactUrl, "https://exemple.example/contact");
+  assert.match(readFileSync(app.paths.configFile, "utf8"), /exemple\.example/);
 });
 
 test("une saisie invalide ne cree pas de client et n'ecrit rien", (t) => {
@@ -42,11 +42,11 @@ test("une saisie invalide ne cree pas de client et n'ecrit rien", (t) => {
 });
 
 test("la variable d'environnement l'emporte, et le dire vaut mieux qu'ecrire pour rien", (t) => {
-  const app = application(t, { ANNUAIRE_CONTACT_URL: "https://exemple.fr/depuis-l-environnement" });
+  const app = application(t, { ANNUAIRE_CONTACT_URL: "https://exemple.example/depuis-l-environnement" });
 
-  const resultat = app.configurerContactUrl("https://exemple.fr/depuis-l-ecran");
+  const resultat = app.configurerContactUrl("https://exemple.example/depuis-l-ecran");
 
   assert.ok("erreur" in resultat);
   assert.match(resultat.erreur, /ANNUAIRE_CONTACT_URL/);
-  assert.equal(app.config.contactUrl, "https://exemple.fr/depuis-l-environnement");
+  assert.equal(app.config.contactUrl, "https://exemple.example/depuis-l-environnement");
 });

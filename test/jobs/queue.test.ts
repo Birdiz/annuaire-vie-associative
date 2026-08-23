@@ -166,7 +166,7 @@ test("un job planifie dans le futur n'est pas pris avant l'heure", (t) => {
 
 test("le payload fait l'aller-retour intact", (t) => {
   const { queue } = setup(t);
-  const payload = { url: "https://exemple.fr/a?b=1", profondeur: 2, tags: ["associ", "sport"] };
+  const payload = { url: "https://exemple.example/a?b=1", profondeur: 2, tags: ["associ", "sport"] };
   queue.enqueue("fetch", "payload", payload);
   assert.deepEqual(queue.lease(LEASE_MS)?.payload, payload);
 });

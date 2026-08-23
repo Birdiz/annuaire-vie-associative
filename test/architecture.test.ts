@@ -43,6 +43,28 @@ function codeEffectif(source: string): string {
  */
 const PORTE_ENTREE = join("src", "ui", "serveur.ts");
 
+/**
+ * Specifieurs importes par un module, quelle que soit la forme : `import ... from`,
+ * `import(...)` dynamique, `require(...)`.
+ *
+ * Comparer la source a la chaine `"node:dns"` — guillemets compris — etait le trou le
+ * plus serieux de ce fichier : `import dns from "node:dns/promises"` ne la contient pas,
+ * et c'est precisement le module de la seconde porte de sortie (ADR-017). On extrait
+ * donc le specifieur, et on le compare au module **et a son prefixe de sous-chemin**.
+ */
+function specifieursImportes(source: string): string[] {
+  const trouves: string[] = [];
+  const motif = /(?:\bfrom|\bimport|\brequire)\s*\(?\s*["']([^"']+)["']/g;
+  for (const trouve of source.matchAll(motif)) {
+    if (trouve[1] !== undefined) trouves.push(trouve[1]);
+  }
+  return trouves;
+}
+
+function importe(source: string, module: string): boolean {
+  return specifieursImportes(source).some((spec) => spec === module || spec.startsWith(`${module}/`));
+}
+
 test("aucun module hors de src/http n'emet de requete reseau", () => {
   const interdits: { fichier: string; motif: string }[] = [];
 
@@ -59,16 +81,34 @@ test("aucun module hors de src/http n'emet de requete reseau", () => {
 
     if (fetchGlobal.test(code)) interdits.push({ fichier: relatif, motif: "appel au fetch global" });
 
+    // Le lookbehind ci-dessus laisse passer `client.fetch(...)`, ce qui est voulu — mais
+    // il laissait passer `globalThis.fetch(...)` du meme geste, soit la porte de sortie
+    // contournee en un mot.
+    for (const detour of [/\bglobalThis\s*\.\s*fetch\b/, /\bglobalThis\s*\[\s*""\s*\]/]) {
+      if (detour.test(code)) interdits.push({ fichier: relatif, motif: "acces indirect a fetch" });
+    }
+
     // `node:dns` est entre dans cette liste au lot 5 : la resolution MX de l'etape [7]
     // est une seconde sortie reseau, et elle doit rester dans src/http/ pour la meme
     // raison que la premiere — un seul endroit ou l'on sait ce qui part de la machine.
-    for (const module of ["node:http", "node:https", "node:net", "node:tls", "node:dns", "undici"]) {
+    // `node:http2` et `node:dgram` manquaient : `http2.connect()` sort tout autant sur
+    // Internet, et passait le test comme le garde-fou de la suite.
+    for (const module of [
+      "node:http",
+      "node:https",
+      "node:http2",
+      "node:net",
+      "node:tls",
+      "node:dns",
+      "node:dgram",
+      "undici",
+    ]) {
       // Seule exception, et elle est nominative : la porte d'entree a besoin de
       // `node:http` pour ecouter. Le test suivant verifie qu'elle ne s'en sert pas pour
       // appeler. Une allowlist d'un seul fichier reste une allowlist : y ajouter une
       // seconde ligne devrait couter la meme discussion que la premiere.
       if (relatif === PORTE_ENTREE && module === "node:http") continue;
-      if (source.includes(`"${module}"`) || source.includes(`'${module}'`)) {
+      if (importe(source, module)) {
         interdits.push({ fichier: relatif, motif: `import de ${module}` });
       }
     }
@@ -82,6 +122,66 @@ test("aucun module hors de src/http n'emet de requete reseau", () => {
   );
 });
 
+test("INVARIANT §4.3 : le plancher de deux secondes ne se parametre pas depuis src/", () => {
+  // `DomainThrottle` accepte `minDelayMs`, et son commentaire dit que c'est « pour les
+  // tests ». Un commentaire n'empeche rien : `new DomainThrottle({ minDelayMs: 200 })`
+  // dans src/app.ts laissait les 460 tests verts. Idem pour `fetchImpl`, qui permettrait
+  // de court-circuiter la porte de sortie sans jamais l'importer.
+  for (const fichier of fichiersSource(SRC)) {
+    const code = codeEffectif(readFileSync(fichier, "utf8"));
+    const relatif = relative(RACINE, fichier);
+    assert.doesNotMatch(
+      code,
+      /new\s+DomainThrottle\s*\(\s*\{/,
+      `${relatif} : le delai entre requetes est un invariant, il ne se passe pas au constructeur`,
+    );
+    assert.doesNotMatch(
+      code,
+      /fetchImpl\s*:/,
+      `${relatif} : l'implementation de fetch n'est substituable que depuis les tests`,
+    );
+  }
+});
+
+test("le detecteur d'imports reseau attrape toutes les formes", () => {
+  // Ce detecteur est le seul gardien de la porte de sortie ; il n'etait teste sur rien.
+  const formes = [
+    'import dns from "node:dns/promises";',
+    "const h = await import('node:https');",
+    'const n = require("node:net");',
+    'import { connect } from "node:http2";',
+    "import dgram from 'node:dgram';",
+  ];
+  for (const forme of formes) {
+    const module = /["']([^"']+)["']/.exec(forme)?.[1]?.split("/")[0] ?? "";
+    const racine = forme.includes("node:dns") ? "node:dns" : module;
+    assert.ok(importe(forme, racine), `forme non detectee : ${forme}`);
+  }
+  assert.equal(importe('import { x } from "./voisin.ts";', "node:net"), false);
+});
+
+test("tout sous-processus de la suite precharge le garde-fou anti-reseau", () => {
+  // `npm test` precharge `pas-de-reseau.ts`, mais un `spawn` ouvre un processus neuf qui
+  // n'en herite pas. Deux fichiers l'avaient oublie ; les fixtures visees ne sortaient
+  // pas sur le reseau, mais c'etait une propriete du moment, ecrite nulle part. Ce test
+  // est ce qui empeche le prochain oubli.
+  const manquants: string[] = [];
+  for (const fichier of fichiersSource(join(RACINE, "test"))) {
+    const relatif = relative(RACINE, fichier);
+    const code = codeEffectif(readFileSync(fichier, "utf8"));
+    if (!/\b(?:spawn|fork|execFile)\s*\(/.test(code)) continue;
+    // La chaine du chemin disparait avec `codeEffectif` : on relit la source brute.
+    const source = readFileSync(fichier, "utf8");
+    if (!source.includes("pas-de-reseau.ts")) manquants.push(relatif);
+  }
+
+  assert.deepEqual(
+    manquants,
+    [],
+    "Un sous-processus qui ne precharge pas test/helpers/pas-de-reseau.ts peut sortir sur Internet.",
+  );
+});
+
 test("la porte d'entree ecoute, et n'appelle jamais", () => {
   const code = codeEffectif(readFileSync(join(RACINE, PORTE_ENTREE), "utf8"));
 
@@ -89,6 +189,13 @@ test("la porte d'entree ecoute, et n'appelle jamais", () => {
   // emettraient une requete sortante hors de src/http/, donc sans robots.txt, sans
   // throttle et sans User-Agent identifiable.
   assert.match(code, /createServer/, "la porte d'entree doit servir a ecouter");
+  // La destructuration echappait aux motifs : `const { get, request } = http;` puis
+  // `get(url)` n'est ni `http.get(` ni `request(`.
+  assert.doesNotMatch(
+    code,
+    /\{[^}]*\b(?:get|request)\b[^}]*\}\s*=\s*\w*http/,
+    "src/ui/serveur.ts ne doit pas extraire de client de node:http",
+  );
   for (const interdit of [/\brequest\s*\(/, /\bhttp\.get\s*\(/, /(?<![.\w#])fetch\s*\(/]) {
     assert.doesNotMatch(
       code,
@@ -110,10 +217,12 @@ test("un seul module lance un processus, et jamais a travers un shell", () => {
 
   for (const fichier of fichiersSource(SRC)) {
     const relatif = relative(RACINE, fichier);
-    if (relatif === PORTE_PROCESSUS) continue;
     const source = readFileSync(fichier, "utf8");
     for (const module of ["node:child_process", "node:worker_threads"]) {
-      if (source.includes(`"${module}"`) || source.includes(`'${module}'`)) {
+      // L'exemption est nominative **par module**, et non par fichier : sauter le
+      // fichier entier laissait la porte importer `node:worker_threads` sans etre vue.
+      if (relatif === PORTE_PROCESSUS && module === "node:child_process") continue;
+      if (importe(source, module)) {
         interdits.push(`${relatif} importe ${module}`);
       }
     }
@@ -241,6 +350,9 @@ test("aucune adresse d'infrastructure de l'editeur n'est codee en dur", () => {
     // definie juste au-dessus dans le meme fichier. L'entree est nominative pour que
     // l'exception reste visible — elle ne couvre pas une interpolation quelconque.
     "http://${ADRESSE_ECOUTE}",
+    // Ces trois-la decrivent ce que `src/` contient — des exemples imprimes a
+    // l'utilisateur, jamais des cibles de requete. Elles ne suivent donc pas le
+    // renommage du corpus de test vers `.example`.
     "https://exemple.fr",
     "https://mairie",
     "https://a.fr",

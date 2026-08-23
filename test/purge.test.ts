@@ -24,8 +24,8 @@ function ajouterContact(db: ReturnType<typeof openDatabase>, codeInsee: string, 
   db.prepare(
     `INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, source_url,
                           methode_extraction, confiance, collected_at)
-     VALUES (?, 'email', ?, ?, 'https://mairie.fr/a', 'dom:mailto', 0.8, ?)`,
-  ).run(codeInsee, `c${collectedAt}@x.fr`, `c${collectedAt}@x.fr`, toIso(collectedAt));
+     VALUES (?, 'email', ?, ?, 'https://mairie.example/a', 'dom:mailto', 0.8, ?)`,
+  ).run(codeInsee, `c${collectedAt}@x.example`, `c${collectedAt}@x.example`, toIso(collectedAt));
 }
 
 function ajouterCommune(db: ReturnType<typeof openDatabase>, codeInsee: string): void {
@@ -84,16 +84,16 @@ test("les pages anciennes et le HTML brut correspondant partent ensemble", (t) =
   const vieux = cutoffFor(MAINTENANT) - JOUR;
   const inserer = db.prepare(
     `INSERT INTO page (url_hash, campagne, url, domaine, planifiee_at, fetched_at)
-     VALUES (?, 'c', ?, 'a.fr', ?, ?)`,
+     VALUES (?, 'c', ?, 'a.example', ?, ?)`,
   );
-  inserer.run("h1", "https://a.fr/1", toIso(vieux), toIso(vieux));
-  inserer.run("h2", "https://a.fr/2", toIso(MAINTENANT), toIso(MAINTENANT));
+  inserer.run("h1", "https://a.example/1", toIso(vieux), toIso(vieux));
+  inserer.run("h2", "https://a.example/2", toIso(MAINTENANT), toIso(MAINTENANT));
   // Planifiee il y a plus de trois ans et jamais visitee : sans date de recuperation,
   // c'est la date d'enfilement qui la rend purgeable. Sinon elle consommerait le
   // budget de sa commune indefiniment.
-  inserer.run("h3", "https://a.fr/3", toIso(vieux), null);
+  inserer.run("h3", "https://a.example/3", toIso(vieux), null);
   // Planifiee aujourd'hui et pas encore visitee : elle reste.
-  inserer.run("h4", "https://a.fr/4", toIso(MAINTENANT), null);
+  inserer.run("h4", "https://a.example/4", toIso(MAINTENANT), null);
 
   const resultat = purge(db, cache, clock, counters);
 

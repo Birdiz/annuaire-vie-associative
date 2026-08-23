@@ -11,6 +11,11 @@ import { makeTempDir } from "../helpers/tmp.ts";
 const WORKER = fileURLToPath(new URL("../fixtures/crash-worker.ts", import.meta.url));
 const NB_JOBS = 20;
 const LEASE_MS = 800;
+// Le garde-fou anti-reseau vit dans le processus de test ; celui-ci s'execute a part, il
+// doit donc le precharger a son tour. La fixture ne sort pas sur le reseau aujourd'hui,
+// mais c'est une propriete du moment : rien ne l'empeche d'evoluer, et l'exception
+// n'etait ecrite nulle part ou elle aurait ete tenue.
+const GARDE_RESEAU = fileURLToPath(new URL("../helpers/pas-de-reseau.ts", import.meta.url));
 
 type Run = { code: number | null; signal: NodeJS.Signals | null; stderr: string };
 
@@ -18,7 +23,7 @@ function runWorker(dbFile: string, killAfterJobs: number, killAfterMs: number): 
   return new Promise((resolve, reject) => {
     const child = spawn(
       process.execPath,
-      [WORKER, dbFile, String(killAfterJobs), String(killAfterMs), String(LEASE_MS), "4"],
+      ["--import", GARDE_RESEAU, WORKER, dbFile, String(killAfterJobs), String(killAfterMs), String(LEASE_MS), "4"],
       { stdio: ["ignore", "pipe", "pipe"] },
     );
     let stderr = "";

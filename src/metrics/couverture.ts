@@ -28,6 +28,16 @@ export type Couverture = {
   avecEmailExploitable: number;
   /** ... dont le domaine annonce un MX (ADR-017). */
   avecEmailJoignable: number;
+  /**
+   * Numerateur du taux qualifie de l'ADR-013 — actives non dormantes creditees d'au
+   * moins un email. `undefined` quand aucune borne de dormance n'est fournie.
+   *
+   * Il vit ici et non dans `cli.ts` pour une raison de fond : la CLI en tenait sa propre
+   * requete, sans le filtre sur les contacts rejetes en revue. Des qu'un humain
+   * arbitrait, `annuaire run` et l'ecran de synthese annoncaient deux taux differents
+   * pour la meme base — sur la metrique que le §8 designe comme celle qui fera le README.
+   */
+  avecEmailNonDormantes: number | undefined;
 };
 
 const SQL_ACTIVES =
@@ -42,14 +52,18 @@ const SQL_AVEC_EMAIL =
   "  ON d.domaine = substr(ct.valeur_normalisee, instr(ct.valeur_normalisee, '@') + 1) " +
   "WHERE c.departement = ? AND a.date_dissolution IS NULL AND ct.review_statut <> 'rejete'";
 
-export function mesurerCouverture(db: Database, departement: string): Couverture {
-  const un = (sql: string): number =>
-    Number((db.prepare(sql).get(departement) as { n?: number } | undefined)?.n ?? 0);
+export function mesurerCouverture(db: Database, departement: string, borneDormance?: string): Couverture {
+  const un = (sql: string, ...extra: readonly string[]): number =>
+    Number((db.prepare(sql).get(departement, ...extra) as { n?: number } | undefined)?.n ?? 0);
 
   return {
     departement,
     actives: un(SQL_ACTIVES),
     avecEmail: un(SQL_AVEC_EMAIL),
+    avecEmailNonDormantes:
+      borneDormance === undefined
+        ? undefined
+        : un(`${SQL_AVEC_EMAIL} AND a.date_declaration >= ?`, borneDormance),
     // `coalesce(score, 1)` : un contact jamais note n'est pas un contact invalide. Le
     // condamner ici ferait baisser la couverture au seul motif que la normalisation
     // n'est pas encore passee.
