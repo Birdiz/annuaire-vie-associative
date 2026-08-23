@@ -16,7 +16,15 @@ l'editeur en position de simple fournisseur d'outil au sens du RGPD.
 **Toute proposition d'architecture qui centralise la collecte est a rejeter.**
 
 Trois cibles de distribution depuis une base unique : executable Windows portable,
-image Docker, `npx`.
+image Docker, `npx`. Depuis le lot 7, elles emballent toutes **le meme bundle** :
+`npm run build` produit `dist/annuaire.cjs` et les fichiers statiques a cote (ADR-022).
+Deux consequences contraignent le code : le bundle est du **CommonJS**, donc aucun `await`
+de premier niveau dans `src/` — c'est pour cela que le point d'entree `src/bin.ts` appelle
+`main()` en `.then()` — et le paquet npm ne peut embarquer aucun TypeScript, Node refusant
+d'en retirer les types sous `node_modules`. Des tests d'architecture tiennent ces regles.
+
+L'image Docker sert le pipeline, pas l'interface : dans un conteneur, `127.0.0.1` est la
+boucle locale du conteneur, et l'adresse d'ecoute n'est pas negociable (ADR-023).
 
 ## Invariants — non negociables
 
@@ -64,7 +72,7 @@ doit echouer au niveau de la base, pas etre evite par de la logique applicative.
 | D5 | UI : `node:http` + htmx + CSS ecrit a la main | Applique au lot 6 : htmx vendorise, 50 Ko (ADR-020) |
 | D6 | Parseur DOM : `node-html-parser` | Applique au lot 3 : 11 paquets, 3,0 Mo (ADR-011) |
 | D7 | Tests : `node:test` + `node:assert` | Zero dependance de test |
-| D8 | Build : aucun pour le dev, `esbuild` (devDep) pour le SEA | Node 24 execute le TS nativement |
+| D8 | Build : aucun pour le dev, un bundle unique pour emballer | Applique au lot 7 : `esbuild` + `postject` en devDep (ADR-022) |
 | D9 | Config validee a la main | Pas de `zod` |
 | D11 | Migrations SQL numerotees | Pas d'ORM |
 
@@ -138,6 +146,8 @@ npm run check      # typecheck strict + suite complete, sans reseau
 npm test           # tests seuls
 npm run annuaire -- <commande>
 npm run annuaire -- ui        # interface locale : suivi, revue, export
+npm run build      # bundle unique : dist/annuaire.cjs + dist/assets/
+npm run build:sea  # executable Windows (telecharge node.exe, empreinte verifiee)
 ```
 
 ## Mode de travail attendu

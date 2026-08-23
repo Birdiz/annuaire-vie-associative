@@ -14,8 +14,8 @@ tiers partent de la machine de l'utilisateur, jamais d'une infrastructure opér�
 
 ## État d'avancement
 
-Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Six lots ont
-été livrés :
+Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief.md)). Sept lots ont
+été livrés, et le brief est couvert de bout en bout :
 
 | Étape | | Statut |
 |---|---|---|
@@ -28,6 +28,7 @@ Le pipeline est un entonnoir de coût en huit étages (§6 du [brief](docs/brief
 | [7] Normalisation | déduplication, validation syntaxique + MX, classification | ✅ lot 5 |
 | [8] Scoring | score de publiabilité par contact | ✅ lot 5 |
 | — Interface | suivi de run, revue humaine, export | ✅ lot 6 |
+| — Emballage | `npx`, image Docker, exécutable Windows | ✅ lot 7 |
 
 L'étage [6] est écarté : la mesure du lot 4 lui a retiré sa justification
 ([ADR-015](docs/adr/015-temporalite-rna-et-dormance.md)). Le pipeline est complet et mesurable sans
@@ -54,12 +55,19 @@ Lot 6 : le score du lot 5 trouve enfin son destinataire. Une **interface locale*
 présente les contacts **les moins sûrs d'abord** avec le détail de ce qui a fait baisser leur note,
 et l'export. Un humain peut valider, rejeter, ou **corriger** une valeur : la valeur lue reste en
 base à côté de la correction, et c'est l'étape [8] qui renote, pas l'écran. Les 138 adresses cassées
-par un CMS trouvées au lot 5 arrivent ainsi en tête de file. Il ne reste que le packaging.
+par un CMS trouvées au lot 5 arrivent ainsi en tête de file.
+
+Lot 7 : l'outil s'emballe. **Un seul bundle de 262 Ko** sert les trois cibles du brief — un paquet
+npm de 124 Ko, une image Docker de 163 Mo, et un exécutable Windows autonome de 88,5 Mo qui
+n'attend ni Node, ni installateur, ni droits d'administrateur. Le développement, lui, n'a toujours
+aucune étape de build : c'est l'emballage qui en a une
+([ADR-022](docs/adr/022-un-artefact-trois-emballages.md)).
 
 ## Prérequis
 
 **Node 24 ou plus**, et rien d'autre. Node exécute le TypeScript nativement : il n'y a aucune étape
-de build, ni pour le développement ni pour les tests.
+de build, ni pour le développement ni pour les tests. Seul l'emballage en a une, et elle n'entre
+pas dans l'artefact livré (`esbuild` et `postject`, en dépendances de développement).
 
 ```bash
 node --version
@@ -74,6 +82,57 @@ machine, dont l'empreinte SHA-256 est vérifiée par un test
 ```bash
 npm install
 ```
+
+## Installer
+
+Trois emballages, un seul artefact : le même bundle est exécuté par `npx`, copié dans l'image
+Docker et injecté dans l'exécutable Windows ([ADR-022](docs/adr/022-un-artefact-trois-emballages.md)).
+
+```bash
+npm run build
+```
+
+| Cible | Poids | Ce qu'elle demande |
+|---|---|---|
+| Paquet npm (`npx`) | 124 Ko | Node 24+ |
+| Image Docker | 163 Mo | Docker |
+| Exécutable Windows | 88,5 Mo | rien |
+
+**`npx` — essai rapide.** Le paquet n'est pas publié à ce jour : il s'installe depuis un tarball
+construit sur place, dans un projet quelconque.
+
+```bash
+npm pack && npm install ./annuaire-vie-associative-0.1.0.tgz && npx annuaire ui
+```
+
+**Docker — démo, CI, utilisateurs techniques.** L'image sert le pipeline, avec `/data` en volume :
+la base, le cache HTTP et les dumps survivent au conteneur.
+
+```bash
+docker build -t annuaire:0.1.0 . && docker run --rm -v annuaire:/data annuaire:0.1.0 run --departement 35
+```
+
+L'interface, elle, ne se publie pas par `-p` : elle n'écoute que sur `127.0.0.1`, qui dans un
+conteneur désigne la boucle locale **du conteneur**. Sous Linux, `docker run --network host` la
+rend joignable ; sous Docker Desktop (macOS, Windows), non — vérifié. Le plus simple reste alors de
+lancer le pipeline dans le conteneur et l'interface par `npx` sur le même répertoire de données :
+les deux process partagent la base sans se connaître
+([ADR-023](docs/adr/023-l-interface-et-le-conteneur.md)).
+
+**Exécutable Windows — client final non technique.** Un fichier, rien à installer.
+
+```bash
+npm run build:sea
+```
+
+Le script télécharge le `node.exe` officiel de la version de Node qui l'exécute, **vérifie son
+empreinte** contre le `SHASUMS256.txt` publié à côté, en retire la signature Authenticode — que
+l'injection invaliderait — puis y injecte le bundle et les fichiers de l'interface. C'est le seul
+script du dépôt qui sorte sur le réseau, et il le fait à la construction, jamais à l'exécution.
+
+Deux réserves, dites franchement : l'exécutable **n'est pas signé** (SmartScreen préviendra au
+premier lancement, le signer relève d'une décision d'éditeur), et il est produit ici depuis macOS —
+sa structure est vérifiée, **son lancement reste à valider sur un poste Windows**.
 
 ## Tester
 

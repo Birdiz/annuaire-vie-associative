@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import { makeTempDir } from "./helpers/tmp.ts";
 
-const CLI = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
+const CLI = fileURLToPath(new URL("../src/bin.ts", import.meta.url));
 // Le garde-fou anti-reseau vit dans le processus de test ; ces commandes s'executent
 // dans un sous-processus, qui doit donc le precharger a son tour.
 const GARDE_RESEAU = fileURLToPath(new URL("./helpers/pas-de-reseau.ts", import.meta.url));

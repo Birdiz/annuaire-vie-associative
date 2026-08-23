@@ -1,0 +1,15 @@
+# L'etage de construction n'a besoin que des sources : tout le reste alourdit le contexte
+# envoye au demon, sans rien apporter a l'image.
+.git
+.github
+.claude
+node_modules
+dist
+docs
+test
+README.md
+CLAUDE.md
+*.sqlite
+*.log
+data
+cache

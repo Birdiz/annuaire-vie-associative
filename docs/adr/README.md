@@ -28,3 +28,5 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [019](019-deduplication-et-score-de-revue.md) | Déduplication, et un score distinct de la confiance de lecture | Acceptée |
 | [020](020-porte-d-entree-locale.md) | Une porte d'entrée locale, et un fichier tiers embarqué | Acceptée |
 | [021](021-correction-en-revue.md) | Ce qu'un humain corrige, et ce que la base en fait | Acceptée |
+| [022](022-un-artefact-trois-emballages.md) | Un artefact, trois emballages | Acceptée |
+| [023](023-l-interface-et-le-conteneur.md) | L'interface et le conteneur | Acceptée |

@@ -1,4 +1,5 @@
-#!/usr/bin/env node
+// Surface de commandes de l'outil. Le point d'entree, lui, vit dans `bin.ts` : ce
+// module n'expose que `main`, ce qui le rend testable et bundlable (ADR-022).
 import { parseArgs } from "node:util";
 import { existsSync, writeFileSync } from "node:fs";
 import { openApp, requireClient, startupPurge } from "./app.ts";
@@ -1559,9 +1560,4 @@ function resumeNormalisation(app: App, departement: string, associations: number
 /** Zero prend le pluriel en francais, un prend le singulier. */
 function pluriel(nombre: number, singulier: string, pluriels: string): string {
   return nombre === 1 ? singulier : pluriels;
-}
-
-const estPointDEntree = process.argv[1] !== undefined && import.meta.filename === process.argv[1];
-if (estPointDEntree) {
-  process.exitCode = await main(process.argv.slice(2));
 }

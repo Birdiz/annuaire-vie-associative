@@ -11,14 +11,17 @@
  * chemin de l'URL ouvrirait la traversee de repertoire sur la machine de l'utilisateur,
  * et un serveur local n'est pas un serveur inoffensif : il tourne avec ses droits a lui.
  *
- * **Lecture disque, pour l'instant.** L'artefact Windows du lot 7 est un executable
- * unique qui n'a pas de fichiers voisins a lire (ADR-001) ; c'est ce module, et lui seul,
- * qui basculera alors sur `sea.getAsset()`. Le contenu est lu une fois et garde en
- * memoire : trois fichiers, cinquante kilo-octets.
+ * **Trois provenances, un seul point de lecture.** Le lot 7 emballe le meme code de trois
+ * facons, et chacune range ces fichiers ailleurs : a cote des sources en developpement, a
+ * cote du bundle pour `npx` et pour Docker, et *dans* l'executable unique — qui n'a aucun
+ * fichier voisin a lire (ADR-001, ADR-022). C'est ce module, et lui seul, qui connait la
+ * difference. Le contenu est lu une fois et garde en memoire : trois fichiers, cinquante
+ * kilo-octets.
  */
 
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
+import sea from "node:sea";
 
 export type Asset = { corps: Buffer; type: string };
 
@@ -36,9 +39,32 @@ const TYPES: Record<string, string> = {
   "htmx.LICENSE.txt": "text/plain; charset=utf-8",
 };
 
-export const REPERTOIRE_ASSETS = join(import.meta.dirname, "assets");
+/**
+ * Repertoire ou vivent les fichiers, quand il y en a un.
+ *
+ * `__dirname` n'existe qu'en CommonJS, `import.meta.dirname` qu'en module ES : le premier
+ * designe le bundle emballe, le second les sources executees directement. La branche morte
+ * est eliminee a la construction, et aucune des deux formes n'a besoin de savoir laquelle
+ * des trois provenances a servi.
+ */
+function repertoireAssets(): string {
+  return join(typeof __dirname === "string" ? __dirname : import.meta.dirname, "assets");
+}
+
+export const REPERTOIRE_ASSETS = repertoireAssets();
 
 const CACHE = new Map<string, Asset>();
+
+/**
+ * Dans l'executable unique, les fichiers sont des ressources du binaire : `sea.getAsset`
+ * les rend depuis la memoire, sous les memes noms que ceux enumeres par `TYPES` — c'est
+ * `scripts/sea.ts` qui construit sa configuration a partir de `nomsAssets()`, et un test
+ * verifie que les deux listes restent egales.
+ */
+function corps(nom: string): Buffer {
+  if (sea.isSea()) return Buffer.from(sea.getAsset(nom));
+  return readFileSync(join(REPERTOIRE_ASSETS, nom));
+}
 
 export function lireAsset(nom: string): Asset | undefined {
   const type = TYPES[nom];
@@ -47,7 +73,7 @@ export function lireAsset(nom: string): Asset | undefined {
   const connu = CACHE.get(nom);
   if (connu !== undefined) return connu;
 
-  const asset: Asset = { corps: readFileSync(join(REPERTOIRE_ASSETS, nom)), type };
+  const asset: Asset = { corps: corps(nom), type };
   CACHE.set(nom, asset);
   return asset;
 }

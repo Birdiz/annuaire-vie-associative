@@ -8,20 +8,29 @@
     "node": ">=24.0.0"
   },
   "bin": {
-    "annuaire": "./src/cli.ts"
+    "annuaire": "./dist/annuaire.cjs"
   },
   "scripts": {
-    "annuaire": "node src/cli.ts",
+    "annuaire": "node src/bin.ts",
+    "build": "node scripts/build.ts",
+    "build:sea": "node scripts/sea.ts",
     "check": "npm run typecheck && npm test",
     "typecheck": "tsc --noEmit",
     "test": "node --test --import ./test/helpers/pas-de-reseau.ts \"test/**/*.test.ts\"",
-    "demo": "node scripts/demo.ts"
+    "demo": "node scripts/demo.ts",
+    "prepack": "node scripts/build.ts"
   },
   "devDependencies": {
     "@types/node": "^24.3.0",
+    "esbuild": "0.28.2",
+    "postject": "1.0.0-alpha.6",
     "typescript": "^5.9.2"
   },
   "dependencies": {
     "node-html-parser": "^9.0.1"
-  }
+  },
+  "files": [
+    "dist/annuaire.cjs",
+    "dist/assets"
+  ]
 }

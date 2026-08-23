@@ -231,6 +231,90 @@ test("la version annoncee dans le User-Agent suit celle de package.json", () => 
   );
 });
 
+/**
+ * Regles du lot 7. Le bundle CommonJS qui sert les trois emballages (ADR-022) impose deux
+ * proprietes au code source ; les verifier ici les rend impossibles a perdre par
+ * inadvertance, alors qu'un build casse ne se remarquerait qu'au moment d'une release.
+ */
+test("aucun await de premier niveau : le bundle CommonJS n'en accepterait pas", () => {
+  // esbuild refuse de convertir un `await` de premier niveau vers le format CommonJS, et
+  // l'outillage SEA execute son script principal comme un module CommonJS.
+  const premierNiveau = /^await\s/m;
+  const coupables: string[] = [];
+
+  for (const fichier of fichiersSource(SRC)) {
+    if (premierNiveau.test(codeEffectif(readFileSync(fichier, "utf8")))) {
+      coupables.push(relative(RACINE, fichier));
+    }
+  }
+
+  assert.deepEqual(
+    coupables,
+    [],
+    "src/bin.ts appelle main() en .then() pour cette raison : un await de premier niveau " +
+      "casserait la construction de l'executable et du paquet npm.",
+  );
+});
+
+test("le point d'entree annonce par package.json est celui que la construction produit", () => {
+  const pkg = JSON.parse(readFileSync(join(RACINE, "package.json"), "utf8")) as {
+    bin: Record<string, string>;
+    files: string[];
+    scripts: Record<string, string>;
+  };
+
+  // `bin` ne peut pas pointer une source TypeScript : Node refuse de retirer les types
+  // d'un fichier situe sous node_modules, ce qui est exactement le cas apres `npx`.
+  assert.equal(pkg.bin["annuaire"], "./dist/annuaire.cjs");
+  assert.ok(!pkg.bin["annuaire"].endsWith(".ts"), "npx ne sait pas executer du TypeScript");
+  // `dist` en bloc emballerait aussi le node.exe vendorise et l'executable Windows :
+  // 71 Mo publies au lieu de 124 Ko. Le paquet nomme ce qu'il embarque.
+  assert.deepEqual(pkg.files, ["dist/annuaire.cjs", "dist/assets"]);
+  assert.ok(pkg.files.includes(pkg.bin["annuaire"].replace("./", "")), "le bundle doit etre publie");
+  assert.match(pkg.scripts["prepack"] ?? "", /build/, "npm pack doit reconstruire le bundle");
+});
+
+test("l'image Docker execute le bundle, et n'annonce aucun port", () => {
+  const dockerfile = readFileSync(join(RACINE, "Dockerfile"), "utf8");
+  const pkg = JSON.parse(readFileSync(join(RACINE, "package.json"), "utf8")) as {
+    engines: { node: string };
+  };
+
+  const majeur = (pkg.engines.node.match(/(\d+)/) ?? [])[1];
+  for (const image of dockerfile.match(/^FROM\s+node:(\S+)/gm) ?? []) {
+    assert.match(image, new RegExp(`node:${majeur}`), `${image} s'ecarte de engines.node`);
+  }
+
+  assert.match(dockerfile, /ENTRYPOINT \["node", "\/app\/annuaire\.cjs"\]/);
+  // Un EXPOSE annoncerait un port que l'ecoute sur 127.0.0.1 rend inatteignable depuis
+  // l'hote : mieux vaut ne rien promettre que de promettre a faux (ADR-023).
+  assert.doesNotMatch(dockerfile, /^EXPOSE/m, "l'image ne publie pas l'interface");
+});
+
+test("un seul script de construction sort sur le reseau, et seulement vers nodejs.org", () => {
+  // La porte de sortie de src/http/ vaut pour le produit. La construction de l'executable
+  // Windows telecharge le node.exe officiel : cette sortie est nominative, elle a lieu au
+  // moment d'emballer, et ni src/ ni la suite de tests n'importent ce module (ADR-022).
+  const scripts = join(RACINE, "scripts");
+  const fetchGlobal = /(?<![.\w#])fetch\s*\(/;
+  const coupables: string[] = [];
+
+  for (const fichier of fichiersSource(scripts)) {
+    const relatif = relative(RACINE, fichier);
+    const source = readFileSync(fichier, "utf8");
+    if (!fetchGlobal.test(codeEffectif(source))) continue;
+    if (relatif !== join("scripts", "sea.ts")) {
+      coupables.push(relatif);
+      continue;
+    }
+    for (const url of source.match(/https?:\/\/[^\s"'`$]+/g) ?? []) {
+      assert.ok(url.startsWith("https://nodejs.org/dist"), `URL inattendue dans ${relatif} : ${url}`);
+    }
+  }
+
+  assert.deepEqual(coupables, [], "seul scripts/sea.ts peut telecharger, et seulement node.exe");
+});
+
 test("le code reste en syntaxe effacable, exigee par l'execution directe du TypeScript", () => {
   for (const fichier of fichiersSource(SRC)) {
     const code = codeEffectif(readFileSync(fichier, "utf8"));

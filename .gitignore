@@ -1,6 +1,8 @@
 node_modules/
 dist/
 build/
+# Tarball produit par `npm pack` pour verifier la cible npx.
+*.tgz
 
 # Donnees d'execution. Voir §5 du brief : aucune donnee reelle collectee
 # ne doit entrer dans le depot. Les tests utilisent des fixtures synthetiques.
