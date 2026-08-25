@@ -77,7 +77,12 @@ export function resolvePaths(
  * `0o700` et non le `0o755` par defaut : ce repertoire contient la base, le cache des
  * pages collectees et le journal, donc des donnees personnelles. Sur un poste partage ou
  * un serveur multi-utilisateurs, tout compte local pouvait les lire. L'image Docker
- * prenait deja la precaution (`chown node:node`), l'installation npx et Windows non.
+ * prenait deja la precaution (`chown node:node`), l'installation npx non.
+ *
+ * **Sans effet sous Windows**, ou Node ignore `mode`. Les permissions y sont celles que
+ * le dossier parent transmet : `%LOCALAPPDATA%` est propre a l'utilisateur, ce qui suffit
+ * dans le cas courant, mais un `--data-dir` place ailleurs ne l'est pas. Le dire plutot
+ * que de laisser croire que l'appel protege les trois plateformes.
  */
 export function ensurePaths(paths: Paths): void {
   mkdirSync(paths.dataDir, { recursive: true, mode: 0o700 });
