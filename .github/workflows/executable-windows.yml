@@ -170,17 +170,44 @@ jobs:
           GH_REPO: ${{ github.repository }}
         run: |
           notes=$(mktemp)
-          {
-            echo "Executable Windows portable, x64. Un fichier, rien a installer :"
-            echo "telecharger \`annuaire.exe\`, double-cliquer, l'interface s'ouvre dans le navigateur."
-            echo
-            echo "Cet executable **n'est pas signe** : SmartScreen previendra au premier lancement"
-            echo "(« Informations complementaires », puis « Executer quand meme »). Empreinte a verifier :"
-            echo
-            echo '```'
-            cat dist/annuaire.exe.sha256
-            echo '```'
-          } > "$notes"
+          # Heredoc cite : ni backtick ni $ n'y sont interpretes, les blocs de code arrivent
+          # dans les notes tels qu'ils sont ecrits. YAML a deja retire l'indentation commune.
+          cat > "$notes" <<'TEXTE'
+          Executable Windows portable, x64. Un fichier, rien a installer : telecharger
+          `annuaire.exe`, double-cliquer, l'interface s'ouvre dans le navigateur.
+
+          ## Windows va le bloquer, et voici pourquoi
+
+          Cet executable **n'est pas signe**. Deux blocages differents peuvent survenir :
+
+          **SmartScreen** — fenetre bleue « Windows a protege votre ordinateur ». Avertissement de
+          reputation, pas une detection : « Informations complementaires », puis « Executer quand
+          meme ». Pour retirer la marque de telechargement une fois pour toutes :
+
+          ```powershell
+          Unblock-File .\annuaire.exe
+          ```
+
+          **Defender qui supprime le fichier** — « Menace trouvee », l'executable disparait. C'est un
+          faux positif : un `node.exe` officiel dans lequel un script est injecte ressemble, pour une
+          heuristique, a un binaire legitime modifie. Verifiez d'abord l'empreinte publiee ci-dessous :
+
+          ```powershell
+          Get-FileHash .\annuaire.exe -Algorithm SHA256
+          ```
+
+          Si elle correspond, le fichier est bien celui que la CI a construit, a l'octet pres. Le
+          signalement se fait alors a Microsoft (https://www.microsoft.com/en-us/wdsi/filesubmission).
+          En attendant, le contournement propre n'est pas une exclusion Defender, c'est `npx` — meme
+          bundle, meme comportement, sans binaire a debloquer.
+
+          ## Empreinte
+
+          ```
+          TEXTE
+          cat dist/annuaire.exe.sha256 >> "$notes"
+          printf '```\n' >> "$notes"
+
           gh release create "$GITHUB_REF_NAME" \
             dist/annuaire.exe dist/annuaire.exe.sha256 \
             --title "$GITHUB_REF_NAME" --notes-file "$notes"

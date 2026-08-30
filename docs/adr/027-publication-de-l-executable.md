@@ -87,11 +87,22 @@ complète en était un ajout, pas la raison.
 - Le `GITHUB_TOKEN` n'obtient `contents: write` que dans le job de publication. Les jobs
   qui exécutent du code npm (`npm ci` lance les scripts d'installation des dépendances)
   restent en lecture seule.
-- **L'exécutable n'est toujours pas signé.** SmartScreen préviendra au premier lancement ;
-  signer relève d'une décision d'éditeur — un certificat OV ou EV, nominatif et payant, que
-  ce dépôt n'a pas à porter à la place de la collectivité qui le distribue. Les notes de
-  release le disent, et publient l'empreinte SHA-256 pour que l'utilisateur puisse la
-  comparer.
+- **L'exécutable n'est toujours pas signé, et Windows le fait sentir deux fois.** Vérifié
+  sur un poste réel : SmartScreen affiche son avertissement de réputation, et Defender peut
+  aller jusqu'à mettre le fichier en quarantaine. Le second est un faux positif de forme —
+  un `node.exe` officiel dont la table des certificats a été retirée et le contenu étendu
+  ressemble, pour une heuristique, à un binaire légitime modifié ; c'est exactement ce que
+  la recette SEA produit, et il n'y a rien à corriger dans le code. Trois réponses, dans
+  cet ordre : l'empreinte SHA-256 publiée dans la release, qui permet à l'utilisateur de
+  vérifier lui-même que le fichier est bien celui qu'a construit la CI ; le signalement du
+  faux positif à Microsoft, seule correction durable et gratuite ; et `npx` comme
+  contournement propre — même bundle, sans binaire à débloquer. **Pas d'exclusion Defender
+  recommandée** : demander à un utilisateur de désarmer son antivirus pour installer un
+  outil est précisément le réflexe qu'on ne veut pas lui apprendre. Les notes de release
+  portent ces trois réponses, le README aussi.
+- Signer relèverait d'une décision d'éditeur — un certificat OV ou EV, nominatif et payant,
+  que ce dépôt n'a pas à porter à la place de la collectivité qui distribue l'outil. Il
+  réglerait les deux blocages d'un coup, et c'est la sortie si la gêne devient inacceptable.
 - La version de Node du runner devient celle du binaire : `scripts/sea.ts` télécharge le
   `node.exe` de la version qui l'exécute. `node-version: "24"` suit donc la dernière 24.x
   publiée — voulu, tant que la ligne 24 est maintenue.

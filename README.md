@@ -49,7 +49,33 @@ Docker et injecté dans l'exécutable Windows
 [Releases](../../releases) : double-clic, l'interface s'ouvre dans le navigateur. Le binaire n'est
 pas dans le dépôt — il est construit par la CI sur un poste Windows, qui lance ensuite ce qu'elle
 vient de produire ([ADR-027](docs/adr/027-publication-de-l-executable.md)). Il **n'est pas signé** :
-SmartScreen prévient au premier lancement, et chaque release publie l'empreinte SHA-256 du fichier.
+Windows le bloque au premier lancement, et chaque release publie l'empreinte SHA-256 du fichier pour
+que vous puissiez vérifier que c'est bien celui-là que vous avez.
+
+**Si Windows bloque le fichier**, deux cas à ne pas confondre :
+
+- **SmartScreen** — fenêtre bleue « Windows a protégé votre ordinateur ». C'est un avertissement de
+  réputation, pas une détection : « Informations complémentaires », puis « Exécuter quand même ».
+  Un fichier téléchargé porte aussi une marque qui déclenche l'avertissement à chaque lancement ;
+  `Unblock-File .\annuaire.exe` en PowerShell la retire une fois pour toutes.
+- **Defender qui supprime ou met en quarantaine** — bandeau « Menace trouvée », le fichier
+  disparaît. C'est un **faux positif** : les exécutables autonomes construits ainsi — un `node.exe`
+  officiel dans lequel un script est injecté — ressemblent, pour une heuristique, à un binaire
+  légitime modifié. Comparez d'abord l'empreinte publiée dans la release :
+
+  ```powershell
+  Get-FileHash .\annuaire.exe -Algorithm SHA256
+  ```
+
+  Si elle correspond, le fichier est bien celui que la CI a construit, à l'octet près, et le
+  signalement est infondé — il se signale à Microsoft sur
+  [leur formulaire](https://www.microsoft.com/en-us/wdsi/filesubmission), ce qui est la seule
+  correction durable tant que le binaire n'est pas signé. En attendant, le contournement propre
+  n'est pas d'ajouter une exclusion Defender, c'est **`npx`** ci-dessous : même bundle, même
+  comportement, sans binaire à débloquer.
+
+Signer l'exécutable réglerait les deux d'un coup. C'est une décision d'éditeur — certificat
+nominatif et payant — que ce dépôt ne prend pas à la place de la collectivité qui le distribue.
 
 **npx.** Le paquet n'est pas publié à ce jour : il s'installe depuis un tarball construit sur place.
 
