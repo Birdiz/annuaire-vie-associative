@@ -10,6 +10,7 @@ import type { Database } from "../../src/db/index.ts";
 import { startServer, text } from "../helpers/server.ts";
 import type { Handler, TestServer } from "../helpers/server.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
+import { assertTueBrutalement } from "../helpers/plateforme.ts";
 
 const WORKER = fileURLToPath(new URL("../fixtures/crawl-worker.ts", import.meta.url));
 // Une URL `file://`, et non un chemin : `--import` traite son argument comme un
@@ -217,7 +218,7 @@ test("reprise apres kill -9 entre le travail et la persistance", { timeout: 60_0
   // Puis le meme crawl, tue en plein vol et repris.
   const { dbFile, cacheDir } = preparer(t, server);
   const tue = await lancerWorker(dbFile, cacheDir, server.origin, 3, -1);
-  assert.equal(tue.signal, "SIGKILL", `le worker aurait du etre tue brutalement : ${tue.stderr}`);
+  assertTueBrutalement(tue, "le worker aurait du etre tue brutalement");
 
   await attendreExpirationDuBail();
 
@@ -241,7 +242,7 @@ test("reprise apres kill -9 a un instant arbitraire", { timeout: 60_000 }, async
   const { dbFile, cacheDir } = preparer(t, server);
   // 25 ms : le crawl est en cours, la mort peut tomber pendant une transaction SQLite.
   const tue = await lancerWorker(dbFile, cacheDir, server.origin, -1, 25);
-  assert.equal(tue.signal, "SIGKILL", `le worker aurait du etre tue brutalement : ${tue.stderr}`);
+  assertTueBrutalement(tue, "le worker aurait du etre tue brutalement");
 
   await attendreExpirationDuBail();
 

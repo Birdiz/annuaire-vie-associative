@@ -302,7 +302,9 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
         onglet: "revue",
         departement,
         version: ctx.version,
-        contenu: ecranRevue(donneesRevue(ctx, departement, departements, undefined)),
+        contenu: ecranRevue(
+          donneesRevue(ctx, departement, departements, undefined, requete.requete.get("page")),
+        ),
       }),
     );
   }
@@ -523,15 +525,40 @@ function donneesRevue(
   departement: string,
   departements: readonly string[],
   refus: string | undefined,
+  pageDemandee: string | null,
 ) {
+  const distribution = distributionRevue(ctx.db, departement);
+
+  // Seuls les contacts notes entrent dans la file : `aRevoir` compte aussi ceux que
+  // l'etape [8] n'a pas encore vus, et les paginer donnerait des pages vides.
+  const prets = Math.max(0, distribution.aRevoir - distribution.nonNotes);
+  const pages = Math.max(1, Math.ceil(prets / TAILLE_FILE));
+  const page = bornerPage(pageDemandee, pages);
+
   return {
     departement,
     departements,
-    file: fileRevue(ctx.db, departement, TAILLE_FILE),
-    distribution: distributionRevue(ctx.db, departement),
+    file: fileRevue(ctx.db, departement, TAILLE_FILE, (page - 1) * TAILLE_FILE),
+    distribution,
     refus,
     collecte: etatCollecte(ctx),
+    page,
+    pages,
   };
+}
+
+/**
+ * La page demandee, ramenee dans les bornes.
+ *
+ * Une page hors bornes n'est pas une erreur a montrer : elle arrive toute seule quand on
+ * arbitre les derniers contacts d'une file — la derniere page se vide sous les pieds de
+ * qui y travaille. On ramene a la derniere page existante plutot que de rendre un 404
+ * pour un lien qui etait valide il y a dix secondes.
+ */
+function bornerPage(demandee: string | null, pages: number): number {
+  const brut = Number(demandee ?? "1");
+  if (!Number.isInteger(brut) || brut < 1) return 1;
+  return Math.min(brut, pages);
 }
 
 /**
@@ -590,7 +617,7 @@ function arbitrage(
 ): ReponseUi {
   const htmx = requete.entetes["hx-request"] === "true";
   const rendre = (refus: string | undefined, statut: number): ReponseUi => {
-    const donnees = donneesRevue(ctx, departement, departements, refus);
+    const donnees = donneesRevue(ctx, departement, departements, refus, requete.requete.get("page"));
     if (htmx) return html(fragmentFile(donnees), statut);
     return html(
       page({

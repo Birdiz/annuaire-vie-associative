@@ -6,6 +6,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import { makeTempDir } from "./helpers/tmp.ts";
+import { SIGNAUX_POSIX } from "./helpers/plateforme.ts";
 
 const CLI = fileURLToPath(new URL("../src/bin.ts", import.meta.url));
 // Le garde-fou anti-reseau vit dans le processus de test ; ces commandes s'executent
@@ -411,7 +412,16 @@ test("annuaire ui sert l'interface sur la boucle locale, et s'arrete sur SIGINT"
   const ouverte = await fetch(url, { redirect: "manual" });
   assert.equal(ouverte.status, 303);
 
-  assert.equal(await arreter(), 0, "Ctrl+C doit rendre la main proprement");
+  const sortie = await arreter();
+  if (SIGNAUX_POSIX) {
+    assert.equal(sortie, 0, "Ctrl+C doit rendre la main proprement");
+  }
+  // Sous Windows, aucun process ne peut delivrer un Ctrl+C a un autre depuis Node : le
+  // `kill` y devient un `TerminateProcess`, qui ne declenche pas la sortie propre et
+  // n'aurait donc rien a verifier. Tout ce qui precede — l'interface sert, le jeton n'est
+  // pas decoratif — reste teste ici sur les deux systemes, et l'arret propre lui-meme est
+  // couvert partout par les tests du pilote, qui l'exercent en memoire (« arreter propage
+  // le signal, et l'interruption n'est pas un echec »).
 });
 
 test("un port invalide echoue avant d'ouvrir quoi que ce soit", async (t) => {

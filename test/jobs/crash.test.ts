@@ -7,6 +7,7 @@ import type { TestContext } from "node:test";
 import { openDatabase } from "../../src/db/index.ts";
 import { JobQueue } from "../../src/jobs/queue.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
+import { assertTueBrutalement } from "../helpers/plateforme.ts";
 
 const WORKER = fileURLToPath(new URL("../fixtures/crash-worker.ts", import.meta.url));
 const NB_JOBS = 20;
@@ -78,7 +79,7 @@ test("reprise apres kill -9 entre le travail et la persistance", { timeout: 60_0
   const dbFile = prepare(t);
 
   const tue = await runWorker(dbFile, 3, -1);
-  assert.equal(tue.signal, "SIGKILL", `le worker aurait du etre tue brutalement : ${tue.stderr}`);
+  assertTueBrutalement(tue, "le worker aurait du etre tue brutalement");
 
   // Rien n'est perdu, mais les baux des jobs en vol doivent expirer avant reprise :
   // c'est le prix de l'absence d'etat « running » (ADR-002).
@@ -94,7 +95,7 @@ test("reprise apres kill -9 a un instant arbitraire", { timeout: 60_000 }, async
   const dbFile = prepare(t);
 
   const tue = await runWorker(dbFile, -1, 25);
-  assert.equal(tue.signal, "SIGKILL", `le worker aurait du etre tue brutalement : ${tue.stderr}`);
+  assertTueBrutalement(tue, "le worker aurait du etre tue brutalement");
 
   await new Promise((resolve) => setTimeout(resolve, LEASE_MS + 200));
 

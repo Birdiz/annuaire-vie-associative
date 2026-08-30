@@ -13,6 +13,7 @@ import { hashPage } from "../../src/decouverte/contexte.ts";
 import { rejouerPrefiltre } from "../../src/decouverte/rejeu.ts";
 import { normaliserNom } from "../../src/texte.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
+import { assertTueBrutalement } from "../helpers/plateforme.ts";
 
 /**
  * §10 du brief : une etape n'est terminee que si elle est reprenable apres `kill -9`
@@ -164,7 +165,7 @@ test("tue en plein rejeu, le pre-filtre se relance et retombe sur le meme etat",
   // partiel de facon certaine. Aucun chronometre, donc aucune dependance a la charge
   // de la machine — ce test ne peut pas devenir vert par accident.
   const crash = await lancer(dbFile, cacheDir, "crash");
-  assert.equal(crash.signal, "SIGKILL", "le rejeu devait s'abattre en plein travail");
+  assertTueBrutalement(crash, "le rejeu devait s'abattre en plein travail");
 
   const juges = compterJuges(dbFile);
   assert.ok(

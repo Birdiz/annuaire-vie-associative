@@ -639,3 +639,92 @@ test("un refus de basculement ne s'affiche pas aussi dans le bloc de suivi", (t)
   const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
   assert.doesNotMatch(suivi, /ne change pas en cours de run/);
 });
+
+/**
+ * La pagination de la revue.
+ *
+ * Une file de 418 contacts derriere une fenetre de dix : les 408 autres etaient
+ * inatteignables autrement qu'en arbitrant les premiers. Ce n'est pas un catalogue —
+ * arbitrer retire la ligne de la file — d'ou les deux proprietes verifiees ici : on garde
+ * sa page en arbitrant, et une page qui n'existe plus ramene a la derniere plutot que de
+ * rendre une erreur.
+ */
+
+/** Ajoute des contacts notes, du plus sur au moins sur, pour remplir plusieurs pages. */
+function remplirLaFile(ctx: ContexteTest, combien: number): void {
+  const inserer = ctx.db.prepare(
+    "INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, is_generique, source_url, " +
+      "methode_extraction, confiance, collected_at, score, score_version, review_statut) " +
+      "VALUES (?, 'email', ?, ?, 1, 'https://mairie.example/annuaire', 'dom:mailto', 0.9, " +
+      "'2026-08-22T00:00:00.000Z', ?, 1, 'a_revoir')",
+  );
+  for (let i = 0; i < combien; i += 1) {
+    const valeur = `contact${String(i).padStart(3, "0")}@exemple.example`;
+    inserer.run(CODE_INSEE, valeur, valeur, 0.1 + i / 1000);
+  }
+}
+
+function idsAffiches(corps: string): string[] {
+  return [...corps.matchAll(/id="contact-(\d+)"/g)].map((m) => m[1] ?? "");
+}
+
+test("la file se pagine : la page 2 montre d'autres contacts que la page 1", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 25);
+
+  const un = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  const deux = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=2`)).corps);
+
+  assert.equal(idsAffiches(un).length, 10, "une page tient dix contacts");
+  assert.match(un, /page 1 sur/);
+  assert.match(deux, /page 2 sur/);
+
+  const communs = idsAffiches(un).filter((id) => idsAffiches(deux).includes(id));
+  assert.deepEqual(communs, [], "deux pages ne doivent pas montrer les memes contacts");
+});
+
+test("une page hors bornes retombe sur la derniere, sans erreur", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 25);
+
+  // Le cas arrive tout seul : on arbitre les derniers contacts, et la page se vide sous
+  // les pieds de qui y travaille. Un 404 pour un lien valide dix secondes plus tot serait
+  // une punition, pas une information.
+  const trop = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=99`)).corps);
+  assert.match(trop, /page 3 sur 3/);
+  assert.ok(idsAffiches(trop).length > 0, "la derniere page doit montrer quelque chose");
+
+  for (const absurde of ["0", "-2", "deux", ""]) {
+    const rendu = corpsTexte(
+      router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=${absurde}`)).corps,
+    );
+    assert.match(rendu, /page 1 sur 3/, `page=${absurde} doit ramener a la premiere`);
+  }
+});
+
+test("arbitrer depuis une page y laisse la personne qui revoit", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 25);
+
+  const page3 = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=3`)).corps);
+  const cible = idsAffiches(page3)[0];
+  assert.ok(cible !== undefined);
+
+  // Le formulaire de chaque carte porte la page : sans elle, le fragment renvoye serait
+  // celui de la premiere, et on perdrait sa place a chaque clic.
+  assert.match(page3, new RegExp(`action="/revue/${cible}\\?departement=35&page=3"`));
+
+  const apres = router(
+    ctx,
+    post(`/revue/${cible}?departement=${DEPARTEMENT}&page=3`, "action=valide", true),
+  );
+  assert.equal(apres.statut, 200);
+  assert.match(corpsTexte(apres.corps), /page 3 sur/, "l'arbitrage ne doit pas renvoyer page 1");
+});
+
+test("sans deuxieme page, aucun lien de pagination n'est rendu", (t) => {
+  const ctx = contexte(t);
+
+  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  assert.doesNotMatch(ecran, /page 1 sur 1/, "une seule page ne se navigue pas");
+});

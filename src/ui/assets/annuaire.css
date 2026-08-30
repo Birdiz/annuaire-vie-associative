@@ -217,3 +217,9 @@ form.reglages :disabled { cursor: not-allowed; opacity: 0.6; }
   padding: 0.5rem 0.75rem;
   margin-bottom: 1rem;
 }
+
+/* Les liens de page, rendus deux fois : au-dessus et au-dessous de la file. Une carte de
+   revue est haute, et remonter chercher « suivante » apres avoir lu dix contacts est le
+   genre de frottement qui fait abandonner une revue. */
+.pages { display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: baseline; margin: 0.9rem 0; }
+.pages span { font-variant-numeric: tabular-nums; }

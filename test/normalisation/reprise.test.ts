@@ -13,6 +13,7 @@ import { normaliser } from "../../src/normalisation/rejeu.ts";
 import { hashPage } from "../../src/decouverte/contexte.ts";
 import { normaliserNom } from "../../src/texte.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
+import { assertTueBrutalement } from "../helpers/plateforme.ts";
 
 /**
  * §10 du brief : une etape n'est terminee que si elle est reprenable apres `kill -9`
@@ -158,7 +159,7 @@ test("tue en pleine normalisation, le traitement se relance et retombe sur le me
 
   // Mort a la premiere tranche commitee.
   const crash = await lancer(dbFile, "crash");
-  assert.equal(crash.signal, "SIGKILL", "la normalisation devait s'abattre en plein travail");
+  assertTueBrutalement(crash, "la normalisation devait s'abattre en plein travail");
 
   const classees = compter(dbFile, "SELECT count(*) AS n FROM association WHERE type_classifie IS NOT NULL");
   assert.ok(classees > 0 && classees < NB, `l'interruption doit laisser un etat partiel, recu ${classees}/${NB}`);

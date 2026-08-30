@@ -26,6 +26,10 @@ export type DonneesRevue = {
   refus?: string | undefined;
   /** Une collecte en cours change la file sous les yeux de qui arbitre. */
   collecte: EtatCollecte;
+  /** Page affichee, 1-based, deja bornee par le routeur. */
+  page: number;
+  /** Nombre de pages que la file remplit, au moins 1. */
+  pages: number;
 };
 
 export function ecranRevue(donnees: DonneesRevue): string {
@@ -79,6 +83,8 @@ export function fragmentFile(donnees: DonneesRevue): string {
 
   const entete = `${refus}${banniere}\n${compteur}\n${attente}\n${aRenoter}`;
 
+  const navigation = pagination(donnees);
+
   if (donnees.file.length === 0) {
     // Trois raisons de n'avoir rien a montrer, et elles n'appellent pas la meme suite.
     const explication =
@@ -90,10 +96,39 @@ export function fragmentFile(donnees: DonneesRevue): string {
     return `${entete}\n<p>${explication}</p>`;
   }
 
-  return `${entete}\n${donnees.file.map((contact) => carte(contact, donnees.departement)).join("\n")}`;
+  return `${entete}\n${navigation}\n${donnees.file
+    .map((contact) => carte(contact, donnees.departement, donnees.page))
+    .join("\n")}\n${navigation}`;
 }
 
-function carte(contact: ContactARevoir, departement: string): string {
+/**
+ * Les liens de page.
+ *
+ * Ils portent `page` **et** `departement` : sans le second, changer de page renverrait au
+ * departement par defaut. Ce sont des liens ordinaires, pas des boutons htmx — une page
+ * de revue doit pouvoir se partager, se recharger et se rouvrir apres coup.
+ */
+function pagination(donnees: DonneesRevue): string {
+  if (donnees.pages <= 1) return "";
+
+  const lien = (page: number, libelle: string): string =>
+    page === donnees.page
+      ? `<span class="discret">${libelle}</span>`
+      : `<a href="/revue?departement=${encodeURIComponent(donnees.departement)}&page=${page}">${libelle}</a>`;
+
+  const precedent = Math.max(1, donnees.page - 1);
+  const suivant = Math.min(donnees.pages, donnees.page + 1);
+
+  return `<nav class="pages">
+  ${lien(1, "« premiere")}
+  ${lien(precedent, "‹ precedente")}
+  <span class="discret">page ${nombre(donnees.page)} sur ${nombre(donnees.pages)}</span>
+  ${lien(suivant, "suivante ›")}
+  ${lien(donnees.pages, "derniere »")}
+</nav>`;
+}
+
+function carte(contact: ContactARevoir, departement: string, page: number): string {
   const cible =
     contact.association === null
       ? `${echapperHtml(contact.commune)} <span class="discret">(commune, sans association rattachee)</span>`
@@ -114,7 +149,9 @@ function carte(contact: ContactARevoir, departement: string): string {
       ? `<span class="source discret">${echapperHtml(contact.source_url)}</span>`
       : `<a class="source" href="${source}" rel="noreferrer noopener" target="_blank">${source}</a>`;
 
-  const cheminAction = `/revue/${contact.id}?departement=${encodeURIComponent(departement)}`;
+  // La page voyage avec l'action : sans elle, arbitrer depuis la page 4 renverrait la
+  // premiere, et on perdrait sa place a chaque clic.
+  const cheminAction = `/revue/${contact.id}?departement=${encodeURIComponent(departement)}&page=${page}`;
 
   return `<article class="contact" id="contact-${contact.id}">
   <span class="score">score ${contact.score === null ? "—" : contact.score.toFixed(2)} · lu ${contact.confiance.toFixed(2)}</span>

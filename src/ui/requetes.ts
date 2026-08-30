@@ -130,7 +130,21 @@ export type ContactARevoir = {
  * reviendrait a juger sans le seul element que l'outil apporte — leur nombre est affiche
  * a part, avec la commande qui les note.
  */
-export function fileRevue(db: Database, departement: string, limite: number): ContactARevoir[] {
+/**
+ * Une page de la file de revue, les moins surs d'abord.
+ *
+ * `decalage` pagine, mais la file n'est pas un catalogue : arbitrer une ligne la retire
+ * de `a_revoir`, donc du resultat. Rester au meme decalage apres un arbitrage est ce que
+ * veut la personne qui revoit — la page se recharge par le bas et on continue a la meme
+ * profondeur — mais cela veut dire qu'un decalage ne designe pas toujours les memes
+ * contacts. C'est le comportement voulu pour une file de travail ; l'ecran le dit.
+ */
+export function fileRevue(
+  db: Database,
+  departement: string,
+  limite: number,
+  decalage = 0,
+): ContactARevoir[] {
   return db
     .prepare(
       `SELECT ct.id, ct.kind, ct.valeur, ct.valeur_corrigee, ct.is_generique, ct.score,
@@ -141,9 +155,9 @@ export function fileRevue(db: Database, departement: string, limite: number): Co
          LEFT JOIN association a ON a.id = ct.association_id
         WHERE c.departement = ? AND ct.review_statut = 'a_revoir' AND ct.score IS NOT NULL
         ORDER BY ct.score, ct.id
-        LIMIT ?`,
+        LIMIT ? OFFSET ?`,
     )
-    .all(departement, limite) as unknown as ContactARevoir[];
+    .all(departement, limite, decalage) as unknown as ContactARevoir[];
 }
 
 /**

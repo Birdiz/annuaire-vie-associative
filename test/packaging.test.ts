@@ -7,6 +7,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { VERSION } from "../src/version.ts";
 import { nomsAssets } from "../src/ui/assets.ts";
+import { SIGNAUX_POSIX } from "./helpers/plateforme.ts";
 
 /**
  * L'emballage du lot 7, verifie sur le vrai artefact.
@@ -94,7 +95,12 @@ test("le bundle est un executable CommonJS, shebang compris", async (t) => {
 
   const source = readFileSync(construit.bundle, "utf8");
   assert.match(source.slice(0, 40), /^#!\/usr\/bin\/env node\n/, "npx a besoin du shebang");
-  assert.ok((statSync(construit.bundle).mode & 0o111) !== 0, "le bit d'execution doit etre pose");
+  // NTFS n'a pas de bit d'execution, et npm ne s'en sert pas sous Windows — il y ecrit un
+  // `.cmd` a la place. La propriete visee est celle de la cible POSIX de `npx`, et le job
+  // Linux la verifie a chaque push.
+  if (SIGNAUX_POSIX) {
+    assert.ok((statSync(construit.bundle).mode & 0o111) !== 0, "le bit d'execution doit etre pose");
+  }
   assert.ok(!source.includes("import.meta.dirname"), "import.meta n'existe pas en CommonJS");
 });
 
