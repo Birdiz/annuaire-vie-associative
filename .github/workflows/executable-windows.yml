@@ -19,9 +19,19 @@ on:
 permissions:
   contents: read
 
+# Un push qui en remplace un autre sur la meme ref annule le run precedent : deux runners
+# Windows par commit, ce n'est pas la peine d'en garder un qui construit du code perime.
+# Les tags en sont exclus — une publication ne s'annule pas.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
+
 jobs:
   construire:
     runs-on: windows-latest
+    # Un binaire qui ne demarre pas fait pendre l'etape de fumee : mieux vaut un job rouge
+    # au bout de vingt minutes que six heures de runner sur une attente qui n'aboutira pas.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
 
@@ -110,6 +120,7 @@ jobs:
     # fins de ligne passerait inapercue. Separe de `construire` a dessein — un test rouge
     # ici ne doit pas priver d'un binaire a inspecter, mais il interdit la release.
     runs-on: windows-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
