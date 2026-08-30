@@ -128,7 +128,19 @@ lancer le pipeline dans le conteneur et l'interface par `npx` sur le même répe
 les deux process partagent la base sans se connaître
 ([ADR-023](docs/adr/023-l-interface-et-le-conteneur.md)).
 
-**Exécutable Windows — client final non technique.** Un fichier, rien à installer.
+**Exécutable Windows — client final non technique.** Un fichier, rien à installer : il se
+**télécharge depuis la page [Releases](../../releases)**, `annuaire.exe`. Double-clic, l'interface
+s'ouvre dans le navigateur. Ni Node, ni installateur, ni droits d'administrateur.
+
+Le binaire n'est pas dans le dépôt — 88,5 Mo par version, là où le dépôt entier tient en quelques
+centaines de Ko. Il est construit par la CI **sur un poste Windows**, qui lance ensuite ce qu'elle
+vient de produire : `annuaire status` (ouverture de la base, migrations) puis `annuaire ui`, dont
+l'adresse à jeton est lue dans la sortie pour demander `/assets/htmx.min.js` — la seule façon de
+vérifier que les ressources ont bien été injectées dans le binaire. La publication se déclenche sur
+un tag `v*` ; les autres branches s'arrêtent à l'artefact du run
+([ADR-027](docs/adr/027-publication-de-l-executable.md)).
+
+Pour le construire soi-même, depuis n'importe quel système :
 
 ```bash
 npm run build:sea
@@ -139,9 +151,9 @@ empreinte** contre le `SHASUMS256.txt` publié à côté, en retire la signature
 l'injection invaliderait — puis y injecte le bundle et les fichiers de l'interface. C'est le seul
 script du dépôt qui sorte sur le réseau, et il le fait à la construction, jamais à l'exécution.
 
-Deux réserves, dites franchement : l'exécutable **n'est pas signé** (SmartScreen préviendra au
-premier lancement, le signer relève d'une décision d'éditeur), et il est produit ici depuis macOS —
-sa structure est vérifiée, **son lancement reste à valider sur un poste Windows**.
+Une réserve, dite franchement : l'exécutable **n'est pas signé**. SmartScreen préviendra au premier
+lancement — « Informations complémentaires », puis « Exécuter quand même ». Le signer relève d'une
+décision d'éditeur ; en attendant, chaque release publie l'empreinte SHA-256 du fichier.
 
 ## Tester
 

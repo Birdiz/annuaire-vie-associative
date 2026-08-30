@@ -33,3 +33,4 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [024](024-lancer-un-run-depuis-l-interface.md) | Lancer un run depuis l'interface | Acceptée |
 | [025](025-regime-juridique-et-obligations.md) | Régime juridique et obligations de l'utilisateur | Acceptée |
 | [026](026-droit-a-l-effacement.md) | Droit à l'effacement : une exclusion, pas une suppression | Acceptée |
+| [027](027-publication-de-l-executable.md) | Publier l'exécutable, et le vérifier là où il tourne | Acceptée |

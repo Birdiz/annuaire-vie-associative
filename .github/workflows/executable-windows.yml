@@ -1,0 +1,155 @@
+name: Executable Windows
+
+# L'executable ne peut pas vivre dans le depot : 88,5 Mo de binaire par version, la ou
+# le depot entier tient en quelques centaines de Ko. Il est donc construit ici et attache
+# a une release, ou un utilisateur Windows le telecharge d'un clic (ADR-027).
+#
+# La construction tourne sur `windows-latest`, et non sur le runner Linux moins cher :
+# `scripts/sea.ts` sait deja produire un binaire `win-x64` depuis n'importe quel systeme,
+# mais rien ne verifiait qu'il *demarre*. C'est cette verification qui justifie le poste
+# Windows — l'etape « fumee » ci-dessous lance le binaire produit, ouvre l'interface et
+# lui demande une ressource embarquee.
+
+on:
+  push:
+    branches: ["**"]
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  construire:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # La version de Node du runner devient celle du binaire : `scripts/sea.ts`
+      # telecharge le `node.exe` officiel de la version qui l'execute. Node 24, donc,
+      # comme l'exige `engines`.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run typecheck
+
+      - run: npm run build:sea
+
+      - name: Empreinte
+        shell: pwsh
+        run: |
+          $empreinte = (Get-FileHash dist/annuaire.exe -Algorithm SHA256).Hash.ToLower()
+          "$empreinte  annuaire.exe" | Out-File -FilePath dist/annuaire.exe.sha256 -Encoding ascii
+          Get-Content dist/annuaire.exe.sha256
+
+      - name: Fumee — la CLI repond
+        shell: pwsh
+        run: |
+          $exe = "$PWD\dist\annuaire.exe"
+          & $exe --version
+          if ($LASTEXITCODE -ne 0) { throw "« annuaire --version » a echoue" }
+          # `status` ouvre la base : migrations, purge de demarrage, node:sqlite. C'est
+          # la partie du produit qu'un bundle mal emballe casse en premier.
+          & $exe status --data-dir "$env:RUNNER_TEMP\annuaire-fumee"
+          if ($LASTEXITCODE -ne 0) { throw "« annuaire status » a echoue" }
+
+      - name: Fumee — l'interface demarre et sert ses ressources
+        shell: pwsh
+        run: |
+          $sortie = "$env:RUNNER_TEMP\ui.out"
+          $erreur = "$env:RUNNER_TEMP\ui.err"
+          $process = Start-Process -FilePath "$PWD\dist\annuaire.exe" `
+            -ArgumentList "ui","--port","8787","--sans-navigateur","--data-dir","$env:RUNNER_TEMP\annuaire-ui" `
+            -RedirectStandardOutput $sortie -RedirectStandardError $erreur -PassThru
+          try {
+            # L'adresse porte le jeton tire au demarrage : sans lui, l'interface repond 401.
+            $url = $null
+            foreach ($essai in 1..40) {
+              Start-Sleep -Milliseconds 500
+              if (Test-Path $sortie) {
+                $trouve = Select-String -Path $sortie -Pattern 'http://127\.0\.0\.1:8787/\?jeton=\S+'
+                if ($trouve) { $url = $trouve.Matches[0].Value; break }
+              }
+              if ($process.HasExited) { break }
+            }
+            if (-not $url) {
+              Get-Content $sortie -ErrorAction SilentlyContinue
+              Get-Content $erreur -ErrorAction SilentlyContinue
+              throw "L'interface n'a pas imprime son adresse"
+            }
+            $session = $null
+            $page = Invoke-WebRequest -Uri $url -SessionVariable session -UseBasicParsing
+            if ($page.StatusCode -ne 200) { throw "L'interface a repondu $($page.StatusCode)" }
+            # htmx n'est pas un fichier voisin dans l'executable : il vient de
+            # `sea.getAsset`. Le demander verifie que les ressources ont bien ete injectees.
+            $asset = Invoke-WebRequest -Uri "http://127.0.0.1:8787/assets/htmx.min.js" `
+              -WebSession $session -UseBasicParsing
+            if ($asset.StatusCode -ne 200) { throw "htmx absent des ressources du binaire" }
+            if ($asset.RawContentLength -lt 10000) { throw "htmx servi tronque : $($asset.RawContentLength) octets" }
+            "Interface OK, htmx servi ($($asset.RawContentLength) octets)."
+          } finally {
+            if (-not $process.HasExited) { Stop-Process -Id $process.Id -Force }
+          }
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: annuaire-windows-x64
+          path: |
+            dist/annuaire.exe
+            dist/annuaire.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  suite:
+    # La suite complete sur Windows, dans son propre job : ce systeme est le seul ou le
+    # produit est distribue sans Node, et donc le seul ou une regression de chemins ou de
+    # fins de ligne passerait inapercue. Separe de `construire` a dessein — un test rouge
+    # ici ne doit pas priver d'un binaire a inspecter, mais il interdit la release.
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+  publier:
+    # Seuls les tags `v*` publient. Les autres branches s'arretent a l'artefact de build,
+    # telechargeable depuis la page du run pendant trente jours.
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [construire, suite]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: annuaire-windows-x64
+          path: dist
+
+      - name: Creer la release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          notes=$(mktemp)
+          {
+            echo "Executable Windows portable, x64. Un fichier, rien a installer :"
+            echo "telecharger \`annuaire.exe\`, double-cliquer, l'interface s'ouvre dans le navigateur."
+            echo
+            echo "Cet executable **n'est pas signe** : SmartScreen previendra au premier lancement"
+            echo "(« Informations complementaires », puis « Executer quand meme »). Empreinte a verifier :"
+            echo
+            echo '```'
+            cat dist/annuaire.exe.sha256
+            echo '```'
+          } > "$notes"
+          gh release create "$GITHUB_REF_NAME" \
+            dist/annuaire.exe dist/annuaire.exe.sha256 \
+            --title "$GITHUB_REF_NAME" --notes-file "$notes"
