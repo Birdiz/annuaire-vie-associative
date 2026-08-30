@@ -36,3 +36,4 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [027](027-drapeau-des-mobiles-et-avancement-du-run.md) | Le drapeau des mobiles à l'écran, et l'avancement du run | Acceptée |
 | [028](028-publication-de-l-executable.md) | Publier l'exécutable, et le vérifier là où il tourne | Acceptée |
 | [029](029-portee-et-vocabulaire-de-l-interface.md) | Une barre de portée, et le vocabulaire de l'utilisateur | Acceptée |
+| [030](030-reparer-une-arobase-masquee.md) | Réparer une arobase masquée, et rien d'autre | Acceptée |

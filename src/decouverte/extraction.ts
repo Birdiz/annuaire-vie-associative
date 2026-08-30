@@ -47,6 +47,22 @@ const CONFIANCE_MOTIF = 0.6;
 const CONFIANCE_OBFUSQUE = 0.45;
 
 /**
+ * Un `mailto:` dont la seule arobase est masquee par un litteral.
+ *
+ * Entre les deux valeurs voisines, et pas par gout du milieu. La page **declare** un lien
+ * de courriel : c'est le meme signal que `CONFIANCE_DOM`, le plus fort dont on dispose.
+ * Mais l'adresse rendue n'est pas celle qui est ecrite dans la page, et une provenance
+ * honnete ne peut pas donner a une reconstruction la note d'une lecture. Elle reste
+ * nettement au-dessus de `CONFIANCE_OBFUSQUE`, qui paie une inference autrement plus
+ * hardie : la, on devine l'arobase *et* le point a partir de mots de prose.
+ *
+ * Le chiffre a une consequence directe : `base` du score vaut `confiance`, et le score ne
+ * fait ensuite que descendre. A 0,45 ces adresses resteraient sous le seuil d'export
+ * courant de 0,6 — reparees, mais toujours absentes du fichier livre.
+ */
+const CONFIANCE_DOM_REPARE = 0.75;
+
+/**
  * **Les quantificateurs sont bornes, et ce n'est pas de la coquetterie.**
  *
  * Un `+` gourmand sur une classe large, ancre par un caractere qui n'arrive jamais dans
@@ -72,6 +88,38 @@ const EMAIL = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})
  */
 const EMAIL_OBFUSQUE =
   /([A-Za-z0-9._%+-]{1,64})\s{0,8}(?:\[|\()?\s{0,8}(?:at|arobase|chez)\s{0,8}(?:\]|\))?\s{0,8}([A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*?)\s{0,8}(?:\[|\()?\s{0,8}(?:dot|point)\s{0,8}(?:\]|\))?\s{0,8}([A-Za-z]{2,24})/gi;
+
+/**
+ * L'arobase remplacee par un litteral, dans le `href` d'un `mailto:`.
+ *
+ * Un CMS repandu chez les petites communes ecrit `abcdanse[^@]gmail.com` et laisse un
+ * script de la page reposer l'arobase cote client. Nous n'executons pas de script
+ * (invariant 1), et le lot 5 a mesure 138 adresses ainsi cassees sur le seul
+ * Ille-et-Vilaine : acceptees par le motif large de l'extraction, refusees par la
+ * validation syntaxique, notees zero, et deversees dans la file de revue ou il fallait
+ * les reparer une par une.
+ *
+ * **Pourquoi celui-la se repare sans rien deviner.** Ni `[` ni `]` n'ont le droit de
+ * figurer dans une partie locale non guillemetee : la substitution ne peut donc pas
+ * abimer une adresse valide, puisqu'aucune adresse valide ne contient ce motif. C'est ce
+ * qui la distingue d'une desobfuscation generale — deduire une arobase du mot « at »
+ * dans de la prose reste une inference, et garde sa confiance basse.
+ *
+ * On ne reconnait **que ce litteral**, et non toute paire de crochets : l'ADR-017 avait
+ * laisse la desobfuscation ouverte, et l'ouvrir en grand n'est pas la refermer.
+ */
+const AROBASE_MASQUEE = "[^@]";
+
+/**
+ * Rend l'adresse reparee, ou `undefined` si elle n'a pas ce defaut — ou si la reparation
+ * ne donne pas exactement une arobase, auquel cas on a affaire a autre chose et on ne
+ * touche a rien.
+ */
+export function reparerArobaseMasquee(brut: string): string | undefined {
+  if (!brut.includes(AROBASE_MASQUEE)) return undefined;
+  const repare = brut.replace(AROBASE_MASQUEE, "@");
+  return repare.split("@").length === 2 ? repare : undefined;
+}
 
 /** Fixe francais ou mobile, avec les separateurs usuels, ou forme internationale. */
 const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/g;
@@ -140,7 +188,14 @@ export function extraireContacts(
     const bas = lien.href.toLowerCase();
     if (bas.startsWith("mailto:")) {
       const adresse = decoderSansEchec(lien.href.slice("mailto:".length)).split("?")[0] ?? "";
-      for (const part of adresse.split(",")) ajouterEmail(part, "dom:mailto", CONFIANCE_DOM, lien.href);
+      for (const part of adresse.split(",")) {
+        // La reparation est tentee avant le nettoyage : `nettoyerEmail` accepte
+        // `nom[^@]domaine.fr` — il y voit une arobase et du texte de part et d'autre — et
+        // l'adresse partait en base telle quelle pour n'etre refusee qu'a la validation.
+        const repare = reparerArobaseMasquee(part);
+        if (repare === undefined) ajouterEmail(part, "dom:mailto", CONFIANCE_DOM, lien.href);
+        else ajouterEmail(repare, "dom:mailto+repare", CONFIANCE_DOM_REPARE, lien.href);
+      }
     } else if (bas.startsWith("tel:")) {
       ajouterTelephone(decoderSansEchec(lien.href.slice("tel:".length)), "dom:tel", CONFIANCE_DOM, lien.href);
     }
@@ -224,7 +279,17 @@ function decoderSansEchec(valeur: string): string {
  * base.
  */
 export function nettoyerEmail(brut: string): string | undefined {
-  const valeur = brut.trim().replace(/^[<("']+/, "").replace(/[>)"',.;]+$/, "");
+  const valeur = brut
+    .trim()
+    .replace(/^[<("']+/, "")
+    // Le schema d'URL n'appartient pas a l'adresse. Il survivait par deux chemins : un
+    // `href="mailto:mailto:club@asso.fr"` — le prefixe pose deux fois par un CMS, dont
+    // l'extraction ne retire que le premier — et un lien colle tel quel dans la case de
+    // correction de la revue. Dans les deux cas l'adresse partait en base avec son
+    // prefixe, echouait a la validation syntaxique (`:` n'a pas droit de cite dans une
+    // partie locale), tombait a zero et revenait en revue.
+    .replace(/^(?:mailto:)+/i, "")
+    .replace(/[>)"',.;]+$/, "");
   if (!/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(valeur)) return undefined;
   if (EXTENSIONS_IMAGE.test(valeur)) return undefined;
   if (valeur.length > 254) return undefined;

@@ -6,6 +6,7 @@ import {
   classerEmail,
   estMobile,
   extraireContacts,
+  nettoyerEmail,
   normaliserTelephone,
 } from "../../src/decouverte/extraction.ts";
 import { LONGUEUR_MIN_NOM, indexerAssociations, rattacher } from "../../src/decouverte/rattachement.ts";
@@ -233,4 +234,84 @@ test("INVARIANT §4.7 : le doute reste le doute plutot que de devenir une foncti
   assert.equal(classerEmail("vie.associative@x.example"), 1);
   assert.equal(classerEmail("service.sports@x.example"), 1);
   assert.equal(classerEmail("secretariat.mairie@x.example"), 1);
+});
+
+/**
+ * L'arobase masquee par `[^@]` dans un `mailto:`.
+ *
+ * Le lot 5 en avait mesure 138 sur le seul Ille-et-Vilaine : un CMS repandu chez les
+ * petites communes ecrit `abcdanse[^@]gmail.com` et laisse un script de la page reposer
+ * l'arobase cote client. Nous n'executons pas de script. Le motif large de l'extraction
+ * les acceptait telles quelles — il y voit une arobase entouree de texte — et c'est la
+ * validation syntaxique qui les refusait, trois etapes plus loin, en les notant zero.
+ */
+
+test("l'arobase masquee par un litteral est reposee, et la methode le dit", () => {
+  const { contacts } = extraire(
+    `<p><a href="mailto:alp.basket35[^@]orange.fr">nous ecrire</a></p>`,
+  );
+
+  const trouve = contacts.find((contact) => contact.valeurNormalisee === "alp.basket35@orange.fr");
+  assert.ok(trouve !== undefined, "l'adresse doit sortir reparee");
+  assert.equal(trouve.valeur, "alp.basket35@orange.fr");
+  // La provenance ne doit pas laisser croire que la page portait cette chaine-la.
+  assert.equal(trouve.methode, "dom:mailto+repare");
+});
+
+test("une adresse reparee vaut moins qu'une lecture, et plus qu'une reconstruction de prose", () => {
+  const lue = extraire(`<p><a href="mailto:club@asso.example">a</a></p>`).contacts[0];
+  const reparee = extraire(`<p><a href="mailto:club[^@]asso.example">a</a></p>`).contacts[0];
+  const devinee = extraire(`<p>club [at] asso [dot] example</p>`).contacts[0];
+
+  assert.ok((reparee?.confiance ?? 0) < (lue?.confiance ?? 0), "ce n'est pas ce que la page ecrit");
+  assert.ok(
+    (reparee?.confiance ?? 0) > (devinee?.confiance ?? 0),
+    "la page declare quand meme un lien de courriel, et la substitution ne devine rien",
+  );
+  // `base` du score vaut `confiance` et le score ne fait que descendre : sous 0,6, ces
+  // adresses resteraient absentes du fichier livre au seuil courant.
+  assert.ok((reparee?.confiance ?? 0) > 0.6, "reparer sans franchir le seuil d'export ne servirait a rien");
+});
+
+test("la reparation ne touche qu'a ce litteral, et jamais a une adresse deja valide", () => {
+  // Aucune adresse valide ne contient de crochets : la substitution ne peut rien abimer.
+  const saine = extraire(`<p><a href="mailto:club@asso.example">a</a></p>`).contacts[0];
+  assert.equal(saine?.methode, "dom:mailto", "une adresse intacte n'est pas 'reparee'");
+
+  // Deux arobases apres substitution : on a affaire a autre chose, on ne touche a rien.
+  const { contacts } = extraire(`<p><a href="mailto:club@asso[^@]example.fr">a</a></p>`);
+  assert.ok(
+    contacts.every((contact) => contact.methode !== "dom:mailto+repare"),
+    "un resultat ambigu ne se repare pas",
+  );
+});
+
+/**
+ * Le schema `mailto:` n'appartient pas a l'adresse.
+ *
+ * L'extraction ne retire que le premier : `href="mailto:mailto:club@asso.fr"` — un CMS
+ * qui pose le prefixe deux fois — laissait le second dans la valeur. Meme trajet que
+ * l'arobase masquee : accepte a l'extraction, refuse a la validation puisque `:` n'a pas
+ * droit de cite dans une partie locale, note zero, et renvoye a la revue.
+ */
+
+test("le schema mailto: ne reste pas colle a l'adresse", () => {
+  const { contacts } = extraire(`<p><a href="mailto:mailto:club@asso.example">a</a></p>`);
+
+  assert.equal(contacts[0]?.valeur, "club@asso.example");
+  assert.equal(contacts[0]?.valeurNormalisee, "club@asso.example");
+});
+
+test("le nettoyage est le meme pour une adresse lue et pour une adresse saisie en revue", () => {
+  // Deux regles de forme differentes produiraient deux populations que rien ne distingue
+  // en base : c'est le contrat de `nettoyerEmail`, et un lien colle dans la case de
+  // correction est le cas courant.
+  for (const saisie of [
+    "mailto:club@asso.example",
+    "MAILTO:club@asso.example",
+    "<mailto:club@asso.example>",
+    "  mailto:club@asso.example  ",
+  ]) {
+    assert.equal(nettoyerEmail(saisie), "club@asso.example", `saisie non nettoyee : ${saisie}`);
+  }
 });
