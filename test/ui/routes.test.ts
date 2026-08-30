@@ -173,7 +173,7 @@ test("le fragment de suivi est du HTML nu, sans page autour", (t) => {
   const reponse = router(ctx, requete("/suivi"));
   assert.equal(reponse.statut, 200);
   assert.doesNotMatch(corpsTexte(reponse.corps), /<!doctype html>/);
-  assert.match(corpsTexte(reponse.corps), /Aucun run en cours/);
+  assert.match(corpsTexte(reponse.corps), /Aucune collecte en cours/);
 });
 
 test("l'export streame le CSV du lot 5, sans variante propre a l'UI", (t) => {
@@ -295,19 +295,19 @@ test("POST /run par htmx rend le seul bloc de suivi", (t) => {
 
   assert.equal(reponse.statut, 200);
   assert.doesNotMatch(corps, /<!doctype html>/);
-  assert.match(corps, /Arreter le run/, "un run en cours s'arrete, il ne se relance pas");
+  assert.match(corps, /Arrêter la collecte/, "un run en cours s'arrete, il ne se relance pas");
 });
 
 test("un refus de lancement survit au rafraichissement du bloc de suivi", (t) => {
   const ctx = contexte(t);
-  ctx.pilote.repondre({ kind: "refus", message: "Un run est deja en cours dans cette interface." });
+  ctx.pilote.repondre({ kind: "refus", message: "Une collecte est déjà en cours dans cette interface." });
 
   router(ctx, post(`/run?departement=${DEPARTEMENT}`, `departement=${DEPARTEMENT}`, true));
 
   // Le bloc se reechange toutes les deux secondes : un message rendu une seule fois
   // dans la reponse au POST aurait disparu avant d'etre lu.
   const suivi = router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`));
-  assert.match(corpsTexte(suivi.corps), /Un run est deja en cours/);
+  assert.match(corpsTexte(suivi.corps), /Une collecte est déjà en cours/);
 });
 
 test("POST /run/arret demande l'arret", (t) => {
@@ -341,7 +341,7 @@ test("POST /reglages enregistre l'URL de contact, et le bouton apparait", (t) =>
 
   assert.equal(reponse.statut, 200);
   assert.deepEqual(ctx.reglages.ecrites, ["https://exemple.example/nous-ecrire"]);
-  assert.match(corpsTexte(router(ctx, requete("/suivi")).corps), /Lancer le run complet/);
+  assert.match(corpsTexte(router(ctx, requete("/suivi")).corps), /Lancer la collecte complète/);
 });
 
 test("une URL de contact invalide est refusee sur place, sans passer par l'URL", (t) => {
@@ -376,11 +376,11 @@ test("un run que cette interface ne pilote pas est signale, sans bloquer le bout
 
   assert.match(
     suivi,
-    /<li class="courante">Decouverte<\/li>/,
+    /<li class="courante">Découverte<\/li>/,
     "la phase vient de la base, pas de la memoire de l'interface",
   );
-  assert.match(suivi, /n'est pas pilote depuis cette interface/);
-  assert.match(suivi, /Lancer le run complet/, "une ligne orpheline ne doit pas condamner l'interface");
+  assert.match(suivi, /n'est pas pilotée depuis cette interface/);
+  assert.match(suivi, /Lancer la collecte complète/, "une ligne orpheline ne doit pas condamner l'interface");
 });
 
 /**
@@ -413,11 +413,11 @@ test("la revue ne compte comme « a arbitrer » que ce qui est note", (t) => {
 
   const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
 
-  assert.match(ecran, /0 pret a arbitrer/, "la file est vide, le compteur doit le dire");
+  assert.match(ecran, /0 prêt à arbitrer/, "la file est vide, le compteur doit le dire");
   assert.match(ecran, /en attente de notation/);
   assert.doesNotMatch(
     ecran,
-    /Rien a arbitrer pour ce departement\./,
+    /Rien à arbitrer pour ce département\./,
     "cette phrase promet qu'il n'y a plus rien a faire, ce qui est faux tant que [8] n'est pas passee",
   );
 });
@@ -429,8 +429,8 @@ test("pendant un run pilote, la revue le dit et n'invite pas a lancer la normali
 
   const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
 
-  assert.match(ecran, /Run en cours sur le departement 35/);
-  assert.match(ecran, /Rien a arbitrer pour l'instant/);
+  assert.match(ecran, /Collecte en cours sur le département 35/);
+  assert.match(ecran, /Rien à arbitrer pour l'instant/);
   assert.doesNotMatch(
     ecran,
     /Lancez <code>annuaire normaliser/,
@@ -443,8 +443,8 @@ test("pendant un run pilote, l'export est retire et l'URL du fichier refuse", (t
   lancerRunPilote(ctx);
 
   const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
-  assert.match(ecran, /Run en cours sur le departement 35/);
-  assert.doesNotMatch(ecran, /Telecharger l'annuaire/, "un bouton grise invite a chercher comment l'activer");
+  assert.match(ecran, /Collecte en cours sur le département 35/);
+  assert.doesNotMatch(ecran, /Télécharger l'annuaire/, "un bouton grise invite a chercher comment l'activer");
 
   // Le bouton retire ne suffit pas : l'URL du formulaire se garde en favori.
   const fichier = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`));
@@ -459,8 +459,8 @@ test("une ligne de run orpheline previent mais ne barre ni l'export ni la revue"
     .run(DEPARTEMENT, "2026-09-01T09:00:00.000Z");
 
   const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
-  assert.match(ecran, /sans etre pilote depuis cette interface/);
-  assert.match(ecran, /Telecharger le fichier/, "un reste de kill -9 ne doit pas condamner l'export");
+  assert.match(ecran, /sans être pilotée depuis cette interface/);
+  assert.match(ecran, /Télécharger le fichier/, "un reste de kill -9 ne doit pas condamner l'export");
 
   assert.equal(router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`)).statut, 200);
 });
@@ -570,7 +570,7 @@ test("la barre de decouverte compte des communes, jamais des pages", (t) => {
   ouvrirRun(ctx, "decouverte");
 
   // Une seconde commune, planifiee mais pas encore exploree : le corpus n'en a qu'une,
-  // toutes pages visitees, ce qui donnerait une barre pleine sans rien prouver.
+  // toutes pages visitées, ce qui donnerait une barre pleine sans rien prouver.
   ctx.db
     .prepare(
       "INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution, " +
@@ -589,13 +589,13 @@ test("la barre de decouverte compte des communes, jamais des pages", (t) => {
   const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(suivi, /<progress max="2" value="1"/, "une commune sur deux est exploree");
-  assert.match(suivi, /1 sur 2 communes explorees/);
+  assert.match(suivi, /1 sur 2 communes explorées/);
   // Les pages sont dites en chiffre, sans denominateur qui pretendrait etre un reste :
   // le crawl en enfile de nouvelles a chaque lien retenu.
-  assert.match(suivi, /pages visitees sur \d+ planifiees/);
+  assert.match(suivi, /pages visitées sur \d+ planifiées/);
 });
 
-test("la barre de normalisation compte les contacts notes a la version courante", (t) => {
+test("la barre de normalisation compte les contacts notés a la version courante", (t) => {
   const ctx = contexte(t);
   ouvrirRun(ctx, "normalisation");
 
@@ -609,7 +609,7 @@ test("la barre de normalisation compte les contacts notes a la version courante"
   const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(suivi, new RegExp(`<progress max="${total}" value="1"`));
-  assert.match(suivi, /contacts notes/);
+  assert.match(suivi, /contacts notés/);
 });
 
 test("l'amorce sans dump ouvert affiche son etape, mais aucune barre", (t) => {
@@ -645,7 +645,7 @@ test("l'amorce compte en octets ce que le dump a consomme", (t) => {
   assert.match(suivi, /512 Mo sur 1,25 Go lus/, "les octets bruts ne se lisent pas");
   assert.match(
     suivi,
-    /jamais ecrit sur le disque/,
+    /jamais écrit sur le disque/,
     "le registre est lu en flux : l'ecran ne doit pas laisser croire a un fichier telecharge",
   );
 });
@@ -679,7 +679,7 @@ test("un refus de basculement ne s'affiche pas aussi dans le bloc de suivi", (t)
  * rendre une erreur.
  */
 
-/** Ajoute des contacts notes, du plus sur au moins sur, pour remplir plusieurs pages. */
+/** Ajoute des contacts notés, du plus sur au moins sur, pour remplir plusieurs pages. */
 function remplirLaFile(ctx: ContexteTest, combien: number): void {
   const inserer = ctx.db.prepare(
     "INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, is_generique, source_url, " +
@@ -787,9 +787,9 @@ test("un departement jamais amorce s'ouvre, et l'ecran dit qu'il est vide", (t) 
   const ecran = corpsTexte(router(ctx, requete("/?departement=88")).corps);
 
   assert.match(ecran, /value="88"/, "le departement demande est celui qu'on affiche");
-  assert.match(ecran, /Jamais amorce/, "un ecran de zeros ne dit pas s'il est vide ou non collecte");
-  assert.match(ecran, /Deja en base : /, "les departements deja collectes restent joignables");
-  assert.match(ecran, /Lancer le run complet/, "c'est le run qui amorcera ce departement");
+  assert.match(ecran, /Jamais amorcé/, "un ecran de zeros ne dit pas s'il est vide ou non collecte");
+  assert.match(ecran, /Déjà en base : /, "les departements deja collectes restent joignables");
+  assert.match(ecran, /Lancer la collecte complète/, "c'est le run qui amorcera ce departement");
 });
 
 test("un code de departement malforme est refuse, sans emporter l'ecran", (t) => {
@@ -819,9 +819,9 @@ test("le departement ne se redit plus dans les libelles d'action", (t) => {
 
   // La barre de portee le dit une fois. Repete sur chaque bouton, il donnait a l'outil
   // l'air d'etre soude a un departement dont on ne pouvait pas sortir.
-  assert.doesNotMatch(synthese, /Lancer le run complet sur le departement/);
-  assert.doesNotMatch(exporter, /Telecharger l'annuaire du departement/);
-  assert.match(exporter, /Telecharger le fichier/);
+  assert.doesNotMatch(synthese, /Lancer la collecte complète sur le département/);
+  assert.doesNotMatch(exporter, /Télécharger l'annuaire du département/);
+  assert.match(exporter, /Télécharger le fichier/);
 });
 
 test("aucun ecran n'affiche de reference ADR ou de numero de paragraphe du brief", (t) => {
@@ -893,7 +893,7 @@ test("le mode d'emploi couvre ce qu'on ne peut pas deviner de l'ecran", (t) => {
   // Les quatre choses qu'un utilisateur non technicien ne peut pas inferer seul, et dont
   // chacune a produit une question.
   assert.match(aide, /deux secondes entre/, "la lenteur doit etre expliquee, pas subie");
-  assert.match(aide, /tout reprend ou\s+cela s'etait arrete/, "on peut fermer l'outil sans rien perdre");
+  assert.match(aide, /tout reprend où\s+cela s'était arrêté/, "on peut fermer l'outil sans rien perdre");
   assert.match(aide, /article 14 du RGPD/, "l'obligation d'information n'est pas devinable");
   assert.match(aide, /57, le 67 et le 68/, "un departement hors champ doit se dire avant l'essai");
 });

@@ -178,7 +178,7 @@ function assertExactementUneFois(etat: Etat): void {
   assert.equal(
     etat.compteurs["decouverte"]?.["pages_visitees"],
     visitees,
-    "le compteur de pages visitees ne correspond pas aux pages en base : un effet a ete perdu ou rejoue",
+    "le compteur de pages visitées ne correspond pas aux pages en base : un effet a ete perdu ou rejoue",
   );
   assert.equal(
     etat.compteurs["extraction"]?.["contacts_ecrits"],

@@ -131,28 +131,28 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
 
   const entete =
     enCours === undefined
-      ? `<p class="discret">Aucun run en cours.${
-          actifs > 0 ? ` ${nombre(actifs)} jobs restent en attente dans la file.` : ""
+      ? `<p class="discret">Aucune collecte en cours.${
+          actifs > 0 ? ` ${nombre(actifs)} travaux restent en attente dans la file.` : ""
         }</p>`
-      : `<p><strong>Run #${enCours.id}</strong> sur le departement ${echapperHtml(enCours.departement)}, ` +
-        `demarre le ${dateHeure(enCours.started_at)}${ecoule(enCours.started_at, suivi.maintenant)}` +
-        ` — ${nombre(actifs)} jobs a traiter.</p>`;
+      : `<p><strong>Collecte n° ${enCours.id}</strong> sur le département ${echapperHtml(enCours.departement)}, ` +
+        `démarrée le ${dateHeure(enCours.started_at)}${ecoule(enCours.started_at, suivi.maintenant)}` +
+        ` — ${nombre(actifs)} travaux à traiter.</p>`;
 
   // Une ligne restee 'en_cours' apres un kill -9 ne doit pas condamner l'interface : on
   // le dit, et on laisse relancer. C'est vrai par l'invariant 9, pas par optimisme.
   const orphelin =
     enCours !== undefined && pilote.kind !== "en_cours"
-      ? `<p class="avis">Ce run n'est pas pilote depuis cette interface. S'il tourne dans un
-         terminal, laissez-le finir ; s'il a ete interrompu brutalement, relancer est sans
-         risque — rien ne sera rejoue.</p>`
+      ? `<p class="avis">Cette collecte n'est pas pilotée depuis cette interface. Si elle tourne
+         dans un terminal, laissez-la finir ; si elle a été interrompue brutalement, relancer est
+         sans risque — rien ne sera rejoué.</p>`
       : "";
 
   const file = tableau(ETATS_JOB, [ETATS_JOB.map((etat) => `<span class="n">${nombre(suivi.jobs[etat])}</span>`)]);
 
   const runs = tableau(
-    ["run", "departement", "statut", "debut", "duree"],
+    ["collecte", "département", "statut", "début", "durée"],
     suivi.runs.map((run) => [
-      `#${run.id}`,
+      `n° ${run.id}`,
       echapperHtml(run.departement),
       echapperHtml(run.statut),
       dateHeure(run.started_at),
@@ -161,7 +161,7 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
   );
 
   return `${commandes(suivi)}\n${orphelin}\n${entete}\n${progression(suivi.progression)}\n${file}
-<h3>Derniers runs</h3>\n${runs}`;
+<h3>Dernières collectes</h3>\n${runs}`;
 }
 
 /** « (il y a 12 min) », ou rien si l'horodatage est illisible. */
@@ -209,8 +209,8 @@ function progression(progression: Progression | undefined): string {
   const avancement = progression.avancement;
   if (avancement === undefined) {
     return `<ol class="etapes">${etapes}</ol>
-<p class="discret">Cette passe n'a pas encore de decompte : elle vient de commencer, et la
-base n'a pas de quoi en calculer un qui ne soit pas invente.</p>`;
+<p class="discret">Cette étape n'a pas encore de décompte : elle vient de commencer, et la
+base n'a pas de quoi en calculer un qui ne soit pas inventé.</p>`;
   }
 
   const detail =
@@ -232,16 +232,16 @@ function commandes(suivi: DonneesSuivi): string {
 
   if (suivi.pilote.kind === "en_cours") {
     return `<form method="post" action="/run/arret" hx-post="/run/arret" hx-target="#suivi" class="commandes">
-  <button type="submit">Arreter le run</button>
-  <span class="discret">Les requetes en cours vont finir : rien ne sera perdu, et relancer reprendra ou l'on s'arrete.</span>
+  <button type="submit">Arrêter la collecte</button>
+  <span class="discret">Les requêtes en cours vont finir : rien ne sera perdu, et relancer reprendra où l'on s'arrête.</span>
 </form>
-${mentionMobiles(suivi.pilote.avecMobiles, "Ce run conserve")}${refus}`;
+${mentionMobiles(suivi.pilote.avecMobiles, "Cette collecte conserve")}${refus}`;
   }
 
   const issue =
     suivi.pilote.kind === "fini"
-      ? `<p class="${suivi.pilote.issue === "echec" ? "refus" : "discret"}">Dernier run pilote d'ici sur le
-         departement ${echapperHtml(suivi.pilote.departement)} : ${echapperHtml(suivi.pilote.issue)}${
+      ? `<p class="${suivi.pilote.issue === "echec" ? "refus" : "discret"}">Dernière collecte pilotée d'ici,
+         sur le département ${echapperHtml(suivi.pilote.departement)} : ${echapperHtml(LIBELLE_ISSUE[suivi.pilote.issue] ?? suivi.pilote.issue)}${
            suivi.pilote.message === undefined ? "" : ` — ${echapperHtml(suivi.pilote.message)}`
          }.</p>`
       : "";
@@ -257,17 +257,17 @@ ${issue}${refus}`;
   // lu devant un run complet il faisait croire a un mode d'essai.
   return `<form method="post" action="/run" hx-post="/run" hx-target="#suivi" class="commandes">
   <input type="hidden" name="departement" value="${departement}">
-  <button type="submit" class="primaire">Lancer le run complet</button>
-  <span class="discret">Les trois passes a la suite : lecture du registre national des associations,
-  decouverte des sites de mairie (20 pages par commune), puis normalisation et notation.
-  <strong>Comptez plusieurs heures</strong> — le delai de 2 s entre deux requetes vers un meme
-  site en fixe le plancher. Le run se reprend ou il s'arrete : fermer l'outil ne perd rien.</span>
+  <button type="submit" class="primaire">Lancer la collecte complète</button>
+  <span class="discret">Les trois étapes à la suite : lecture du registre national des associations,
+  découverte des sites de mairie (20 pages par commune), puis normalisation et notation.
+  <strong>Comptez plusieurs heures</strong> — le délai de 2 s entre deux requêtes vers un même
+  site en fixe le plancher. La collecte se reprend où elle s'arrête : fermer l'outil ne perd rien.</span>
 </form>
-<p class="discret">Le registre national fait 1,25 Go et n'est <strong>pas conserve sur cette
-machine</strong> : il est lu au fil de l'eau et seules les lignes de ce departement sont gardees.
-Une interruption reprend a l'octet ou elle s'est arretee, mais ouvrir un autre departement
-relit le registre depuis le debut.</p>
-${mentionMobiles(suivi.mobilesActifs, "Ce run conservera")}${issue}${refus}`;
+<p class="discret">Le registre national fait 1,25 Go et n'est <strong>pas conservé sur cette
+machine</strong> : il est lu au fil de l'eau et seules les lignes de ce département sont gardées.
+Une interruption reprend à l'octet où elle s'est arrêtée, mais ouvrir un autre département
+relit le registre depuis le début.</p>
+${mentionMobiles(suivi.mobilesActifs, "Cette collecte conservera")}${issue}${refus}`;
 }
 
 /**
@@ -279,16 +279,23 @@ ${mentionMobiles(suivi.mobilesActifs, "Ce run conservera")}${issue}${refus}`;
  */
 function mentionMobiles(actif: boolean, verbe: string): string {
   if (!actif) return "";
-  return `<p class="avertissement">${echapperHtml(verbe)} les numeros mobiles (06/07). Ils
-    designent presque toujours une personne physique : vous en etes responsable de
+  return `<p class="avertissement">${echapperHtml(verbe)} les numéros mobiles (06/07). Ils
+    désignent presque toujours une personne physique : vous en êtes responsable de
     traitement.</p>`;
 }
 
 /** Le libelle des passes du run, en francais plutot qu'en nom de phase interne. */
 const LIBELLE_PHASE: Record<string, string> = {
   amorce: "Amorce",
-  decouverte: "Decouverte",
+  decouverte: "Découverte",
   normalisation: "Normalisation",
+};
+
+/** Meme raison : `echec` et `interrompu` sont des valeurs de colonne, pas des mots. */
+const LIBELLE_ISSUE: Record<string, string> = {
+  termine: "terminée",
+  interrompu: "interrompue",
+  echec: "échec",
 };
 
 /**
@@ -303,17 +310,17 @@ export function fragmentReglages(reglages: DonneesReglages): string {
 
   if (reglages.parEnvironnement) {
     return `<p class="discret">URL de contact : <code>${echapperHtml(reglages.contactUrl)}</code>,
-      fixee par la variable d'environnement <code>ANNUAIRE_CONTACT_URL</code>. Elle l'emporte
+      fixée par la variable d'environnement <code>ANNUAIRE_CONTACT_URL</code>. Elle l'emporte
       sur le fichier de configuration.</p>`;
   }
 
   const explication =
     reglages.contactUrl === undefined
-      ? `<p class="avis">Aucune URL de contact n'est configuree. Elle est annoncee dans le
-         User-Agent de chaque requete pour qu'un webmestre puisse vous joindre, et
-         <strong>aucune collecte ne part sans elle</strong>. Une page « contact » ou une adresse
-         de service convient.</p>`
-      : `<p class="discret">URL de contact annoncee dans le User-Agent :
+      ? `<p class="avis">Aucune URL de contact n'est configurée. Elle est annoncée à chaque page
+         visitée pour qu'un webmestre puisse vous joindre, et
+         <strong>aucune collecte ne part sans elle</strong>. Une page « contact » ou une adresse de
+         service convient.</p>`
+      : `<p class="discret">URL de contact annoncée à chaque page visitée :
          <code>${echapperHtml(reglages.contactUrl)}</code>.</p>`;
 
   return `${explication}${erreur}${message}
@@ -347,30 +354,30 @@ export function fragmentMobiles(mobiles: DonneesMobiles): string {
   const inerte = mobiles.verrouille ? " disabled" : "";
 
   const explication = mobiles.actif
-    ? `<p class="avertissement"><strong>Les numeros mobiles (06/07) sont conserves.</strong>
-       Un mobile publie sur le site d'une commune est presque toujours la ligne personnelle
-       d'un benevole — president, secretaire — et non le telephone d'un local associatif. Il
-       identifie donc directement une personne physique : la base legale et la mise en
-       balance vous incombent, et l'obligation d'informer les personnes concernees
-       (art. 14 du RGPD) porte alors sur une donnee qui les designe. Ce choix ne vaut que
+    ? `<p class="avertissement"><strong>Les numéros mobiles (06/07) sont conservés.</strong>
+       Un mobile publié sur le site d'une commune est presque toujours la ligne personnelle
+       d'un bénévole — président, secrétaire — et non le téléphone d'un local associatif. Il
+       identifie donc directement une personne physique : la base légale et la mise en
+       balance vous incombent, et l'obligation d'informer les personnes concernées
+       (art. 14 du RGPD) porte alors sur une donnée qui les désigne. Ce choix ne vaut que
        pour cette session.</p>`
-    : `<p class="discret">Les numeros mobiles (06/07) sont <strong>exclus</strong>. Un mobile
-       publie sur le site d'une commune est presque toujours la ligne personnelle d'un
-       benevole plutot que le telephone d'un local associatif : le conserver ouvre un
-       traitement de donnees personnelles dont vous etes responsable. Les conserver reste
+    : `<p class="discret">Les numéros mobiles (06/07) sont <strong>exclus</strong>. Un mobile
+       publié sur le site d'une commune est presque toujours la ligne personnelle d'un
+       bénévole plutôt que le téléphone d'un local associatif : le conserver ouvre un
+       traitement de données personnelles dont vous êtes responsable. Les conserver reste
        possible, le temps de cette session seulement.</p>`;
 
   const verrou = mobiles.verrouille
-    ? `<p class="discret">Fige pendant le run : le choix est inscrit dans chaque page a
-       visiter des la planification, le changer maintenant ne changerait rien a ce qui est
-       collecte.</p>`
+    ? `<p class="discret">Figé pendant la collecte : le choix est inscrit dans chaque page à
+       visiter dès la planification, le changer maintenant ne changerait rien à ce qui est
+       collecté.</p>`
     : "";
 
   return `${explication}${refus}
 <form method="post" action="/mobiles" hx-post="/mobiles" hx-target="#mobiles" class="reglages">
   <label class="bascule">
     <input type="checkbox" name="avecMobiles" value="1"${mobiles.actif ? " checked" : ""}${inerte}>
-    Conserver les numeros mobiles 06/07 pendant cette session
+    Conserver les numéros mobiles 06/07 pendant cette session
   </label>
   <button type="submit"${inerte}>Appliquer</button>
 </form>
@@ -418,24 +425,24 @@ export function fragmentChiffres(donnees: DonneesSynthese): string {
     `<div class="chiffre"><b>${valeur}</b><span>${echapperHtml(libelle)}</span></div>`;
 
   const entonnoir = tableau(
-    ["etage", "volume", "commentaire"],
+    ["étage", "volume", "commentaire"],
     [
       [
         "associations actives",
         `<span class="n">${nombre(couverture.actives)}</span>`,
-        `dont ${nombre(dormance.nonDormantes)} ayant declare depuis le ${jour(dormance.borne)}`,
+        `dont ${nombre(dormance.nonDormantes)} ayant déclaré depuis le ${jour(dormance.borne)}`,
       ],
       [
-        "pages explorees",
+        "pages explorées",
         `<span class="n">${nombre(prefiltre?.total ?? 0)}</span>`,
-        prefiltre === undefined ? "aucune campagne de decouverte" : "derniere campagne",
+        prefiltre === undefined ? "aucune campagne de découverte" : "dernière campagne",
       ],
       [
         "pages retenues",
         `<span class="n">${nombre(prefiltre?.retenues ?? 0)}</span>`,
         prefiltre === undefined
           ? "—"
-          : `${pourcent(prefiltre.retenues, prefiltre.jugees)} des pages jugees`,
+          : `${pourcent(prefiltre.retenues, prefiltre.jugees)} des pages jugées`,
       ],
       [
         "contacts extraits",
@@ -443,19 +450,19 @@ export function fragmentChiffres(donnees: DonneesSynthese): string {
         `${nombre(normalisation.invalides)} sans forme exploitable`,
       ],
       [
-        "contacts notes",
+        "contacts notés",
         `<span class="n">${nombre(normalisation.notes)}</span>`,
-        `${nombre(revue.arbitres)} arbitres en revue`,
+        `${nombre(revue.arbitres)} arbitrés en revue`,
       ],
     ],
   );
 
   const mx = tableau(
-    ["verdict MX du domaine", "emails"],
+    ["le domaine reçoit-il du courrier ?", "emails"],
     [
-      ["annonce un MX", `<span class="n">${nombre(normalisation.emailsAvecMx)}</span>`],
-      ["n'en annonce aucun", `<span class="n">${nombre(normalisation.emailsSansMx)}</span>`],
-      ["non verifie", `<span class="n">${nombre(normalisation.emailsMxInconnu)}</span>`],
+      ["oui, il annonce un serveur", `<span class="n">${nombre(normalisation.emailsAvecMx)}</span>`],
+      ["non, il n'en annonce aucun", `<span class="n">${nombre(normalisation.emailsSansMx)}</span>`],
+      ["non vérifié", `<span class="n">${nombre(normalisation.emailsMxInconnu)}</span>`],
     ],
   );
 
@@ -471,13 +478,13 @@ export function fragmentChiffres(donnees: DonneesSynthese): string {
   return `<h2>Couverture</h2>
 <div class="cartes">
 ${chiffre(pourcent(couverture.avecEmail, couverture.actives), "au moins un email")}
-${chiffre(pourcent(couverture.avecEmailExploitable, couverture.actives), "... exploitable")}
-${chiffre(pourcent(couverture.avecEmailJoignable, couverture.actives), "... dont le domaine recoit du courrier")}
+${chiffre(pourcent(couverture.avecEmailExploitable, couverture.actives), "… exploitable")}
+${chiffre(pourcent(couverture.avecEmailJoignable, couverture.actives), "… dont le domaine reçoit du courrier")}
 ${chiffre(nombre(couverture.actives), "associations actives")}
 </div>
 <p class="discret">
-Les trois taux se lisent ensemble : leur ecart dit si la couverture tient a des adresses
-mortes ou a ce que les communes publient.
+Les trois taux se lisent ensemble : leur écart dit si la couverture tient à des adresses
+mortes ou à ce que les communes publient.
 </p>
 
 <h2>Entonnoir</h2>
@@ -488,16 +495,16 @@ ${mx}
 
 <h2>Revue humaine</h2>
 <div class="cartes">
-${chiffre(nombre(revue.aRevoir), "a arbitrer")}
-${chiffre(nombre(revue.valides), "valides")}
-${chiffre(nombre(revue.rejetes), "rejetes")}
-${chiffre(nombre(revue.corriges), "corriges")}
+${chiffre(nombre(revue.aRevoir), "à arbitrer")}
+${chiffre(nombre(revue.valides), "validés")}
+${chiffre(nombre(revue.rejetes), "rejetés")}
+${chiffre(nombre(revue.corriges), "corrigés")}
 ${chiffre(pourcent(revue.corriges, revue.arbitres), "taux de correction")}
 </div>
 <p class="discret">
-Le taux de correction est la seule mesure de precision d'extraction dont l'outil dispose :
-la part des contacts arbitres qu'un humain a du corriger. Il se lit sur l'etat des lignes
-et non sur un compteur d'evenements — changer d'avis sur un contact ne le compte pas deux
+Le taux de correction est la seule mesure de précision d'extraction dont l'outil dispose :
+la part des contacts arbitrés qu'un humain a dû corriger. Il se lit sur l'état des lignes
+et non sur un compteur d'événements — changer d'avis sur un contact ne le compte pas deux
 fois.
 </p>
 

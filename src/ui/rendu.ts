@@ -211,16 +211,16 @@ export function barrePortee(donnees: DonneesPortee): string {
 
   const etat =
     donnees.amorce.communes === 0
-      ? `<span class="vide">Jamais amorce. Le lancer le remplira depuis le registre national.</span>`
+      ? `<span class="vide">Jamais amorcé. Le lancer le remplira depuis le registre national.</span>`
       : `<span>${nombre(donnees.amorce.associations)} association${pluriel(donnees.amorce.associations)}
          dans ${nombre(donnees.amorce.communes)} commune${pluriel(donnees.amorce.communes)}</span>`;
 
-  const autres = liste === "" ? "" : `<span class="autres">Deja en base : ${liste}</span>`;
+  const autres = liste === "" ? "" : `<span class="autres">Déjà en base : ${liste}</span>`;
   const refus = donnees.refus === undefined ? "" : `<p class="refus">${echapperHtml(donnees.refus)}</p>`;
 
   return `<div class="portee">
   <form method="get" action="${chemin}">
-    <label for="portee-departement">Departement</label>
+    <label for="portee-departement">Département</label>
     <input type="text" id="portee-departement" name="departement" value="${courant}"
            list="portee-connus" size="4" maxlength="3" autocomplete="off" required
            pattern="[0-9]{2}|[0-9][ABab]|[0-9]{3}"
@@ -271,7 +271,7 @@ export function page(options: OptionsPage): string {
 <header>
   <span class="marque">Annuaire de la vie associative</span>
   <nav>
-    ${onglet("synthese", "Synthese")}
+    ${onglet("synthese", "Synthèse")}
     ${onglet("revue", "Revue")}
     ${onglet("export", "Export")}
     ${onglet("aide", "Aide")}
@@ -283,7 +283,7 @@ ${options.portee}
 ${options.contenu}
 </main>
 <footer>
-  Serveur local : rien de ce qui est affiche ici ne sort de cette machine.
+  Serveur local : rien de ce qui est affiché ici ne sort de cette machine.
 </footer>
 </body>
 </html>
@@ -304,7 +304,7 @@ const MARQUE_NOMBRE = '<span class="n">';
  * contredire.
  */
 export function tableau(entetes: readonly string[], lignes: readonly (readonly string[])[]): string {
-  if (lignes.length === 0) return '<p class="discret">Rien a afficher.</p>';
+  if (lignes.length === 0) return '<p class="discret">Rien à afficher.</p>';
   const numerique = entetes.map((_, colonne) =>
     lignes.every((ligne) => (ligne[colonne] ?? "").startsWith(MARQUE_NOMBRE)),
   );
@@ -346,10 +346,10 @@ function phrasePhase(phase: string | null): string {
 export function banniereRun(etat: EtatCollecte, consequence: string): string {
   if (etat.kind === "inactif") return "";
   if (etat.kind === "pilote") {
-    return `<p class="avis"><strong>Run en cours sur le departement ${echapperHtml(etat.departement)}</strong>${phrasePhase(etat.phase)}.
+    return `<p class="avis"><strong>Collecte en cours sur le département ${echapperHtml(etat.departement)}</strong>${phrasePhase(etat.phase)}.
 ${echapperHtml(consequence)}</p>`;
   }
-  return `<p class="avis">Un run est marque « en cours » sur le departement ${echapperHtml(etat.departement)}${phrasePhase(etat.phase)},
-sans etre pilote depuis cette interface — un <code>annuaire run</code> dans un terminal, ou un reste
+  return `<p class="avis">Une collecte est marquée « en cours » sur le département ${echapperHtml(etat.departement)}${phrasePhase(etat.phase)},
+sans être pilotée depuis cette interface — un <code>annuaire run</code> dans un terminal, ou un reste
 d'interruption brutale. ${echapperHtml(consequence)}</p>`;
 }

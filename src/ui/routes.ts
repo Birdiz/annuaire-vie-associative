@@ -543,7 +543,7 @@ function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progressi
         total: avance.octetsTotal,
         unite: "octets du registre national",
         phrase: `${octets(avance.octetsLus)} sur ${octets(avance.octetsTotal)} lus`,
-        detail: "Le fichier est lu au fil de l'eau, jamais ecrit sur le disque.",
+        detail: "Le fichier est lu au fil de l'eau, jamais écrit sur le disque.",
       },
     };
   }
@@ -557,11 +557,11 @@ function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progressi
       avancement: {
         faits: avance.explorees,
         total: avance.communes,
-        unite: "communes explorees",
+        unite: "communes explorées",
         phrase: undefined,
         // Sans denominateur : le nombre de pages grandit a chaque lien retenu, et
         // l'annoncer comme un reste a faire serait faux dans le sens le plus decevant.
-        detail: `${nombre(avance.pagesVisitees)} pages visitees sur ${nombre(avance.pages)} planifiees a ce jour`,
+        detail: `${nombre(avance.pagesVisitees)} pages visitées sur ${nombre(avance.pages)} planifiées à ce jour`,
       },
     };
   }
@@ -574,7 +574,7 @@ function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progressi
       avancement: {
         faits: avance.notes,
         total: avance.contacts,
-        unite: "contacts notes",
+        unite: "contacts notés",
         phrase: undefined,
         detail: undefined,
       },

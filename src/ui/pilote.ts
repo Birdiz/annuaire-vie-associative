@@ -130,8 +130,8 @@ export class PiloteRun implements SurfacePilote {
   reglerMobiles(actif: boolean): Reglage {
     if (this.#etat.kind === "en_cours") {
       const message =
-        "Le drapeau des mobiles ne change pas en cours de run : il est fige au demarrage, " +
-        "dans chaque job de page. Arretez le run, ou attendez sa fin.";
+        "Le choix sur les mobiles ne change pas en cours de collecte : il est figé au " +
+        "démarrage, dans chaque page à visiter. Arrêtez la collecte, ou attendez sa fin.";
       this.#refusMobiles = message;
       return { kind: "refus", message };
     }
@@ -155,22 +155,22 @@ export class PiloteRun implements SurfacePilote {
     // d'arriver entre la resolution de `attendre()` et la fin de `fermer()`. L'etat
     // valait alors « fini », le depart etait accepte, et `app.close()` fermait la base
     // sous un worker qui venait de naitre.
-    if (this.#arrete) return refuser("L'interface est en cours d'arret.");
+    if (this.#arrete) return refuser("L'interface est en cours d'arrêt.");
 
     if (this.#etat.kind === "en_cours") {
-      return refuser("Un run est deja en cours dans cette interface.");
+      return refuser("Une collecte est déjà en cours dans cette interface.");
     }
 
     const refus = refusDepartement(departement);
     if (refus !== undefined || departement === undefined) {
-      return refuser(refus ?? "Un departement est requis.");
+      return refuser(refus ?? "Un département est requis.");
     }
 
     // §4.4 : pas d'URL de contact, pas de collecte. Le message dit ou la renseigner —
     // l'ecran l'offre juste au-dessus.
     if (this.#app.config.contactUrl === undefined) {
       return refuser(
-        "Aucune URL de contact n'est configuree. Elle est annoncee dans le User-Agent " +
+        "Aucune URL de contact n'est configurée. Elle est annoncée à chaque page visitée " +
           "pour qu'un webmestre puisse vous joindre, et aucune collecte ne part sans elle.",
       );
     }

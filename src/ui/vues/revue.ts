@@ -43,20 +43,20 @@ export type DonneesRevue = {
  */
 function introduction(): string {
   return `<p class="intro">Chaque carte porte <strong>une valeur de contact lue sur une page de
-site communal</strong> — une adresse email ou un numero de telephone — que l'outil n'a pas su
-valider seul. <strong>Les moins sures d'abord</strong> : c'est la qu'un arbitrage humain apporte
-quelque chose. Les motifs sous la valeur disent ce qui a fait baisser le score, et le lien mene a
-la page ou elle a ete lue — c'est la qu'on verifie.</p>
+site communal</strong> — une adresse email ou un numéro de téléphone — que l'outil n'a pas su
+valider seul. <strong>Les moins sûres d'abord</strong> : c'est là qu'un arbitrage humain apporte
+quelque chose. Les motifs sous la valeur disent ce qui a fait baisser le score, et le lien mène à
+la page où elle a été lue — c'est là qu'on vérifie.</p>
 <details class="legende">
   <summary>Que font les quatre boutons ?</summary>
   <dl>
     <dt>Valider</dt><dd>La valeur est bonne. Elle sort dans l'export.</dd>
     <dt>Rejeter</dt><dd>La valeur est fausse ou hors sujet. Elle reste en base mais l'export
-      l'exclut par defaut.</dd>
-    <dt>Corriger</dt><dd>La valeur lue est presque bonne — une adresse cassee par un site,
-      typiquement. La version corrigee sort a cote de la version lue, et repasse a la notation.</dd>
-    <dt>Oublier</dt><dd>Suppression definitive : la ligne, sa copie dans le cache, et une
-      exclusion qui l'empeche de revenir au prochain run. Le motif est obligatoire.</dd>
+      l'exclut par défaut.</dd>
+    <dt>Corriger</dt><dd>La valeur lue est presque bonne — une adresse cassée par un site,
+      typiquement. La version corrigée sort à côté de la version lue, et repasse à la notation.</dd>
+    <dt>Oublier</dt><dd>Suppression définitive : la ligne, sa copie dans le cache, et une
+      exclusion qui l'empêche de revenir à la collecte suivante. Le motif est obligatoire.</dd>
   </dl>
 </details>`;
 }
@@ -72,7 +72,7 @@ ${fragmentFile(donnees)}
 /** Ce qu'est la valeur affichee. Sans cette etiquette, la carte montre une chaine nue. */
 const LIBELLE_KIND: Record<string, string> = {
   email: "Adresse email",
-  phone: "Numero de telephone",
+  phone: "Numéro de téléphone",
 };
 
 /** Cible des swaps htmx : chaque arbitrage renvoie la file recalculee. */
@@ -89,31 +89,31 @@ export function fragmentFile(donnees: DonneesRevue): string {
   const prets = Math.max(0, d.aRevoir - d.nonNotes);
 
   const compteur =
-    `<p class="discret">${nombre(prets)} pret${pluriel(prets)} a arbitrer · ${nombre(d.nonNotes)} en attente de notation · ` +
-    `${nombre(d.valides)} valides · ${nombre(d.rejetes)} rejetes · ${nombre(d.corriges)} corriges</p>`;
+    `<p class="discret">${nombre(prets)} prêt${pluriel(prets)} à arbitrer · ${nombre(d.nonNotes)} en attente de notation · ` +
+    `${nombre(d.valides)} validés · ${nombre(d.rejetes)} rejetés · ${nombre(d.corriges)} corrigés</p>`;
 
   const attente =
     d.nonNotes === 0
       ? ""
-      : `<p class="discret">${nombre(d.nonNotes)} contacts ne sont pas encore notes et ` +
-        "n'apparaissent pas ici : arbitrer avant la notation reviendrait a juger sans le " +
-        `seul element que l'outil apporte. ${
+      : `<p class="discret">${nombre(d.nonNotes)} contacts ne sont pas encore notés et ` +
+        "n'apparaissent pas ici : arbitrer avant la notation reviendrait à juger sans le " +
+        `seul élément que l'outil apporte. ${
           donnees.collecte.kind === "inactif"
             ? `Lancez <code>annuaire normaliser --departement ${echapperHtml(donnees.departement)}</code>.`
-            : "La normalisation est la derniere passe du run : ces lignes seront notees sans que vous ayez rien a faire."
+            : "La normalisation est la dernière étape de la collecte : ces lignes seront notées sans que vous ayez rien à faire."
         }</p>`;
 
   const aRenoter =
     d.correctionsANoter === 0
       ? ""
       : `<p class="discret">${nombre(d.correctionsANoter)} correction${pluriel(d.correctionsANoter)} attend${pluriel(d.correctionsANoter)} une renotation : ` +
-        "une valeur corrigee n'est pas notee par cet ecran, c'est la passe de notation qui repasse. " +
+        "une valeur corrigée n'est pas notée par cet écran, c'est l'étape de notation qui repasse. " +
         `<code>annuaire normaliser --departement ${echapperHtml(donnees.departement)}</code></p>`;
 
   const banniere = banniereRun(
     donnees.collecte,
-    "La file se remplit au fur et a mesure : ce qui est arbitre maintenant reste arbitre, mais " +
-      "l'essentiel des contacts n'est pas encore note. Revenir a la fin du run evite de repasser deux fois.",
+    "La file se remplit au fur et à mesure : ce qui est arbitré maintenant reste arbitré, mais " +
+      "l'essentiel des contacts n'est pas encore noté. Revenir à la fin de la collecte évite de repasser deux fois.",
   );
 
   const entete = `${refus}${banniere}\n${compteur}\n${attente}\n${aRenoter}`;
@@ -124,10 +124,10 @@ export function fragmentFile(donnees: DonneesRevue): string {
     // Trois raisons de n'avoir rien a montrer, et elles n'appellent pas la meme suite.
     const explication =
       donnees.collecte.kind !== "inactif"
-        ? "Rien a arbitrer pour l'instant : le run en cours n'a pas encore note de contact. Cet ecran se remplira tout seul."
+        ? "Rien à arbitrer pour l'instant : la collecte en cours n'a pas encore noté de contact. Cet écran se remplira tout seul."
         : d.nonNotes > 0
-          ? "Rien a arbitrer tant que la notation n'est pas passee sur les contacts ci-dessus."
-          : "Rien a arbitrer pour ce departement.";
+          ? "Rien à arbitrer tant que la notation n'est pas passée sur les contacts ci-dessus."
+          : "Rien à arbitrer pour ce département.";
     return `${entete}\n<p>${explication}</p>`;
   }
 
@@ -155,11 +155,11 @@ function pagination(donnees: DonneesRevue): string {
   const suivant = Math.min(donnees.pages, donnees.page + 1);
 
   return `<nav class="pages">
-  ${lien(1, "« premiere")}
-  ${lien(precedent, "‹ precedente")}
+  ${lien(1, "« première")}
+  ${lien(precedent, "‹ précédente")}
   <span class="discret">page ${nombre(donnees.page)} sur ${nombre(donnees.pages)}</span>
   ${lien(suivant, "suivante ›")}
-  ${lien(donnees.pages, "derniere »")}
+  ${lien(donnees.pages, "dernière »")}
 </nav>`;
 }
 
@@ -183,7 +183,7 @@ function pagination(donnees: DonneesRevue): string {
 function carte(contact: ContactARevoir, departement: string, page: number): string {
   const cible =
     contact.association === null
-      ? `${echapperHtml(contact.commune)} <span class="discret">(commune, sans association rattachee)</span>`
+      ? `${echapperHtml(contact.commune)} <span class="discret">(commune, sans association rattachée)</span>`
       : `${echapperHtml(contact.association)} <span class="discret">— ${echapperHtml(contact.commune)}</span>`;
 
   const regime =
@@ -192,8 +192,8 @@ function carte(contact: ContactARevoir, departement: string, page: number): stri
       : contact.is_generique === 1
         ? '<span class="etiquette bonne">adresse de fonction</span>'
         : contact.is_generique === 0
-          ? '<span class="etiquette alerte">adresse nominative — elle designe une personne</span>'
-          : '<span class="etiquette">regime indetermine</span>';
+          ? '<span class="etiquette alerte">adresse nominative — elle désigne une personne</span>'
+          : '<span class="etiquette">régime indéterminé</span>';
 
   const source = lienSur(contact.source_url);
   const lien =
@@ -227,7 +227,7 @@ function carte(contact: ContactARevoir, departement: string, page: number): stri
       <button type="submit" name="action" value="rejete">Rejeter</button>
     </div>
     <div class="groupe">
-      <input type="text" name="valeur" placeholder="valeur corrigee" aria-label="valeur corrigee">
+      <input type="text" name="valeur" placeholder="valeur corrigée" aria-label="valeur corrigée">
       <button type="submit" name="action" value="corrige">Corriger</button>
     </div>
     <!-- Oublier n'est pas rejeter. Rejeter ecrit un statut, que l'export sait remettre
@@ -237,7 +237,7 @@ function carte(contact: ContactARevoir, departement: string, page: number): stri
     <div class="groupe">
       <input type="text" name="note" placeholder="motif, obligatoire pour oublier" aria-label="note de revue">
       <button type="submit" name="action" value="oublie" class="danger"
-              title="Supprime definitivement ce contact et l'empeche de revenir. Le motif, saisi a cote, est obligatoire.">
+              title="Supprime définitivement ce contact et l'empêche de revenir. Le motif, saisi à côté, est obligatoire.">
         Oublier
       </button>
     </div>
@@ -259,7 +259,7 @@ function motifsHtml(brut: string | null): string {
     return '<p class="discret">Motifs du score illisibles.</p>';
   }
   if (!Array.isArray(motifs.signaux) || motifs.signaux.length === 0) {
-    return `<p class="discret">Base ${Number(motifs.base ?? 0).toFixed(2)}, aucun signal retire.</p>`;
+    return `<p class="discret">Base ${Number(motifs.base ?? 0).toFixed(2)}, aucun signal retiré.</p>`;
   }
   const lignes = motifs.signaux
     .map(

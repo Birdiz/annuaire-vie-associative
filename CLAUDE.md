@@ -103,7 +103,17 @@ verifiees par un test — un fichier minifie ne se relit pas en revue de diff.
 
 - Identifiants en anglais, sauf les termes metier non traduisibles : `commune`,
   `association`, `departement`, `code_insee`, `rna_id`.
-- Messages CLI/UI et commentaires en francais, sans accents dans les identifiants.
+- Identifiants en anglais ou en francais, mais **sans accents** : `departement`, jamais
+  `département`. Les commentaires suivent, par habitude et pour rester greppables.
+- **Le texte affiche, lui, s'accentue.** La regle ci-dessus ne portait que sur les
+  identifiants ; elle avait ete etendue a tout `src/`, et l'interface disait « Telecharger
+  le fichier » a des agents de collectivite. Ce n'est pas une precaution d'encodage : la
+  page declare `utf-8`, l'export CSV porte un BOM, et le texte d'aide de la CLI imprime
+  deja `—`, `«` et `§` — si une console mangeait `é`, elle mangerait deja ceux-la.
+- **Sauf ce qui n'est pas du francais** : noms de colonnes du CSV (`code_insee`,
+  `methode_extraction`), valeurs de colonnes (`generique`, `nominatif`, `indetermine`),
+  options de la CLI et parametres d'URL. Les accentuer casserait les fichiers deja
+  produits et les liens deja enregistres.
 - Imports relatifs avec l'extension `.ts` explicite (exige par Node en execution directe).
 - Syntaxe effacable uniquement : pas d'`enum`, pas de parametres-proprietes, pas de
   `namespace`. Utiliser des unions de litteraux de chaine a la place des `enum`.

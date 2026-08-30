@@ -52,8 +52,8 @@ test("un departement est valide de la meme facon pour la CLI et pour l'interface
   assert.equal(refusDepartement("2A"), undefined);
   assert.equal(refusDepartement("971"), undefined);
 
-  assert.match(refusDepartement(undefined) ?? "", /Un departement est requis/);
-  assert.match(refusDepartement("trente-cinq") ?? "", /Un departement est requis/);
+  assert.match(refusDepartement(undefined) ?? "", /Un département est requis/);
+  assert.match(refusDepartement("trente-cinq") ?? "", /Un département est requis/);
   for (const droitLocal of ["57", "67", "68"]) {
     assert.match(refusDepartement(droitLocal) ?? "", /hors du champ du RNA/);
   }

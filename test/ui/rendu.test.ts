@@ -35,7 +35,7 @@ test("le tableau echappe ses en-tetes et laisse passer ses cellules deja rendues
   const rendu = tableau(["<x>"], [["<b>deja rendu</b>"]]);
   assert.match(rendu, /&lt;x&gt;/);
   assert.match(rendu, /<b>deja rendu<\/b>/);
-  assert.match(tableau(["a"], []), /Rien a afficher/);
+  assert.match(tableau(["a"], []), /Rien à afficher/);
 });
 
 test("un pourcentage sans denominateur ne vaut pas zero", () => {
@@ -126,11 +126,11 @@ test("l'ecart refuse de calculer sur une date illisible", () => {
 });
 
 test("la barre porte sa valeur en attribut, jamais dans un style en ligne", () => {
-  const rendu = barre(8, 20, "communes explorees");
+  const rendu = barre(8, 20, "communes explorées");
 
   assert.match(rendu, /<progress max="20" value="8"/);
   assert.doesNotMatch(rendu, /style=/, "`style-src 'self'` refuserait l'attribut, sans rien signaler");
-  assert.match(rendu, /aria-label="8 sur 20 communes explorees"/, "la barre doit s'entendre autant qu'elle se voit");
+  assert.match(rendu, /aria-label="8 sur 20 communes explorées"/, "la barre doit s'entendre autant qu'elle se voit");
   assert.match(rendu, /40,0 %/);
 });
 

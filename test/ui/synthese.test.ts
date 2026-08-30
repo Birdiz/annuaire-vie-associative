@@ -35,7 +35,7 @@ function suivi(surcharges: Partial<DonneesSuivi> = {}): DonneesSuivi {
 
 test("sans run, le bloc le dit et offre de demarrer", () => {
   const html = fragmentSuivi(suivi());
-  assert.match(html, /Aucun run en cours/);
+  assert.match(html, /Aucune collecte en cours/);
   assert.match(html, /name="action"|\/run/, "le bloc doit porter la commande de lancement");
 });
 
@@ -55,12 +55,12 @@ test("un run en cours annonce son numero et sa phase", () => {
       jobs: { ...JOBS, pending: 12 },
       progression: {
         phase: "decouverte",
-        avancement: { faits: 8, total: 20, unite: "communes explorees", phrase: undefined, detail: undefined },
+        avancement: { faits: 8, total: 20, unite: "communes explorées", phrase: undefined, detail: undefined },
       },
     }),
   );
-  assert.match(html, /Run #7/);
-  assert.match(html, /<li class="courante">Decouverte<\/li>/, "l'etape se lit dans l'indicateur");
+  assert.match(html, /Collecte n° 7/);
+  assert.match(html, /<li class="courante">Découverte<\/li>/, "l'etape se lit dans l'indicateur");
 });
 
 test("sans URL de contact, le lancement n'est pas offert (§4.4)", () => {
@@ -71,8 +71,8 @@ test("sans URL de contact, le lancement n'est pas offert (§4.4)", () => {
 test("le refus du pilote est rendu a chaque rafraichissement, pas une seule fois", () => {
   // Le bloc se rafraichit toutes les deux secondes : un message rendu une fois dans la
   // reponse au POST disparaitrait avant d'etre lu. C'est le pilote qui s'en souvient.
-  const html = fragmentSuivi(suivi({ refus: "Un run est deja en cours dans cette interface." }));
-  assert.match(html, /Un run est deja en cours/);
+  const html = fragmentSuivi(suivi({ refus: "Une collecte est déjà en cours dans cette interface." }));
+  assert.match(html, /Une collecte est déjà en cours/);
 });
 
 test("une valeur venue du crawl est echappee avant d'entrer dans la page", () => {
@@ -158,7 +158,7 @@ test("pendant un run, la case du drapeau est inerte et le dit", () => {
   const html = fragmentMobiles(mobiles({ actif: true, verrouille: true }));
   assert.match(html, /<input[^>]*disabled/);
   assert.match(html, /<button[^>]*disabled/);
-  assert.match(html, /Fige pendant le run/);
+  assert.match(html, /Figé pendant la collecte/);
 });
 
 test("le refus du basculement est rendu sur place", () => {
@@ -169,7 +169,7 @@ test("le refus du basculement est rendu sur place", () => {
 
 test("le bouton de lancement porte l'avertissement quand le drapeau est arme", () => {
   const arme = fragmentSuivi(suivi({ mobilesActifs: true }));
-  assert.match(arme, /Ce run conservera les numeros mobiles/);
+  assert.match(arme, /Cette collecte conservera les numéros mobiles/);
 
   const desarme = fragmentSuivi(suivi());
   assert.doesNotMatch(desarme, /conservera les numeros mobiles/);
@@ -190,7 +190,7 @@ test("un run en cours dit ce qu'il fait des mobiles, pas ce qui est coche a l'ec
       },
     }),
   );
-  assert.match(html, /Ce run conserve les numeros mobiles/);
+  assert.match(html, /Cette collecte conserve les numéros mobiles/);
 });
 
 test("l'indicateur d'etape situe la passe en cours, faites derriere et a venir devant", () => {
@@ -198,12 +198,12 @@ test("l'indicateur d'etape situe la passe en cours, faites derriere et a venir d
     suivi({
       progression: {
         phase: "normalisation",
-        avancement: { faits: 40, total: 100, unite: "contacts notes", phrase: undefined, detail: undefined },
+        avancement: { faits: 40, total: 100, unite: "contacts notés", phrase: undefined, detail: undefined },
       },
     }),
   );
   assert.match(html, /<li class="faite">Amorce<\/li>/);
-  assert.match(html, /<li class="faite">Decouverte<\/li>/);
+  assert.match(html, /<li class="faite">Découverte<\/li>/);
   assert.match(html, /<li class="courante">Normalisation<\/li>/);
 });
 
@@ -212,7 +212,7 @@ test("la barre porte sa valeur en attribut : la CSP interdit un style en ligne",
     suivi({
       progression: {
         phase: "decouverte",
-        avancement: { faits: 8, total: 20, unite: "communes explorees", phrase: undefined, detail: "31 pages visitees" },
+        avancement: { faits: 8, total: 20, unite: "communes explorées", phrase: undefined, detail: "31 pages visitées" },
       },
     }),
   );
@@ -221,15 +221,15 @@ test("la barre porte sa valeur en attribut : la CSP interdit un style en ligne",
   // `style="width: 40%"` serait refuse par `default-src 'self'`, et la barre resterait
   // vide sans que rien ne le signale.
   assert.doesNotMatch(html, /style="/);
-  assert.match(html, /8 sur 20 communes explorees — 40,0 %/);
-  assert.match(html, /31 pages visitees/);
+  assert.match(html, /8 sur 20 communes explorées — 40,0 %/);
+  assert.match(html, /31 pages visitées/);
 });
 
 test("l'amorce n'invente pas de denominateur", () => {
   const html = fragmentSuivi(suivi({ progression: { phase: "amorce", avancement: undefined } }));
   assert.match(html, /<li class="courante">Amorce<\/li>/);
   assert.doesNotMatch(html, /<progress/, "une barre inventee serait pire qu'aucune barre");
-  assert.match(html, /pas encore de decompte/);
+  assert.match(html, /pas encore de décompte/);
 });
 
 /**

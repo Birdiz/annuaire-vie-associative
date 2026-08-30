@@ -67,8 +67,8 @@ export function refusDepartement(departement: string | undefined): string | unde
   if (!departementBienForme(departement)) return REFUS_DE_FORME;
   if (HORS_CHAMP_RNA.includes(departement)) {
     return (
-      `Le departement ${departement} est hors du champ du RNA (droit local d'Alsace-Moselle). ` +
-      "Aucune amorce n'est disponible pour ce departement."
+      `Le département ${departement} est hors du champ du RNA (droit local d'Alsace-Moselle). ` +
+      "Aucune amorce n'est disponible pour ce département."
     );
   }
   return undefined;
@@ -85,7 +85,7 @@ export function departementBienForme(departement: string | undefined): departeme
 }
 
 /** Le message unique du refus de forme, partage par les deux controles. */
-const REFUS_DE_FORME = "Un departement est requis, sous la forme 35, 2A ou 971.";
+const REFUS_DE_FORME = "Un département est requis, sous la forme 35, 2A ou 971.";
 
 export function optionsDecouvertePardefaut(avecMobiles = false): OptionsDecouverte {
   return { maxPages: PAGES_MAX_PAR_COMMUNE, avecMobiles };

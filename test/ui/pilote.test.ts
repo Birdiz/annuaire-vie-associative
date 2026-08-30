@@ -64,8 +64,8 @@ test("un departement hors du champ du RNA est refuse, et le refus se garde", () 
   assert.deepEqual(p.demarrer("67"), {
     kind: "refus",
     message:
-      "Le departement 67 est hors du champ du RNA (droit local d'Alsace-Moselle). " +
-      "Aucune amorce n'est disponible pour ce departement.",
+      "Le département 67 est hors du champ du RNA (droit local d'Alsace-Moselle). " +
+      "Aucune amorce n'est disponible pour ce département.",
   });
   assert.equal(e.appels.length, 0, "rien ne doit avoir ete lance");
   assert.match(p.refus() ?? "", /hors du champ du RNA/, "le bloc de suivi se rafraichit : il faut s'en souvenir");
@@ -106,7 +106,7 @@ test("un second lancement est refuse tant que le premier tourne", () => {
 
   assert.deepEqual(p.demarrer("35"), {
     kind: "refus",
-    message: "Un run est deja en cours dans cette interface.",
+    message: "Une collecte est déjà en cours dans cette interface.",
   });
   assert.equal(e.appels.length, 1);
 });
@@ -162,7 +162,7 @@ test("attendre ne bloque pas quand rien ne tourne", async () => {
   await p.attendre();
 });
 
-test("une fois l'interface en cours d'arret, plus aucun run ne demarre", () => {
+test("une fois l'interface en cours d'arrêt, plus aucun run ne demarre", () => {
   // La fenetre etait etroite — un microtask entre `attendre()` et `fermer()` — mais elle
   // suffisait : le depart etait accepte, un nouveau worker naissait, et `app.close()`
   // fermait la base sous lui. Un drapeau consulte en premier la referme.
@@ -171,7 +171,7 @@ test("une fois l'interface en cours d'arret, plus aucun run ne demarre", () => {
 
   const depart = p.demarrer("35");
   assert.equal(depart.kind, "refus");
-  assert.match(p.refus() ?? "", /en cours d'arret/);
+  assert.match(p.refus() ?? "", /en cours d'arrêt/);
   assert.equal(p.etat().kind, "inactif", "aucun run ne doit avoir ete ouvert");
 });
 
@@ -207,7 +207,7 @@ test("le drapeau arme passe dans les options du run", () => {
   );
 });
 
-test("le drapeau est fige au demarrage : le desarmer en cours de run ne le change pas", () => {
+test("le drapeau est figé au : le desarmer en cours de run ne le change pas", () => {
   const [p, e] = pilote();
   p.reglerMobiles(true);
   p.demarrer("35");
@@ -216,7 +216,7 @@ test("le drapeau est fige au demarrage : le desarmer en cours de run ne le chang
   // accepter le changement afficherait un etat que la collecte n'applique pas.
   const reglage = p.reglerMobiles(false);
   assert.equal(reglage.kind, "refus");
-  assert.match(p.refusMobiles() ?? "", /fige au demarrage/, "le refus se garde : le bloc se rafraichit");
+  assert.match(p.refusMobiles() ?? "", /figé au/, "le refus se garde : le bloc se rafraichit");
   // Deux memoires : ce refus s'affiche dans le bloc du drapeau, pas dans le suivi. Une
   // seule ferait apparaitre le meme message aux deux endroits.
   assert.equal(p.refus(), undefined);
