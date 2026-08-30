@@ -149,6 +149,57 @@ button:hover { border-color: var(--accent); color: var(--accent); }
 
 .barre { display: inline-block; height: 0.7rem; background: var(--accent); border-radius: 2px; }
 
+/* Barre de progression du run.
+
+   `<progress>` natif, et non un div dont on reglerait la largeur : la CSP du serveur est
+   `default-src 'self'`, donc `style-src 'self'`, et un attribut `style` en ligne serait
+   refuse par le navigateur — la barre resterait vide sans que rien ne le signale.
+   L'apparence par defaut differe d'un moteur a l'autre, d'ou les trois selecteurs :
+   `appearance: none` puis le fond, la valeur WebKit, la valeur Gecko. */
+.progression { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; }
+
+.progression progress {
+  appearance: none;
+  flex: 1 1 18rem;
+  height: 0.7rem;
+  border: none;
+  border-radius: 4px;
+  background: var(--trait);
+  overflow: hidden;
+}
+.progression progress::-webkit-progress-bar { background: var(--trait); border-radius: 4px; }
+.progression progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
+.progression progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
+.progression .etiquette { font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+
+/* Les trois passes du run. Une liste ordonnee : c'est bien une suite d'etapes, et un
+   lecteur d'ecran doit l'entendre comme telle. */
+.etapes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.4rem;
+  list-style: none;
+  margin: 0.5rem 0;
+  padding: 0;
+  font-size: 0.875rem;
+}
+.etapes li { position: relative; color: var(--discret); }
+.etapes li + li::before {
+  content: "→";
+  position: absolute;
+  left: -1rem;
+  color: var(--trait);
+}
+.etapes li.faite { color: var(--bon); }
+.etapes li.faite::after { content: " ✓"; }
+.etapes li.courante { color: var(--texte); font-weight: 600; }
+
+/* La case du drapeau §4.6 : elle ouvre un traitement de donnees personnelles, elle ne
+   se glisse donc pas dans une ligne de formulaire ordinaire. */
+label.bascule { flex: 1 1 22rem; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
+label.bascule input { width: 1.1rem; height: 1.1rem; accent-color: var(--alerte); }
+form.reglages :disabled { cursor: not-allowed; opacity: 0.6; }
+
 /* Lancer, arreter, regler : les seules commandes de l'interface qui agissent. */
 .commandes, .reglages {
   display: flex;

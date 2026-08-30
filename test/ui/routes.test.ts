@@ -7,7 +7,7 @@ import { Counters } from "../../src/metrics/counters.ts";
 import { JobQueue } from "../../src/jobs/queue.ts";
 import { NOM_COOKIE, hoteAccepte, router, verifierAcces } from "../../src/ui/routes.ts";
 import type { ContexteUi, RequeteUi } from "../../src/ui/routes.ts";
-import { CODE_INSEE, DEPARTEMENT, preparerCorpus } from "../helpers/corpus.ts";
+import { CAMPAGNE, CODE_INSEE, DEPARTEMENT, preparerCorpus } from "../helpers/corpus.ts";
 import { piloteDouble, reglagesDouble } from "../helpers/pilote-double.ts";
 import type { PiloteDouble, ReglagesDouble } from "../helpers/pilote-double.ts";
 import type { TestContext } from "node:test";
@@ -287,7 +287,7 @@ test("POST /run transmet le departement au pilote et redirige un formulaire ordi
 
 test("POST /run par htmx rend le seul bloc de suivi", (t) => {
   const ctx = contexte(t);
-  ctx.pilote.poser({ kind: "en_cours", departement: DEPARTEMENT, demarre: "2026-09-01T10:00:00.000Z", runId: 7 });
+  ctx.pilote.poser({ kind: "en_cours", departement: DEPARTEMENT, demarre: "2026-09-01T10:00:00.000Z", runId: 7, avecMobiles: false });
 
   const reponse = router(ctx, post(`/run?departement=${DEPARTEMENT}`, `departement=${DEPARTEMENT}`, true));
   const corps = corpsTexte(reponse.corps);
@@ -311,7 +311,7 @@ test("un refus de lancement survit au rafraichissement du bloc de suivi", (t) =>
 
 test("POST /run/arret demande l'arret", (t) => {
   const ctx = contexte(t);
-  ctx.pilote.poser({ kind: "en_cours", departement: DEPARTEMENT, demarre: "t", runId: 7 });
+  ctx.pilote.poser({ kind: "en_cours", departement: DEPARTEMENT, demarre: "t", runId: 7, avecMobiles: false });
 
   const reponse = router(ctx, post(`/run/arret?departement=${DEPARTEMENT}`, "", true));
 
@@ -373,7 +373,11 @@ test("un run que cette interface ne pilote pas est signale, sans bloquer le bout
 
   const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
 
-  assert.match(suivi, /phase decouverte/, "la phase vient de la base, pas de la memoire de l'interface");
+  assert.match(
+    suivi,
+    /<li class="courante">decouverte<\/li>/,
+    "la phase vient de la base, pas de la memoire de l'interface",
+  );
   assert.match(suivi, /n'est pas pilote depuis cette interface/);
   assert.match(suivi, /Lancer le run complet/, "une ligne orpheline ne doit pas condamner l'interface");
 });
@@ -393,6 +397,7 @@ function lancerRunPilote(ctx: ContexteTest): void {
     departement: DEPARTEMENT,
     demarre: "2026-09-01T09:00:00.000Z",
     runId: 1,
+    avecMobiles: false,
   });
 }
 
@@ -475,4 +480,162 @@ test("les chiffres ont leur propre fragment, rafraichi comme le suivi", (t) => {
     /<input/,
     "un bloc qui se remplace tout seul efface ce qu'on est en train d'y taper",
   );
+});
+
+/**
+ * Le drapeau des mobiles (§4.6) vu du routeur.
+ *
+ * Il se regle par une route a lui, et sa reponse vise `#mobiles` : le bloc de suivi est
+ * reechange toutes les deux secondes, une case a cocher qui y vivrait serait decochee
+ * pendant la lecture de l'avertissement.
+ */
+
+
+test("POST /mobiles arme le drapeau et rend le bloc de reglage, pas le suivi", (t) => {
+  const ctx = contexte(t);
+
+  const reponse = router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "avecMobiles=1", true));
+  const corps = corpsTexte(reponse.corps);
+
+  assert.deepEqual(ctx.pilote.bascules, [true]);
+  assert.equal(reponse.statut, 200);
+  assert.match(corps, /class="avertissement"/, "l'avertissement RGPD doit accompagner l'armement");
+  assert.doesNotMatch(corps, /Lancer un run/, "la cible est le reglage, pas le bloc de commandes");
+});
+
+test("une case decochee n'envoie rien, et l'absence vaut exclusion", (t) => {
+  const ctx = contexte(t);
+  router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "avecMobiles=1", true));
+
+  // Le navigateur n'envoie pas les cases decochees : un corps vide est le cas normal du
+  // desarmement, et le lire comme « inchange » laisserait le drapeau arme pour toujours.
+  router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "", true));
+
+  assert.deepEqual(ctx.pilote.bascules, [true, false]);
+  assert.equal(ctx.pilote.avecMobiles(), false);
+});
+
+test("un basculement refuse repond 422 et rend le refus sur place", (t) => {
+  const ctx = contexte(t);
+  ctx.pilote.verrouiller("Le drapeau des mobiles ne change pas en cours de run.");
+
+  const reponse = router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "avecMobiles=1", true));
+
+  assert.equal(reponse.statut, 422, "le code doit dire la verite sur ce qui s'est passe");
+  assert.match(corpsTexte(reponse.corps), /ne change pas en cours de run/);
+});
+
+test("sans htmx, POST /mobiles redirige : un rechargement ne doit pas rejouer le reglage", (t) => {
+  const ctx = contexte(t);
+  const reponse = router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "avecMobiles=1"));
+
+  assert.equal(reponse.statut, 303);
+  assert.equal(reponse.entetes["Location"], `/?departement=${DEPARTEMENT}`);
+});
+
+test("le POST croise est refuse sur /mobiles comme sur les autres ecritures", (t) => {
+  const ctx = contexte(t);
+  const refus = verifierAcces(
+    ctx,
+    requete("/mobiles", {
+      methode: "POST",
+      corps: "avecMobiles=1",
+      entetes: {
+        host: `127.0.0.1:${PORT}`,
+        cookie: `${NOM_COOKIE}=${JETON}`,
+        "sec-fetch-site": "cross-site",
+      },
+    }),
+  );
+  assert.equal(refus?.statut, 403);
+});
+
+/**
+ * L'avancement du run, lu sur la base.
+ *
+ * Un run lance dans un terminal doit s'afficher comme un run lance d'ici : c'est deja le
+ * contrat du bloc de suivi, et la barre n'y fait pas exception. D'ou la lecture sur la
+ * table `page` plutot que sur la memoire du pilote.
+ */
+
+function ouvrirRun(ctx: ContexteTest, phase: string): void {
+  ctx.db
+    .prepare("INSERT INTO run (departement, started_at, statut, phase) VALUES (?, ?, 'en_cours', ?)")
+    .run(DEPARTEMENT, "2026-09-01T09:00:00.000Z", phase);
+}
+
+test("la barre de decouverte compte des communes, jamais des pages", (t) => {
+  const ctx = contexte(t);
+  ouvrirRun(ctx, "decouverte");
+
+  // Une seconde commune, planifiee mais pas encore exploree : le corpus n'en a qu'une,
+  // toutes pages visitees, ce qui donnerait une barre pleine sans rien prouver.
+  ctx.db
+    .prepare(
+      "INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution, " +
+        "resolution_source_url, resolution_collected_at, source_resolution, resolution_confiance, " +
+        "created_at, updated_at) VALUES ('35048', 'Chantepie', ?, 'https://chantepie.example', " +
+        "'resolue', 'https://source.example', 't', 'annuaire', 0.9, 't', 't')",
+    )
+    .run(DEPARTEMENT);
+  ctx.db
+    .prepare(
+      "INSERT INTO page (url_hash, campagne, url, domaine, code_insee, statut, planifiee_at, profondeur) " +
+        "VALUES ('h-attente', ?, 'https://chantepie.example/', 'chantepie.example', '35048', 'a_visiter', 't', 0)",
+    )
+    .run(CAMPAGNE);
+
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(suivi, /<progress max="2" value="1"/, "une commune sur deux est exploree");
+  assert.match(suivi, /1 sur 2 communes explorees/);
+  // Les pages sont dites en chiffre, sans denominateur qui pretendrait etre un reste :
+  // le crawl en enfile de nouvelles a chaque lien retenu.
+  assert.match(suivi, /pages visitees sur \d+ planifiees/);
+});
+
+test("la barre de normalisation compte les contacts notes a la version courante", (t) => {
+  const ctx = contexte(t);
+  ouvrirRun(ctx, "normalisation");
+
+  // Le contexte a note tous les contacts en version 1. Un contact note par une version
+  // anterieure du bareme sera renote : le compter comme fait figerait la barre a 100 %.
+  const total = Number(
+    (ctx.db.prepare("SELECT count(*) AS n FROM contact").get() as { n: number }).n,
+  );
+  ctx.db.prepare("UPDATE contact SET score_version = 2 WHERE id = (SELECT min(id) FROM contact)").run();
+
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(suivi, new RegExp(`<progress max="${total}" value="1"`));
+  assert.match(suivi, /contacts notes/);
+});
+
+test("l'amorce affiche son etape sans barre : rien n'y donne de denominateur", (t) => {
+  const ctx = contexte(t);
+  ouvrirRun(ctx, "amorce");
+
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(suivi, /<li class="courante">amorce<\/li>/);
+  assert.doesNotMatch(suivi, /<progress/);
+});
+
+test("sans run ouvert, il n'y a ni etapes ni barre a afficher", (t) => {
+  const ctx = contexte(t);
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  assert.doesNotMatch(suivi, /<progress/);
+  assert.doesNotMatch(suivi, /class="etapes"/);
+});
+
+test("un refus de basculement ne s'affiche pas aussi dans le bloc de suivi", (t) => {
+  const ctx = contexte(t);
+  ctx.pilote.verrouiller("Le drapeau des mobiles ne change pas en cours de run.");
+  router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "avecMobiles=1", true));
+
+  // Le suivi se reechange toutes les deux secondes : un refus rendu la aussi se lirait
+  // comme un second refus, deux secondes apres le premier.
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+  assert.doesNotMatch(suivi, /ne change pas en cours de run/);
 });

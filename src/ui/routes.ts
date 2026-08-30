@@ -22,18 +22,35 @@ import type { JobQueue } from "../jobs/queue.ts";
 import type { Counters } from "../metrics/counters.ts";
 import type { Clock } from "../clock.ts";
 import { lireAsset } from "./assets.ts";
-import { page } from "./rendu.ts";
+import { page, nombre } from "./rendu.ts";
 import type { EtatCollecte } from "./rendu.ts";
 import {
   departementParDefaut,
   departementsConnus,
   distributionRevue,
   fileRevue,
+  progressionDecouverte,
+  progressionNotation,
   runsRecents,
 } from "./requetes.ts";
+import type { LigneRun } from "./requetes.ts";
 import { arbitrer, estActionRevue } from "./revue.ts";
-import { ecranSynthese, fragmentSuivi, fragmentReglages, fragmentChiffres } from "./vues/synthese.ts";
-import type { DonneesSuivi, DonneesReglages, DonneesSynthese } from "./vues/synthese.ts";
+import {
+  ecranSynthese,
+  fragmentSuivi,
+  fragmentReglages,
+  fragmentMobiles,
+  fragmentChiffres,
+} from "./vues/synthese.ts";
+import type {
+  DonneesSuivi,
+  DonneesReglages,
+  DonneesMobiles,
+  DonneesSynthese,
+  Progression,
+} from "./vues/synthese.ts";
+import { estPhaseRun } from "../pipeline.ts";
+import { VERSION_SCORE } from "../normalisation/score.ts";
 import type { SurfacePilote } from "./pilote.ts";
 import { ecranRevue, fragmentFile } from "./vues/revue.ts";
 import { ecranExport } from "./vues/export.ts";
@@ -250,6 +267,30 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     return reponseSuivi(ctx, requete, departement);
   }
 
+  // §4.6 : le drapeau des mobiles. Sa reponse cible `#mobiles` et non `#suivi` — c'est un
+  // reglage, pas une commande de run, et son avertissement doit rester sous les yeux.
+  if (requete.methode === "POST" && requete.chemin === "/mobiles") {
+    const champs = new URLSearchParams(requete.corps);
+    // Case non cochee : le navigateur n'envoie rien. L'absence vaut donc « exclus », qui
+    // est le defaut de l'invariant — le sens de lecture le plus sur si le corps est vide.
+    const resultat = ctx.pilote.reglerMobiles(champs.get("avecMobiles") === "1");
+    const statut = resultat.kind === "refus" ? 422 : 200;
+    if (requete.entetes["hx-request"] === "true") return html(fragmentMobiles(donneesMobiles(ctx)), statut);
+    if (resultat.kind === "refus") {
+      return html(
+        page({
+          titre: "Synthese",
+          onglet: "synthese",
+          departement,
+          version: ctx.version,
+          contenu: syntheseComplete(ctx, departement, departements, donneesReglages(ctx)),
+        }),
+        statut,
+      );
+    }
+    return redirection(`/?departement=${encodeURIComponent(departement)}`);
+  }
+
   if (requete.methode === "POST" && requete.chemin === "/reglages") {
     return enregistrerReglages(ctx, requete, departement, departements);
   }
@@ -355,6 +396,7 @@ function donneesSynthese(
     departements,
     suivi: donneesSuivi(ctx, departement),
     reglages,
+    mobiles: donneesMobiles(ctx),
     couverture: mesurerCouverture(ctx.db, departement),
     dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
     prefiltre: distributionDuJour(ctx, departement),
@@ -385,14 +427,77 @@ function etatCollecte(ctx: ContexteUi): EtatCollecte {
 }
 
 function donneesSuivi(ctx: ContexteUi, departement: string): DonneesSuivi {
+  const runs = runsRecents(ctx.db);
   return {
-    runs: runsRecents(ctx.db),
+    runs,
     jobs: ctx.queue.counts(),
     departement,
     pilote: ctx.pilote.etat(),
     refus: ctx.pilote.refus(),
     collecteConfiguree: ctx.reglages.contactUrl() !== undefined,
+    progression: progressionDuRun(ctx, runs),
+    mobilesActifs: ctx.pilote.avecMobiles(),
+    maintenant: ctx.clock.now(),
   };
+}
+
+function donneesMobiles(ctx: ContexteUi): DonneesMobiles {
+  return {
+    actif: ctx.pilote.avecMobiles(),
+    verrouille: ctx.pilote.etat().kind === "en_cours",
+    refus: ctx.pilote.refusMobiles(),
+  };
+}
+
+/**
+ * Ou en est le run ouvert, et de combien.
+ *
+ * **La progression se lit sur la base, pas sur le pilote.** Un run lance dans un terminal
+ * doit s'afficher comme un run lance d'ici — c'est deja ce que fait le reste du bloc de
+ * suivi, et le WAL le permet sans que rien ne coordonne les deux process.
+ *
+ * La campagne prise est la derniere du departement. Pendant la decouverte, c'est
+ * necessairement celle du run : la planification vient d'en ouvrir une, et il n'en existe
+ * pas de plus recente. Prendre `campagneDuJour` a la place se tromperait sur un run
+ * demarre avant minuit et poursuivi apres.
+ */
+function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progression | undefined {
+  const enCours = runs.find((run) => run.statut === "en_cours");
+  if (enCours === undefined || !estPhaseRun(enCours.phase)) return undefined;
+  const departement = enCours.departement;
+
+  if (enCours.phase === "decouverte") {
+    const campagne = derniereCampagne(ctx.db, departement);
+    const avance = campagne === undefined ? undefined : progressionDecouverte(ctx.db, departement, campagne);
+    if (avance === undefined) return { phase: "decouverte", avancement: undefined };
+    return {
+      phase: "decouverte",
+      avancement: {
+        faits: avance.explorees,
+        total: avance.communes,
+        unite: "communes explorees",
+        // Sans denominateur : le nombre de pages grandit a chaque lien retenu, et
+        // l'annoncer comme un reste a faire serait faux dans le sens le plus decevant.
+        detail: `${nombre(avance.pagesVisitees)} pages visitees sur ${nombre(avance.pages)} planifiees a ce jour`,
+      },
+    };
+  }
+
+  if (enCours.phase === "normalisation") {
+    const avance = progressionNotation(ctx.db, departement, VERSION_SCORE);
+    if (avance === undefined) return { phase: "normalisation", avancement: undefined };
+    return {
+      phase: "normalisation",
+      avancement: {
+        faits: avance.notes,
+        total: avance.contacts,
+        unite: "contacts notes",
+        detail: undefined,
+      },
+    };
+  }
+
+  return { phase: enCours.phase, avancement: undefined };
 }
 
 function donneesReglages(

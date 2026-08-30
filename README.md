@@ -48,7 +48,7 @@ Docker et injecté dans l'exécutable Windows
 **Exécutable Windows.** `annuaire.exe` se télécharge depuis la page
 [Releases](../../releases) : double-clic, l'interface s'ouvre dans le navigateur. Le binaire n'est
 pas dans le dépôt — il est construit par la CI sur un poste Windows, qui lance ensuite ce qu'elle
-vient de produire ([ADR-027](docs/adr/027-publication-de-l-executable.md)). Il **n'est pas signé** :
+vient de produire ([ADR-028](docs/adr/028-publication-de-l-executable.md)). Il **n'est pas signé** :
 Windows le bloque au premier lancement, et chaque release publie l'empreinte SHA-256 du fichier pour
 que vous puissiez vérifier que c'est bien celui-là que vous avez.
 
@@ -145,7 +145,16 @@ abstient) :
 
 - **Synthèse** — couverture, volumes par étage de l'entonnoir, verdicts MX, classification. **Le
   run se lance et s'arrête d'ici** depuis le lot 8, sa phase s'écrivant dans le suivi
-  ([ADR-024](docs/adr/024-lancer-un-run-depuis-l-interface.md)).
+  ([ADR-024](docs/adr/024-lancer-un-run-depuis-l-interface.md)). Un indicateur situe la passe et une
+  barre dit de combien : des **communes explorées sur communes planifiées**, jamais des pages — le
+  lot de communes est figé à la planification, donc la barre ne recule jamais, là où une barre
+  assise sur les pages reculerait à chaque lien retenu
+  ([ADR-027](docs/adr/027-drapeau-des-mobiles-et-avancement-du-run.md)).
+- **Les numéros mobiles (06/07), si vous en avez besoin.** Exclus par défaut (§4.6) ; une case, avec
+  l'avertissement qui va avec, permet de les conserver. Ce choix **ne dure que la session** — il
+  n'est écrit nulle part et retombe à « exclus » au prochain lancement. Un mobile publié sur le site
+  d'une commune est presque toujours la ligne personnelle d'un bénévole : le conserver ouvre un
+  traitement dont vous répondez ([obligations](docs/obligations.md)).
 - **Revue** — les contacts à arbitrer, les moins sûrs d'abord, avec le détail des signaux qui ont
   fait baisser leur note. Valider, rejeter, corriger. Une correction ne réécrit jamais ce qui a été
   lu ([ADR-021](docs/adr/021-correction-en-revue.md)).

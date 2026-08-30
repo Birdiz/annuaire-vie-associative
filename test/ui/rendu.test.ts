@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { echapperHtml, lienSur, pourcent, tableau } from "../../src/ui/rendu.ts";
+import { barre, dateHeure, duree, ecart, echapperHtml, jour, lienSur, pourcent, tableau } from "../../src/ui/rendu.ts";
 
 /**
  * Ce qui est defendu ici : une valeur lue sur un site de mairie ne peut pas devenir du
@@ -60,4 +60,84 @@ test("une colonne de nombres s'aligne a droite, en-tete comprise", () => {
   // La colonne de texte, elle, ne bouge pas.
   assert.match(rendu, /<th>etat<\/th>/);
   assert.match(rendu, /<td>pending<\/td>/);
+});
+
+/**
+ * Les dates et la barre.
+ *
+ * Ce qui est defendu ici : la base garde de l'ISO 8601 UTC — c'est ce qui rend les
+ * comparaisons justes — et l'ecran, lui, se lit sans conversion de fuseau de tete. Et la
+ * barre porte sa valeur dans un attribut : la CSP `default-src 'self'` refuse un
+ * `style=` en ligne, et une barre reglee ainsi resterait vide sans rien signaler.
+ */
+
+/** Fixe le fuseau pour la duree d'un test, sans le laisser fuir sur les suivants. */
+function sousFuseau<T>(tz: string, corps: () => T): T {
+  const initial = process.env["TZ"];
+  process.env["TZ"] = tz;
+  try {
+    return corps();
+  } finally {
+    if (initial === undefined) delete process.env["TZ"];
+    else process.env["TZ"] = initial;
+  }
+}
+
+test("un horodatage se rend dans le fuseau de la machine", () => {
+  assert.equal(sousFuseau("Europe/Paris", () => dateHeure("2026-08-30T11:05:29.852Z")), "30/08/2026 13:05");
+  assert.equal(sousFuseau("UTC", () => dateHeure("2026-08-30T11:05:29.852Z")), "30/08/2026 11:05");
+  // Passage a minuit : c'est le cas ou une date brute induit le plus surement en erreur.
+  assert.equal(sousFuseau("Europe/Paris", () => dateHeure("2026-08-30T23:30:00.000Z")), "31/08/2026 01:30");
+});
+
+test("une date absente donne un tiret, une date illisible se rend telle quelle", () => {
+  assert.equal(dateHeure(null), "—");
+  assert.equal(dateHeure(undefined), "—");
+  assert.equal(dateHeure(""), "—");
+  // Masquer une valeur corrompue derriere un tiret la ferait passer pour une absence.
+  assert.equal(dateHeure("pas une date"), "pas une date");
+  assert.equal(dateHeure("<script>"), "&lt;script&gt;", "une valeur rendue telle quelle reste echappee");
+});
+
+test("une date seule ne passe pas par Date : elle reculerait d'un jour a l'ouest", () => {
+  // `new Date("2023-08-30")` vaut minuit UTC ; rendu en heure locale a New York, c'est
+  // le 29. Une borne de dormance decalee d'un jour se lirait comme une erreur de calcul.
+  assert.equal(sousFuseau("America/New_York", () => jour("2023-08-30")), "30/08/2023");
+  assert.equal(jour("2023-08-30"), "30/08/2023");
+  assert.equal(jour(null), "—");
+  assert.equal(jour("hier"), "hier");
+});
+
+test("les durees se lisent en trois paliers", () => {
+  assert.equal(duree(0), "0 s");
+  assert.equal(duree(38_000), "38 s");
+  assert.equal(duree(59_400), "59 s");
+  assert.equal(duree(60_000), "1 min");
+  assert.equal(duree(42 * 60_000), "42 min");
+  assert.equal(duree(67 * 60_000), "1 h 07");
+  assert.equal(duree(-5_000), "0 s", "une horloge qui recule ne doit pas afficher un negatif");
+});
+
+test("l'ecart refuse de calculer sur une date illisible", () => {
+  assert.equal(ecart("2026-08-30T10:00:00.000Z", "2026-08-30T10:42:00.000Z"), 42 * 60_000);
+  assert.equal(ecart("2026-08-30T10:00:00.000Z", Date.parse("2026-08-30T10:42:00.000Z")), 42 * 60_000);
+  assert.equal(ecart("jamais", "2026-08-30T10:42:00.000Z"), undefined);
+  assert.equal(ecart("2026-08-30T10:00:00.000Z", "jamais"), undefined);
+});
+
+test("la barre porte sa valeur en attribut, jamais dans un style en ligne", () => {
+  const rendu = barre(8, 20, "communes explorees");
+
+  assert.match(rendu, /<progress max="20" value="8"/);
+  assert.doesNotMatch(rendu, /style=/, "`style-src 'self'` refuserait l'attribut, sans rien signaler");
+  assert.match(rendu, /aria-label="8 sur 20 communes explorees"/, "la barre doit s'entendre autant qu'elle se voit");
+  assert.match(rendu, /40,0 %/);
+});
+
+test("la barre ne deborde pas et echappe son libelle", () => {
+  // Un numerateur au-dessus du denominateur n'est pas theorique : les deux chiffres
+  // viennent de deux requetes, et rien ne les prend au meme instant.
+  assert.match(barre(25, 20, "communes"), /value="20"/);
+  assert.match(barre(-3, 20, "communes"), /value="0"/);
+  assert.match(barre(1, 2, '<img src=x onerror="alert(1)">'), /&lt;img/);
 });

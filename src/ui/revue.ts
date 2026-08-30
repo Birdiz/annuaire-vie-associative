@@ -173,10 +173,12 @@ export function normaliserSaisie(
   if (normalise === undefined) {
     return { kind: "refus", message: `« ${saisie} » n'a pas la forme d'un numero francais.` };
   }
-  // §4.6 : les mobiles sont exclus par defaut, derriere un flag explicite que l'UI n'a
-  // pas. Les laisser entrer par la revue contournerait l'invariant par une porte que
-  // personne n'a ouverte — un mobile associatif est presque toujours la ligne
-  // personnelle d'un benevole.
+  // §4.6 : les mobiles sont exclus par defaut. L'interface sait armer le drapeau depuis
+  // l'ADR-027, mais il gouverne la **collecte** — il part dans le payload de chaque job
+  // de page — et non la saisie a la main. Cet ecran n'a aucun acces au pilote, et lui en
+  // donner un ferait dependre ce qu'un humain peut ecrire de l'etat d'un run : le refus
+  // reste donc inconditionnel. Un mobile associatif est presque toujours la ligne
+  // personnelle d'un benevole, et c'est la porte la plus facile a ouvrir par megarde.
   if (estMobile(normalise)) {
     return {
       kind: "refus",

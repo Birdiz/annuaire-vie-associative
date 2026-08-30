@@ -1,4 +1,4 @@
-# ADR-027 — Publier l'exécutable, et le vérifier là où il tourne
+# ADR-028 — Publier l'exécutable, et le vérifier là où il tourne
 
 Statut : acceptée — 2026-08-30
 

@@ -2,7 +2,7 @@ name: Executable Windows
 
 # L'executable ne peut pas vivre dans le depot : 88,5 Mo de binaire par version, la ou
 # le depot entier tient en quelques centaines de Ko. Il est donc construit ici et attache
-# a une release, ou un utilisateur Windows le telecharge d'un clic (ADR-027).
+# a une release, ou un utilisateur Windows le telecharge d'un clic (ADR-028).
 #
 # La construction tourne sur `windows-latest`, et non sur le runner Linux moins cher :
 # `scripts/sea.ts` sait deja produire un binaire `win-x64` depuis n'importe quel systeme,
@@ -116,7 +116,7 @@ jobs:
 
   # La suite complete, a chaque push : c'est le retour que le developpeur attend, donc il
   # tourne la ou il est rapide. 19 s sous Linux, contre plus de onze minutes sous Windows —
-  # mesure faite, ce n'est pas une supposition (ADR-027).
+  # mesure faite, ce n'est pas une supposition (ADR-028).
   suite:
     runs-on: ubuntu-latest
     timeout-minutes: 15

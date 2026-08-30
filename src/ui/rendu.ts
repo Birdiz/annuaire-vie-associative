@@ -48,6 +48,89 @@ export function pourcent(numerateur: number, denominateur: number): string {
   return `${((numerateur / denominateur) * 100).toFixed(1).replace(".", ",")} %`;
 }
 
+/**
+ * Horodatage lisible : « 30/08/2026 13:05 », dans le fuseau de la machine.
+ *
+ * Les colonnes de la base portent de l'ISO 8601 en UTC, et cela ne doit pas changer :
+ * c'est ce qui rend les comparaisons de dates justes et l'ordre lexical fiable. Mais
+ * `2026-08-30T11:05:29.852Z` demande a celui qui le lit de convertir un fuseau de tete
+ * pour savoir si son run a demarre il y a deux minutes ou hier soir. L'outil tourne sur
+ * sa machine : c'est l'heure de sa machine qu'il faut afficher.
+ *
+ * Formate a la main plutot que par `Intl` : les accesseurs `getDate`/`getHours` lisent le
+ * fuseau a chaque appel — un formateur `Intl` garde en cache celui qu'il avait a sa
+ * construction — et le rendu ne depend alors d'aucune donnee de locale. Le format est
+ * francais parce que toute l'interface l'est.
+ */
+export function dateHeure(valeur: string | null | undefined): string {
+  if (valeur === null || valeur === undefined || valeur === "") return "—";
+  const date = new Date(valeur);
+  // Une valeur illisible est rendue telle quelle : elle vient de la base, et la masquer
+  // derriere un tiret ferait passer une donnee corrompue pour une donnee absente.
+  if (Number.isNaN(date.getTime())) return echapperHtml(valeur);
+  return `${deuxChiffres(date.getDate())}/${deuxChiffres(date.getMonth() + 1)}/${date.getFullYear()} ` +
+    `${deuxChiffres(date.getHours())}:${deuxChiffres(date.getMinutes())}`;
+}
+
+/**
+ * Une date seule, « 2023-08-30 » rendu « 30/08/2023 ».
+ *
+ * Relue caractere par caractere, sans passer par `Date` : `new Date("2023-08-30")` vaut
+ * minuit UTC, et a l'ouest de Greenwich l'affichage local retomberait sur la veille. Une
+ * borne de dormance decalee d'un jour se lirait comme une erreur de calcul.
+ */
+export function jour(valeur: string | null | undefined): string {
+  if (valeur === null || valeur === undefined) return "—";
+  const parties = /^(\d{4})-(\d{2})-(\d{2})/.exec(valeur);
+  if (parties === null) return echapperHtml(valeur);
+  return `${parties[3]}/${parties[2]}/${parties[1]}`;
+}
+
+/**
+ * Une duree en clair : « 38 s », « 12 min », « 1 h 07 ».
+ *
+ * Trois paliers, parce qu'au-dela la precision ne sert plus a rien : ce qu'on veut savoir
+ * d'un run de quarante minutes est qu'il en est a douze, pas qu'il en est a 12 min 34 s.
+ */
+export function duree(millisecondes: number): string {
+  const secondes = Math.max(0, Math.round(millisecondes / 1000));
+  if (secondes < 60) return `${secondes} s`;
+  const minutes = Math.floor(secondes / 60);
+  if (minutes < 60) return `${minutes} min`;
+  return `${Math.floor(minutes / 60)} h ${deuxChiffres(minutes % 60)}`;
+}
+
+/** Ecart entre deux horodatages, ou `undefined` si l'un des deux est illisible. */
+export function ecart(debut: string, fin: string | number): number | undefined {
+  const depart = new Date(debut).getTime();
+  const arrivee = typeof fin === "number" ? fin : new Date(fin).getTime();
+  if (Number.isNaN(depart) || Number.isNaN(arrivee)) return undefined;
+  return arrivee - depart;
+}
+
+function deuxChiffres(valeur: number): string {
+  return String(valeur).padStart(2, "0");
+}
+
+/**
+ * Barre de progression, en `<progress>` natif.
+ *
+ * **Pas de `style="width: 60%"`.** La CSP du serveur est `default-src 'self'`, donc
+ * `style-src 'self'` : un attribut `style` en ligne est refuse par le navigateur, et la
+ * barre resterait vide sans que rien ne le signale. Y ajouter `'unsafe-inline'` pour
+ * dessiner un rectangle serait payer un affichage du garde-fou qui protege l'ecran de
+ * revue. L'element natif porte sa valeur dans un attribut, se met en forme en CSS, et
+ * annonce tout seul sa progression aux lecteurs d'ecran.
+ */
+export function barre(faits: number, total: number, libelle: string): string {
+  const borne = Math.max(0, Math.min(faits, total));
+  const texte = `${nombre(borne)} sur ${nombre(total)} ${libelle}`;
+  return `<div class="progression">
+  <progress max="${total}" value="${borne}" aria-label="${echapperHtml(texte)}"></progress>
+  <span class="etiquette">${echapperHtml(texte)} — ${pourcent(borne, total)}</span>
+</div>`;
+}
+
 export type Onglet = "synthese" | "revue" | "export";
 
 export type OptionsPage = {
