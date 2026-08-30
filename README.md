@@ -385,6 +385,24 @@ Le worker tourne dans le process de l'interface : c'est ce qui donne un arrêt p
 où il n'y a pas de `SIGTERM`. Une ligne de run restée « en cours » après une coupure brutale est
 signalée sans bloquer le bouton — la file est reprenable, c'est l'invariant 9, pas un pari.
 
+**Où en est le run.** Un indicateur situe la passe, et une barre dit de combien : pendant la
+découverte, ce sont des **communes explorées sur communes planifiées**. L'unité n'est pas anodine —
+le lot de communes est figé à la planification, donc la barre ne recule jamais, là où une barre
+assise sur les pages reculerait à chaque lien retenu par le crawl. Les pages sont dites à côté, en
+chiffre, sans dénominateur qui prétendrait être un reste. L'amorce n'a pas de barre : le nombre de
+communes du département n'y est pas encore connu, et une barre inventée serait pire qu'aucune barre
+([ADR-027](docs/adr/027-drapeau-des-mobiles-et-avancement-du-run.md)).
+
+**Les numéros mobiles (06/07), si vous en avez besoin.** Ils sont exclus par défaut (§4.6) ; une
+case, avec l'avertissement qui va avec, permet de les conserver — et l'avertissement est redit à
+côté du bouton de lancement, parce qu'un opt-in visible seulement au moment où on le coche est un
+opt-in qu'on oublie avoir donné. Ce choix **ne dure que la session** : il n'est écrit nulle part et
+retombe à « exclus » au prochain lancement de l'interface. Un mobile publié sur le site d'une
+commune est presque toujours la ligne personnelle d'un bénévole, et non le téléphone d'un local
+associatif : le conserver ouvre un traitement dont vous répondez (voir « Ce que vous devez faire »).
+Le drapeau est figé au démarrage du run — chaque job de page le porte depuis la planification — et
+ne se change donc pas en cours de route.
+
 Si aucune URL de contact n'est configurée, l'écran la demande **avant** d'offrir le bouton : elle
 est annoncée dans le User-Agent pour qu'un webmestre puisse vous joindre, et aucune collecte ne
 part sans elle (§4.4). C'est ce qui rend l'exécutable Windows utilisable sans éditeur de texte.

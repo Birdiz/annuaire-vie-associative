@@ -126,6 +126,7 @@ test("arreter propage le signal, et l'interruption n'est pas un echec", async ()
     departement: "35",
     issue: "interrompu",
     message: undefined,
+    avecMobiles: false,
   });
   assert.equal(p.arreter(), false, "plus rien a arreter");
 });
@@ -172,4 +173,71 @@ test("une fois l'interface en cours d'arret, plus aucun run ne demarre", () => {
   assert.equal(depart.kind, "refus");
   assert.match(p.refus() ?? "", /en cours d'arret/);
   assert.equal(p.etat().kind, "inactif", "aucun run ne doit avoir ete ouvert");
+});
+
+/**
+ * §4.6, invariant 6 : les mobiles sont exclus **par defaut**, et le drapeau ne peut pas
+ * bouger sous un run. Ce qui est defendu ici : le defaut d'un pilote neuf, le gel du
+ * drapeau a l'instant du depart, et le refus de le changer une fois le run parti.
+ */
+
+test("un pilote neuf exclut les mobiles, et le run le reprend tel quel", () => {
+  const [p, e] = pilote();
+
+  assert.equal(p.avecMobiles(), false, "§4.6 : exclus par defaut, sans rien avoir a regler");
+  p.demarrer("35");
+  assert.equal(e.appels[0]?.decouverte.avecMobiles, false);
+});
+
+test("le drapeau arme passe dans les options du run", () => {
+  const [p, e] = pilote();
+
+  assert.deepEqual(p.reglerMobiles(true), { kind: "ok" });
+  assert.equal(p.avecMobiles(), true);
+
+  p.demarrer("35");
+  assert.equal(e.appels[0]?.decouverte.avecMobiles, true, "le drapeau doit atteindre la decouverte");
+
+  const etat = p.etat();
+  assert.equal(etat.kind, "en_cours");
+  assert.equal(
+    etat.kind === "en_cours" && etat.avecMobiles,
+    true,
+    "l'etat doit dire ce que le run applique, pas ce qui est coche a l'ecran",
+  );
+});
+
+test("le drapeau est fige au demarrage : le desarmer en cours de run ne le change pas", () => {
+  const [p, e] = pilote();
+  p.reglerMobiles(true);
+  p.demarrer("35");
+
+  // Les jobs de page portent le drapeau dans leur payload depuis la planification :
+  // accepter le changement afficherait un etat que la collecte n'applique pas.
+  const reglage = p.reglerMobiles(false);
+  assert.equal(reglage.kind, "refus");
+  assert.match(p.refusMobiles() ?? "", /fige au demarrage/, "le refus se garde : le bloc se rafraichit");
+  // Deux memoires : ce refus s'affiche dans le bloc du drapeau, pas dans le suivi. Une
+  // seule ferait apparaitre le meme message aux deux endroits.
+  assert.equal(p.refus(), undefined);
+  assert.equal(p.avecMobiles(), true, "rien ne doit bouger tant que le run tourne");
+  assert.equal(e.appels[0]?.decouverte.avecMobiles, true);
+});
+
+test("le drapeau survit a la fin du run dans l'etat, et redevient reglable", async () => {
+  const [p, e] = pilote();
+  p.reglerMobiles(true);
+  p.demarrer("35");
+  e.resoudre({ runId: 42, interrompu: false });
+  await p.attendre();
+
+  assert.deepEqual(p.etat(), {
+    kind: "fini",
+    departement: "35",
+    issue: "termine",
+    message: undefined,
+    avecMobiles: true,
+  });
+  assert.deepEqual(p.reglerMobiles(false), { kind: "ok" }, "le run est fini, le verrou tombe");
+  assert.equal(p.avecMobiles(), false);
 });

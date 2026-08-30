@@ -33,3 +33,4 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [024](024-lancer-un-run-depuis-l-interface.md) | Lancer un run depuis l'interface | Acceptée |
 | [025](025-regime-juridique-et-obligations.md) | Régime juridique et obligations de l'utilisateur | Acceptée |
 | [026](026-droit-a-l-effacement.md) | Droit à l'effacement : une exclusion, pas une suppression | Acceptée |
+| [027](027-drapeau-des-mobiles-et-avancement-du-run.md) | Le drapeau des mobiles à l'écran, et l'avancement du run | Acceptée |

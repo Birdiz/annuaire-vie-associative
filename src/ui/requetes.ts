@@ -145,3 +145,83 @@ export function fileRevue(db: Database, departement: string, limite: number): Co
     )
     .all(departement, limite) as unknown as ContactARevoir[];
 }
+
+/**
+ * Ce qu'il reste a faire sur la passe en cours, pour la barre de progression.
+ *
+ * **L'unite est la commune, pas la page.** Le lot de communes est fige : la planification
+ * de l'etape [3] insere toutes les pages racines dans une seule transaction, et rien n'en
+ * ajoute ensuite. Le denominateur ne bouge donc plus de tout le run. Les pages, elles,
+ * apparaissent au fil du crawl — jusqu'a `maxPages` par commune — et une barre assise sur
+ * elles reculerait a chaque lien decouvert, ce qui est pire que pas de barre du tout.
+ *
+ * Le compte de pages reste rendu a cote, en chiffre : il dit le travail fourni sans
+ * pretendre dire le travail restant.
+ */
+export type ProgressionDecouverte = {
+  communes: number;
+  /** Communes dont plus aucune page n'attend d'etre visitee. */
+  explorees: number;
+  pages: number;
+  pagesVisitees: number;
+};
+
+const SQL_PROGRESSION_DECOUVERTE = `
+  SELECT count(*) AS communes,
+         coalesce(sum(CASE WHEN restantes = 0 THEN 1 ELSE 0 END), 0) AS explorees,
+         coalesce(sum(pages), 0) AS pages,
+         coalesce(sum(pages - restantes), 0) AS visitees
+    FROM (SELECT count(*) AS pages,
+                 sum(CASE WHEN p.statut = 'a_visiter' THEN 1 ELSE 0 END) AS restantes
+            FROM page p
+            JOIN commune c ON c.code_insee = p.code_insee
+           WHERE c.departement = ? AND p.campagne = ?
+           GROUP BY p.code_insee)
+`;
+
+export function progressionDecouverte(
+  db: Database,
+  departement: string,
+  campagne: string,
+): ProgressionDecouverte | undefined {
+  const ligne = db.prepare(SQL_PROGRESSION_DECOUVERTE).get(departement, campagne) as
+    | { communes: number; explorees: number; pages: number; visitees: number }
+    | undefined;
+  // Aucune commune planifiee : la campagne n'est pas encore ouverte, et une barre a
+  // 0 sur 0 laisserait croire a un run bloque plutot qu'a un run qui n'en est pas la.
+  if (ligne === undefined || Number(ligne.communes) === 0) return undefined;
+  return {
+    communes: Number(ligne.communes),
+    explorees: Number(ligne.explorees),
+    pages: Number(ligne.pages),
+    pagesVisitees: Number(ligne.visitees),
+  };
+}
+
+/**
+ * Avancement de l'etape [8]. Le critere est celui du travail lui-meme — `score_version`
+ * a la version courante — et non « un score existe » : un contact note par une version
+ * anterieure du bareme sera renote, et le compter comme fait ferait stagner la barre a
+ * 100 % pendant toute la passe.
+ */
+export type ProgressionNotation = { contacts: number; notes: number };
+
+const SQL_PROGRESSION_NOTATION = `
+  SELECT count(*) AS contacts,
+         coalesce(sum(CASE WHEN ct.score_version = ? THEN 1 ELSE 0 END), 0) AS notes
+    FROM contact ct
+    JOIN commune c ON c.code_insee = ct.code_insee
+   WHERE c.departement = ?
+`;
+
+export function progressionNotation(
+  db: Database,
+  departement: string,
+  version: number,
+): ProgressionNotation | undefined {
+  const ligne = db.prepare(SQL_PROGRESSION_NOTATION).get(version, departement) as
+    | { contacts: number; notes: number }
+    | undefined;
+  if (ligne === undefined || Number(ligne.contacts) === 0) return undefined;
+  return { contacts: Number(ligne.contacts), notes: Number(ligne.notes) };
+}

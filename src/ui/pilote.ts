@@ -19,12 +19,33 @@ import { messageDe } from "../log.ts";
 
 export type IssueRun = "termine" | "interrompu" | "echec";
 
+/**
+ * `avecMobiles` voyage dans l'etat, et non a cote : le drapeau est **fige au demarrage**
+ * (§4.6). Le lire depuis le reglage courant ferait afficher au bloc de suivi ce qui est
+ * coche a l'instant, alors que ce qui compte est ce que le run en cours applique — les
+ * jobs de page portent le drapeau dans leur payload depuis la planification.
+ */
 export type EtatPilote =
   | { kind: "inactif" }
-  | { kind: "en_cours"; departement: string; demarre: string; runId: number | undefined }
-  | { kind: "fini"; departement: string; issue: IssueRun; message: string | undefined };
+  | {
+      kind: "en_cours";
+      departement: string;
+      demarre: string;
+      runId: number | undefined;
+      avecMobiles: boolean;
+    }
+  | {
+      kind: "fini";
+      departement: string;
+      issue: IssueRun;
+      message: string | undefined;
+      avecMobiles: boolean;
+    };
 
 export type Demarrage = { kind: "lance" } | { kind: "refus"; message: string };
+
+/** Reponse au basculement du drapeau des mobiles. Un refus se garde, comme celui du run. */
+export type Reglage = { kind: "ok" } | { kind: "refus"; message: string };
 
 /**
  * Ce que le routeur voit du pilote. Un type structurel plutot que la classe : `routes.ts`
@@ -35,6 +56,11 @@ export type SurfacePilote = {
   refus(): string | undefined;
   demarrer(departement: string | undefined): Demarrage;
   arreter(): boolean;
+  /** Le drapeau §4.6 tel qu'il sera applique au prochain run. */
+  avecMobiles(): boolean;
+  reglerMobiles(actif: boolean): Reglage;
+  /** Le dernier refus de basculement, garde a part de celui des commandes de run. */
+  refusMobiles(): string | undefined;
 };
 
 type Executer = (app: App, options: OptionsRun, signal: AbortSignal, onRunId?: (id: number) => void) => Promise<ResultatRun>;
@@ -44,6 +70,21 @@ export class PiloteRun implements SurfacePilote {
   readonly #executer: Executer;
   #etat: EtatPilote = { kind: "inactif" };
   #refus: string | undefined;
+  /**
+   * Deux memoires, parce que deux blocs distincts les rendent : le refus d'une commande
+   * de run s'affiche dans le suivi, celui du drapeau dans son propre reglage. Une seule
+   * memoire faisait apparaitre le meme message aux deux endroits, et un refus rendu deux
+   * fois se lit comme deux refus.
+   */
+  #refusMobiles: string | undefined;
+  /**
+   * §4.6, invariant 6 : les mobiles sont exclus **par defaut**, et ce defaut est repris a
+   * chaque lancement de l'interface. Le drapeau ne vit donc qu'ici, en memoire, et non
+   * dans `config.json` : un opt-in qui engage la responsabilite de traitement de
+   * l'utilisateur (ADR-025) ne doit pas pouvoir etre coche une fois puis oublie six mois.
+   * Fermer l'interface le desarme, et c'est le comportement voulu.
+   */
+  #avecMobiles = false;
   #controller: AbortController | undefined;
   #enCours: Promise<void> | undefined;
   #arrete = false;
@@ -67,6 +108,36 @@ export class PiloteRun implements SurfacePilote {
    */
   refus(): string | undefined {
     return this.#refus;
+  }
+
+  avecMobiles(): boolean {
+    return this.#avecMobiles;
+  }
+
+  /** Garde jusqu'au basculement suivant, pour la meme raison que `refus()`. */
+  refusMobiles(): string | undefined {
+    return this.#refusMobiles;
+  }
+
+  /**
+   * Bascule le drapeau §4.6, hors run seulement.
+   *
+   * Le refus pendant un run n'est pas de la prudence : le drapeau part dans le payload de
+   * chaque job de page au moment de la planification, et rien ne relit ce reglage ensuite.
+   * L'accepter en cours de route afficherait un etat que la collecte n'applique pas —
+   * mensonge d'autant plus couteux qu'il porte sur une donnee personnelle.
+   */
+  reglerMobiles(actif: boolean): Reglage {
+    if (this.#etat.kind === "en_cours") {
+      const message =
+        "Le drapeau des mobiles ne change pas en cours de run : il est fige au demarrage, " +
+        "dans chaque job de page. Arretez le run, ou attendez sa fin.";
+      this.#refusMobiles = message;
+      return { kind: "refus", message };
+    }
+    this.#avecMobiles = actif;
+    this.#refusMobiles = undefined;
+    return { kind: "ok" };
   }
 
   /**
@@ -107,11 +178,16 @@ export class PiloteRun implements SurfacePilote {
     this.#refus = undefined;
     const controller = new AbortController();
     this.#controller = controller;
+    // Fige a l'instant du depart : ce que le run applique ne bougera plus, et l'etat
+    // rendu par le bloc de suivi dit ce qui est en train de se passer, pas ce qui est
+    // coche a l'ecran.
+    const avecMobiles = this.#avecMobiles;
     this.#etat = {
       kind: "en_cours",
       departement,
       demarre: toIso(this.#app.clock.now()),
       runId: undefined,
+      avecMobiles,
     };
 
     const options: OptionsRun = {
@@ -119,21 +195,21 @@ export class PiloteRun implements SurfacePilote {
       avecImport: false,
       rnaFile: undefined,
       sansDecouverte: false,
-      decouverte: optionsDecouvertePardefaut(),
+      decouverte: optionsDecouvertePardefaut(avecMobiles),
     };
 
     this.#enCours = this.#executer(this.#app, options, controller.signal, (runId) => {
       if (this.#etat.kind === "en_cours") this.#etat = { ...this.#etat, runId };
     }).then(
       (resultat) => {
-        this.#terminer(departement, resultat.interrompu ? "interrompu" : "termine", undefined);
+        this.#terminer(departement, resultat.interrompu ? "interrompu" : "termine", undefined, avecMobiles);
       },
       (cause: unknown) => {
         this.#app.logger.error("Le run lance depuis l'interface a echoue", {
           departement,
           erreur: messageDe(cause),
         });
-        this.#terminer(departement, "echec", messageDe(cause));
+        this.#terminer(departement, "echec", messageDe(cause), avecMobiles);
       },
     );
 
@@ -163,8 +239,13 @@ export class PiloteRun implements SurfacePilote {
     await this.#enCours;
   }
 
-  #terminer(departement: string, issue: IssueRun, message: string | undefined): void {
-    this.#etat = { kind: "fini", departement, issue, message };
+  #terminer(
+    departement: string,
+    issue: IssueRun,
+    message: string | undefined,
+    avecMobiles: boolean,
+  ): void {
+    this.#etat = { kind: "fini", departement, issue, message, avecMobiles };
     this.#controller = undefined;
     this.#enCours = undefined;
   }

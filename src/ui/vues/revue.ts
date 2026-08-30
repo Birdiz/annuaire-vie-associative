@@ -12,7 +12,7 @@
  * fait descendre le chiffre, pas seulement le chiffre.
  */
 
-import { echapperHtml, lienSur, nombre, choixDepartement } from "../rendu.ts";
+import { echapperHtml, lienSur, nombre, choixDepartement, dateHeure } from "../rendu.ts";
 import type { ContactARevoir, DistributionRevue } from "../requetes.ts";
 import type { Motifs } from "../../normalisation/score.ts";
 
@@ -95,7 +95,7 @@ function carte(contact: ContactARevoir, departement: string): string {
   <span class="score">score ${contact.score === null ? "—" : contact.score.toFixed(2)} · lu ${contact.confiance.toFixed(2)}</span>
   <div class="valeur">${echapperHtml(contact.valeur)}</div>
   <div>${cible}</div>
-  <div class="discret">${regime} · ${echapperHtml(contact.methode_extraction)} · vu le ${echapperHtml(contact.collected_at)}</div>
+  <div class="discret">${regime} · ${echapperHtml(contact.methode_extraction)} · vu le ${dateHeure(contact.collected_at)}</div>
   ${motifsHtml(contact.score_motifs)}
   <div>${lien}</div>
   <!-- method/action en plus de hx-post : sans JS le formulaire part quand meme, et le

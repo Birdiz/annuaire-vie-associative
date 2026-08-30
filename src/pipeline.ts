@@ -31,6 +31,18 @@ export type OptionsDecouverte = { maxPages: number; avecMobiles: boolean };
  */
 export type PhaseRun = "amorce" | "decouverte" | "normalisation";
 
+/**
+ * Les trois passes dans l'ordre, aupres du type dont elles sont l'enumeration — meme
+ * raison que `ETATS_JOB` : l'indicateur d'etape de l'interface a besoin de la liste, et
+ * une copie la-bas manquerait la passe qu'on ajouterait ici.
+ */
+export const PHASES_RUN: readonly PhaseRun[] = ["amorce", "decouverte", "normalisation"];
+
+/** La colonne `run.phase` est un TEXT nullable : elle se relit, elle ne se suppose pas. */
+export function estPhaseRun(valeur: string | null | undefined): valeur is PhaseRun {
+  return valeur !== null && valeur !== undefined && (PHASES_RUN as readonly string[]).includes(valeur);
+}
+
 export type OptionsRun = {
   departement: string;
   avecImport: boolean;
