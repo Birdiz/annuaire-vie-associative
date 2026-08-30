@@ -387,6 +387,7 @@ async function commandeUi(
       clock: app.clock,
       version: VERSION,
       departementSecours: departement ?? DEPARTEMENT_PAR_DEFAUT,
+      dataDir: app.paths.dataDir,
       pilote,
       reglages: {
         contactUrl: () => app.config.contactUrl,

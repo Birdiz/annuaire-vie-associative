@@ -154,13 +154,14 @@ export function barre(faits: number, total: number, libelle: string, phrase?: st
 </div>`;
 }
 
-export type Onglet = "synthese" | "revue" | "export";
+export type Onglet = "synthese" | "revue" | "export" | "aide";
 
 /** Le chemin de chaque onglet. La barre de portee y renvoie, pour rester sur l'ecran. */
 export const CHEMIN_ONGLET: Record<Onglet, string> = {
   synthese: "/",
   revue: "/revue",
   export: "/export",
+  aide: "/aide",
 };
 
 /**
@@ -239,7 +240,11 @@ export type OptionsPage = {
   departement: string;
   contenu: string;
   version: string;
-  /** La barre de portee, deja rendue : la page ne lit pas la base. */
+  /**
+   * La barre de portee, deja rendue : la page ne lit pas la base. Vide sur le mode
+   * d'emploi, qui ne depend d'aucun departement — y montrer un selecteur laisserait
+   * croire que le texte change avec lui.
+   */
   portee: string;
 };
 
@@ -269,6 +274,7 @@ export function page(options: OptionsPage): string {
     ${onglet("synthese", "Synthese")}
     ${onglet("revue", "Revue")}
     ${onglet("export", "Export")}
+    ${onglet("aide", "Aide")}
   </nav>
   <span class="version">v${echapperHtml(options.version)}</span>
 </header>

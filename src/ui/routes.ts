@@ -56,6 +56,7 @@ import { VERSION_SCORE } from "../normalisation/score.ts";
 import type { SurfacePilote } from "./pilote.ts";
 import { ecranRevue, fragmentFile } from "./vues/revue.ts";
 import { ecranExport } from "./vues/export.ts";
+import { ecranAide } from "./vues/aide.ts";
 import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts";
 import { distributionNormalisation } from "../normalisation/rejeu.ts";
 import { mesurerCouverture } from "../metrics/couverture.ts";
@@ -92,6 +93,11 @@ export type ContexteUi = {
   version: string;
   /** Departement affiche quand la base n'en connait aucun. */
   departementSecours: string;
+  /**
+   * Ou l'outil ecrit sur cette machine. Rendu par le mode d'emploi : « ou sont mes
+   * donnees » est la question que pose quiconque n'ouvrira jamais un terminal.
+   */
+  dataDir: string;
   /**
    * Le run que cette interface pilote (ADR-024). Le worker tourne dans ce process : le
    * routeur ne fait que demander, il n'attend jamais — un run dure des minutes.
@@ -334,6 +340,21 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
 
   if (requete.methode === "POST" && requete.chemin === "/reglages") {
     return enregistrerReglages(ctx, requete, portee);
+  }
+
+  // Le mode d'emploi ne porte pas de barre de portee : il ne depend d'aucun departement.
+  // Les onglets, eux, gardent le departement courant pour qu'on revienne ou l'on etait.
+  if (requete.methode === "GET" && requete.chemin === "/aide") {
+    return html(
+      page({
+        titre: "Mode d'emploi",
+        onglet: "aide",
+        departement,
+        version: ctx.version,
+        portee: "",
+        contenu: ecranAide({ dataDir: ctx.dataDir, departement }),
+      }),
+    );
   }
 
   if (requete.methode === "GET" && requete.chemin === "/revue") {

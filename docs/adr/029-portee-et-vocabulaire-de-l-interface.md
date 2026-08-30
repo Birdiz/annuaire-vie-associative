@@ -36,7 +36,8 @@ registre, alors que `dump.consumed_bytes` et `dump.total_bytes` en donnent un.
 ## Décision
 
 **Une barre de portée, sous le bandeau, et le département ne se dit qu'à cet endroit.**
-Elle est rendue sur les trois écrans, quel que soit le nombre de départements en base.
+Elle est rendue sur les trois écrans qui dépendent d'un département, quel que soit le
+nombre de départements en base.
 Les libellés d'action redeviennent neutres : « Lancer le run complet », « Télécharger le
 fichier ».
 
@@ -76,6 +77,19 @@ trancher, corriger, effacer — plutôt qu'alignées bout à bout, où un champ 
 appartenir au bouton qui le précède. **Aucune n'est mise en avant** : « Valider » en
 bouton plein, répété sur dix cartes, fabrique un rang de boutons qui appelle le clic, or
 l'écran existe pour que la décision soit prise contact par contact.
+
+**Un mode d'emploi dans l'outil.** Retirer le jargon rend l'écran lisible, mais ne dit
+toujours pas pourquoi la collecte prend des heures, ni ce que la loi attend de celui qui
+exporte le fichier. Le README ne peut pas jouer ce rôle : il parle de `npm`, de CSP et
+renvoie à des ADR — il s'adresse à qui clone le dépôt, pas à qui a double-cliqué sur un
+exécutable. D'où un **quatrième écran**, `/aide` : les cinq étapes dans l'ordre, la
+lenteur présentée comme une règle et non comme une panne, le fait qu'une coupure ne perde
+rien, les trois obligations qui accompagnent le fichier produit, et le chemin où l'outil
+écrit sur la machine. Il ne porte pas de barre de portée — son texte ne dépend d'aucun
+département, et y montrer un sélecteur laisserait croire le contraire.
+
+Le coût est un écran de texte statique, sans requête ni dépendance. C'est ce qui rendait
+l'ajout discutable au regard du poids du bundle, et ce qui le rend acceptable.
 
 ## Conséquences
 

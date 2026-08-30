@@ -35,6 +35,7 @@ async function servir(t: TestContext): Promise<ServeurUi> {
     clock: HORLOGE,
     version: "0.1.0",
     departementSecours: DEPARTEMENT,
+    dataDir: "/tmp/annuaire-test",
     supprimerCache: () => false,
     pilote: piloteDouble(),
     reglages: reglagesDouble("https://exemple.example/contact"),

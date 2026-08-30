@@ -25,7 +25,7 @@ const HORLOGE = fixedClock(Date.parse("2026-09-01T10:00:00.000Z"));
 type ContexteTest = ContexteUi & { pilote: PiloteDouble; reglages: ReglagesDouble };
 
 function contexte(t: TestContext): ContexteTest {
-  const { dbFile } = preparerCorpus(t);
+  const { dbFile, racine } = preparerCorpus(t);
   const db = openDatabase(dbFile);
   t.after(() => db.close());
 
@@ -43,6 +43,7 @@ function contexte(t: TestContext): ContexteTest {
     port: PORT,
     version: "0.1.0",
     departementSecours: DEPARTEMENT,
+    dataDir: racine,
     supprimerCache: () => false,
     pilote: piloteDouble(),
     reglages: reglagesDouble("https://exemple.example/contact"),
@@ -850,4 +851,49 @@ test("l'ecran de revue dit ce qu'on arbitre avant de montrer une valeur nue", (t
   assert.match(ecran, /valeur de contact lue sur une page de/, "une chaine nue ne se juge pas");
   assert.match(ecran, /Que font les quatre boutons/, "la legende des actions est a portee");
   assert.match(ecran, /class="type">Adresse email</, "chaque carte nomme le type de sa valeur");
+});
+
+/**
+ * Le mode d'emploi.
+ *
+ * Il vit dans l'outil et non dans le README : celui-ci parle de `npm`, de CSP et renvoie
+ * a des ADR — il s'adresse a qui clone le depot. La personne qui utilise l'outil a
+ * double-clique sur un executable et regarde un navigateur.
+ */
+
+test("le mode d'emploi est servi, et atteignable depuis chaque ecran", (t) => {
+  const ctx = contexte(t);
+
+  const aide = router(ctx, requete("/aide"));
+  assert.equal(aide.statut, 200);
+  assert.match(corpsTexte(aide.corps), /Mode d'emploi/);
+
+  for (const chemin of ["/", "/revue", "/export"]) {
+    const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
+    assert.match(ecran, /href="\/aide\?departement=35"/, `${chemin} doit y renvoyer`);
+  }
+});
+
+test("le mode d'emploi dit ou sont les donnees, et ne porte pas de barre de portee", (t) => {
+  const ctx = contexte(t);
+
+  const aide = corpsTexte(router(ctx, requete("/aide")).corps);
+
+  // « Ou sont mes donnees » est la question de quiconque n'ouvrira jamais un terminal.
+  assert.match(aide, new RegExp(ctx.dataDir.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")));
+  // Le texte ne depend d'aucun departement : un selecteur y laisserait croire le contraire.
+  assert.doesNotMatch(aide, /class="portee"/);
+});
+
+test("le mode d'emploi couvre ce qu'on ne peut pas deviner de l'ecran", (t) => {
+  const ctx = contexte(t);
+
+  const aide = corpsTexte(router(ctx, requete("/aide")).corps);
+
+  // Les quatre choses qu'un utilisateur non technicien ne peut pas inferer seul, et dont
+  // chacune a produit une question.
+  assert.match(aide, /deux secondes entre/, "la lenteur doit etre expliquee, pas subie");
+  assert.match(aide, /tout reprend ou\s+cela s'etait arrete/, "on peut fermer l'outil sans rien perdre");
+  assert.match(aide, /article 14 du RGPD/, "l'obligation d'information n'est pas devinable");
+  assert.match(aide, /57, le 67 et le 68/, "un departement hors champ doit se dire avant l'essai");
 });

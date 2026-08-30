@@ -139,7 +139,7 @@ npm run annuaire -- exporter --departement 35 --score-min 0.6 --fichier annuaire
 npm run annuaire -- ui
 ```
 
-Trois écrans servis sur `127.0.0.1` — `node:http`, htmx, CSS écrit à la main, pas de bundler. La
+Quatre écrans servis sur `127.0.0.1` — `node:http`, htmx, CSS écrit à la main, pas de bundler. La
 commande imprime une adresse portant un jeton, et ouvre le navigateur (`--sans-navigateur` s'en
 abstient) :
 
@@ -159,6 +159,15 @@ abstient) :
   fait baisser leur note. Valider, rejeter, corriger. Une correction ne réécrit jamais ce qui a été
   lu ([ADR-021](docs/adr/021-correction-en-revue.md)).
 - **Export** — le même CSV que `annuaire exporter`, sans variante propre à l'interface.
+- **Aide** — le mode d'emploi, écrit pour qui n'ouvrira jamais un terminal : les cinq étapes, ce que
+  la lenteur signifie, les obligations qui accompagnent le fichier produit, et où l'outil écrit sur
+  la machine. Ce README-ci ne lui convient pas — il parle de `npm`, de CSP et renvoie à des ADR
+  ([ADR-029](docs/adr/029-portee-et-vocabulaire-de-l-interface.md)).
+
+Une **barre de portée** en tête de chaque écran porte le département, et c'est le seul endroit où
+il se dit. Son champ est une saisie libre : un département jamais amorcé est justement celui qu'une
+liste des départements connus ne peut pas proposer
+([ADR-029](docs/adr/029-portee-et-vocabulaire-de-l-interface.md)).
 
 L'adresse d'écoute n'est pas configurable, seul le port l'est. `Host` vérifié, jeton échangé contre
 un cookie `SameSite=Strict`, POST croisés refusés, CSP `default-src 'self'`
@@ -194,7 +203,7 @@ double-clic. `npx` et l'image Docker impriment l'aide.
 ## Développer
 
 ```bash
-npm run check   # typecheck strict + 524 tests
+npm run check   # typecheck strict + 577 tests
 npm test        # tests seuls
 npm run demo    # le pipeline complet sur un faux site de mairie, hors ligne
 ```

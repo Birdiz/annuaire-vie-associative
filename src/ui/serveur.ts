@@ -63,6 +63,7 @@ export type OptionsServeur = {
   clock: ContexteUi["clock"];
   version: string;
   departementSecours: string;
+  dataDir: string;
   pilote: ContexteUi["pilote"];
   reglages: ContexteUi["reglages"];
   supprimerCache: ContexteUi["supprimerCache"];
@@ -90,6 +91,7 @@ export function demarrerServeur(options: OptionsServeur): Promise<ServeurUi> {
     },
     version: options.version,
     departementSecours: options.departementSecours,
+    dataDir: options.dataDir,
     pilote: options.pilote,
     reglages: options.reglages,
     supprimerCache: options.supprimerCache,
