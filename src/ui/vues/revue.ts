@@ -12,7 +12,8 @@
  * fait descendre le chiffre, pas seulement le chiffre.
  */
 
-import { echapperHtml, lienSur, nombre, choixDepartement } from "../rendu.ts";
+import { echapperHtml, lienSur, nombre, choixDepartement, banniereRun } from "../rendu.ts";
+import type { EtatCollecte } from "../rendu.ts";
 import type { ContactARevoir, DistributionRevue } from "../requetes.ts";
 import type { Motifs } from "../../normalisation/score.ts";
 
@@ -23,6 +24,8 @@ export type DonneesRevue = {
   distribution: DistributionRevue;
   /** Message d'un arbitrage refuse, a afficher en tete. */
   refus?: string | undefined;
+  /** Une collecte en cours change la file sous les yeux de qui arbitre. */
+  collecte: EtatCollecte;
 };
 
 export function ecranRevue(donnees: DonneesRevue): string {
@@ -40,17 +43,26 @@ export function fragmentFile(donnees: DonneesRevue): string {
   const refus =
     donnees.refus === undefined ? "" : `<p class="refus">${echapperHtml(donnees.refus)}</p>\n`;
 
+  // `aRevoir` compte aussi les lignes que l'etape [8] n'a pas encore notees, et celles-la
+  // n'entrent pas dans la file. Afficher le total brut a cote de « Rien a arbitrer »
+  // donnait deux phrases qui se contredisaient a l'ecran — 418 a arbitrer, rien a
+  // arbitrer. C'est le nombre de contacts *pretes* qui compte ici.
+  const prets = Math.max(0, d.aRevoir - d.nonNotes);
+
   const compteur =
-    `<p class="discret">${nombre(d.aRevoir)} a arbitrer · ${nombre(d.valides)} valides · ` +
-    `${nombre(d.rejetes)} rejetes · ${nombre(d.corriges)} corriges</p>`;
+    `<p class="discret">${nombre(prets)} pret(s) a arbitrer · ${nombre(d.nonNotes)} en attente de notation · ` +
+    `${nombre(d.valides)} valides · ${nombre(d.rejetes)} rejetes · ${nombre(d.corriges)} corriges</p>`;
 
   const attente =
     d.nonNotes === 0
       ? ""
       : `<p class="discret">${nombre(d.nonNotes)} contacts ne sont pas encore notes et ` +
         "n'apparaissent pas ici : arbitrer avant l'etape [8] reviendrait a juger sans le " +
-        `seul element que l'outil apporte. Lancez <code>annuaire normaliser --departement ` +
-        `${echapperHtml(donnees.departement)}</code>.</p>`;
+        `seul element que l'outil apporte. ${
+          donnees.collecte.kind === "inactif"
+            ? `Lancez <code>annuaire normaliser --departement ${echapperHtml(donnees.departement)}</code>.`
+            : "La normalisation est la derniere passe du run : ces lignes seront notees sans que vous ayez rien a faire."
+        }</p>`;
 
   const aRenoter =
     d.correctionsANoter === 0
@@ -59,10 +71,23 @@ export function fragmentFile(donnees: DonneesRevue): string {
         "une valeur corrigee n'est pas notee par cet ecran, c'est l'etape [8] qui repasse. " +
         `<code>annuaire normaliser --departement ${echapperHtml(donnees.departement)}</code></p>`;
 
-  const entete = `${refus}${compteur}\n${attente}\n${aRenoter}`;
+  const banniere = banniereRun(
+    donnees.collecte,
+    "La file se remplit au fur et a mesure : ce qui est arbitre maintenant reste arbitre, mais " +
+      "l'essentiel des contacts n'est pas encore note. Revenir a la fin du run evite de repasser deux fois.",
+  );
+
+  const entete = `${refus}${banniere}\n${compteur}\n${attente}\n${aRenoter}`;
 
   if (donnees.file.length === 0) {
-    return `${entete}\n<p>Rien a arbitrer pour ce departement.</p>`;
+    // Trois raisons de n'avoir rien a montrer, et elles n'appellent pas la meme suite.
+    const explication =
+      donnees.collecte.kind !== "inactif"
+        ? "Rien a arbitrer pour l'instant : le run en cours n'a pas encore note de contact. Cet ecran se remplira tout seul."
+        : d.nonNotes > 0
+          ? "Rien a arbitrer tant que l'etape [8] n'est pas passee sur les contacts ci-dessus."
+          : "Rien a arbitrer pour ce departement.";
+    return `${entete}\n<p>${explication}</p>`;
   }
 
   return `${entete}\n${donnees.file.map((contact) => carte(contact, donnees.departement)).join("\n")}`;

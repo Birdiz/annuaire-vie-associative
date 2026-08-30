@@ -29,13 +29,29 @@ import type { Logger } from "../log.ts";
 /** Ecoute imposee. Voir l'en-tete : ce n'est pas un defaut, c'est une contrainte. */
 export const ADRESSE_ECOUTE = "127.0.0.1";
 
+/**
+ * Le nom montre a l'utilisateur. **L'ecoute ne bouge pas** — c'est `localhost` qui resout
+ * vers elle, et `hoteAccepte` l'admet deja au meme titre que l'adresse numerique.
+ *
+ * Pourquoi pas un nom plus joli, `annuaire:8787` : il faudrait une ligne dans le fichier
+ * `hosts`, donc des droits d'administrateur, sur un outil vendu « rien a installer ». Et
+ * `https://` demanderait un certificat, donc un auto-signe et un avertissement de plus.
+ *
+ * L'adresse numerique reste imprimee a cote : sur un poste ou `localhost` resout d'abord
+ * vers `::1`, le navigateur ne trouverait personne — nous n'ecoutons qu'en IPv4.
+ */
+export const NOM_LOCAL = "localhost";
+
 /** Un formulaire de revue tient en quelques centaines d'octets. */
 const CORPS_MAX = 64 * 1024;
 
 export type ServeurUi = {
   port: number;
   jeton: string;
+  /** Adresse a montrer et a ouvrir : `localhost`, plus lisible qu'une adresse numerique. */
   url: string;
+  /** La meme, en IPv4 littérale — secours si `localhost` resout vers `::1`. */
+  urlNumerique: string;
   fermer(): Promise<void>;
 };
 
@@ -100,7 +116,8 @@ export function demarrerServeur(options: OptionsServeur): Promise<ServeurUi> {
       resoudre({
         port,
         jeton,
-        url: `http://${ADRESSE_ECOUTE}:${port}/?jeton=${jeton}`,
+        url: `http://${NOM_LOCAL}:${port}/?jeton=${jeton}`,
+        urlNumerique: `http://${ADRESSE_ECOUTE}:${port}/?jeton=${jeton}`,
         fermer: () => fermer(serveur),
       });
     });

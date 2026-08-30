@@ -97,7 +97,10 @@ button.danger { color: var(--alerte); border-color: var(--alerte); }
 table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
 th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--trait); }
 th { color: var(--discret); font-weight: 600; }
-td > span.n { display: block; text-align: right; }
+/* Une colonne de nombres s'aligne a droite, titre compris — sans quoi le titre reste a
+   gauche pendant que la valeur file a droite, et la lecture se perd. */
+th.num, td.num { text-align: right; }
+td > span.n { display: block; }
 td > span.n, .chiffre b { font-variant-numeric: tabular-nums; }
 
 .contact {

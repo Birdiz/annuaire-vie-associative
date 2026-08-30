@@ -44,3 +44,20 @@ test("un pourcentage sans denominateur ne vaut pas zero", () => {
   assert.equal(pourcent(0, 0), "—");
   assert.equal(pourcent(1, 4), "25,0 %");
 });
+
+test("une colonne de nombres s'aligne a droite, en-tete comprise", () => {
+  const rendu = tableau(
+    ["etat", "volume"],
+    [["pending", '<span class="n">1 608</span>']],
+  );
+
+  // Le CSS n'alignait que la cellule : sur la table des etats de la file, chaque valeur
+  // flottait a droite d'un titre reste a gauche, et on ne savait plus quel chiffre allait
+  // avec quel etat.
+  assert.match(rendu, /<th class="num">volume<\/th>/);
+  assert.match(rendu, /<td class="num"><span class="n">1 608<\/span><\/td>/);
+
+  // La colonne de texte, elle, ne bouge pas.
+  assert.match(rendu, /<th>etat<\/th>/);
+  assert.match(rendu, /<td>pending<\/td>/);
+});

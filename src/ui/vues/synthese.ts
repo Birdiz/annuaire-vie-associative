@@ -129,10 +129,16 @@ ${refus}`;
 ${issue}${refus}`;
   }
 
+  // Le libelle nomme les trois passes, et la duree est celle du run entier. « Une
+  // quarantaine de minutes » etait le chiffre du lot 3 pour la seule decouverte : lu
+  // devant un run complet, il faisait croire a un mode d'essai.
   return `<form method="post" action="/run" hx-post="/run" hx-target="#suivi" class="commandes">
   <input type="hidden" name="departement" value="${departement}">
-  <button type="submit">Lancer un run sur le departement ${departement}</button>
-  <span class="discret">Amorce, decouverte, puis normalisation. Comptez une quarantaine de minutes par departement.</span>
+  <button type="submit">Lancer le run complet sur le departement ${departement}</button>
+  <span class="discret">Les trois passes a la suite : amorce RNA (dump national de 1,25 Go), decouverte
+  des sites de mairie (20 pages par commune), puis normalisation et notation.
+  <strong>Comptez plusieurs heures</strong> — le delai de 2 s par domaine en fixe le plancher.
+  Le run se reprend ou il s'arrete : fermer l'outil ne perd rien.</span>
 </form>
 ${issue}${refus}`;
 }
@@ -173,6 +179,38 @@ export function fragmentReglages(reglages: DonneesReglages): string {
 }
 
 export function ecranSynthese(donnees: DonneesSynthese): string {
+  return `${choixDepartement("/", donnees.departements, donnees.departement)}
+<h2>Collecte</h2>
+<section id="reglages">
+${fragmentReglages(donnees.reglages)}
+</section>
+
+<h2>Suivi</h2>
+<section id="suivi" hx-get="/suivi?departement=${encodeURIComponent(donnees.departement)}"
+         hx-trigger="every 2s" hx-swap="innerHTML">
+${fragmentSuivi(donnees.suivi)}
+</section>
+
+<section id="chiffres" hx-get="/chiffres?departement=${encodeURIComponent(donnees.departement)}"
+         hx-trigger="every 10s" hx-swap="innerHTML">
+${fragmentChiffres(donnees)}
+</section>
+`;
+}
+
+/**
+ * Tout ce qu'un run fait bouger, dans un bloc qui se rafraichit seul.
+ *
+ * Seul le suivi se rafraichissait. Couverture, entonnoir, messagerie et classification
+ * restaient ceux du chargement de la page : devant un run de plusieurs heures, l'ecran
+ * donnait l'impression que rien n'avancait, et il fallait recharger pour voir un chiffre
+ * bouger.
+ *
+ * Dix secondes, et non deux comme le suivi : ces chiffres sont des agregats sur toute la
+ * base, la ou le suivi ne lit que des compteurs de file. Aucun champ de saisie ici non
+ * plus — un bloc qui se remplace efface ce qu'on est en train d'y taper.
+ */
+export function fragmentChiffres(donnees: DonneesSynthese): string {
   const { couverture, normalisation, prefiltre, revue, dormance } = donnees;
 
   const chiffre = (valeur: string, libelle: string): string =>
@@ -229,19 +267,7 @@ export function ecranSynthese(donnees: DonneesSynthese): string {
     ]),
   );
 
-  return `${choixDepartement("/", donnees.departements, donnees.departement)}
-<h2>Collecte</h2>
-<section id="reglages">
-${fragmentReglages(donnees.reglages)}
-</section>
-
-<h2>Suivi</h2>
-<section id="suivi" hx-get="/suivi?departement=${encodeURIComponent(donnees.departement)}"
-         hx-trigger="every 2s" hx-swap="innerHTML">
-${fragmentSuivi(donnees.suivi)}
-</section>
-
-<h2>Couverture</h2>
+  return `<h2>Couverture</h2>
 <div class="cartes">
 ${chiffre(pourcent(couverture.avecEmail, couverture.actives), "au moins un email")}
 ${chiffre(pourcent(couverture.avecEmailExploitable, couverture.actives), "... exploitable")}

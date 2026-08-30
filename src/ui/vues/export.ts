@@ -6,7 +6,8 @@
  * qui voyage avec chaque ligne n'aurait plus de garantie unique.
  */
 
-import { echapperHtml, nombre, choixDepartement } from "../rendu.ts";
+import { echapperHtml, nombre, choixDepartement, banniereRun } from "../rendu.ts";
+import type { EtatCollecte } from "../rendu.ts";
 
 export type DonneesExport = {
   departement: string;
@@ -15,12 +16,33 @@ export type DonneesExport = {
   avecRejetes: boolean;
   lignes: number;
   rejetes: number;
+  /** Un export pris au milieu d'un run livre un annuaire a moitie note. */
+  collecte: EtatCollecte;
 };
 
 export function ecranExport(donnees: DonneesExport): string {
   const dept = encodeURIComponent(donnees.departement);
+
+  // Exporter pendant un run livre un fichier que la fin du run rendrait faux : les
+  // contacts arrives apres manquent, ceux que l'etape [8] n'a pas encore notes sortent
+  // sans score, et le seuil ne veut plus rien dire. Le bouton est donc retire — pas
+  // seulement grise : un bouton desactive invite a chercher comment l'activer.
+  const bloque = donnees.collecte.kind === "pilote";
+  const banniere = banniereRun(
+    donnees.collecte,
+    bloque
+      ? "L'export est suspendu jusqu'a la fin : un fichier pris maintenant sortirait sans les contacts a venir, et sans le score de ceux que l'etape [8] n'a pas encore notes."
+      : "Les chiffres ci-dessous bougent encore, et un fichier pris maintenant serait incomplet.",
+  );
+
+  const commande = bloque
+    ? `<p class="discret">Le bouton revient des que le run est fini ou arrete. Rien n'est perdu entre-temps :
+       l'export lit la base, il ne la consomme pas.</p>`
+    : `<p><button type="submit">Telecharger l'annuaire du departement ${echapperHtml(donnees.departement)}</button></p>`;
+
   return `${choixDepartement("/export", donnees.departements, donnees.departement)}
 <h2>Export CSV</h2>
+${banniere}
 <form method="get" action="/export.csv">
   <input type="hidden" name="departement" value="${echapperHtml(donnees.departement)}">
   <p>
@@ -36,7 +58,7 @@ export function ecranExport(donnees: DonneesExport): string {
       Inclure les ${nombre(donnees.rejetes)} contacts rejetes en revue
     </label>
   </p>
-  <p><button type="submit">Telecharger l'annuaire du departement ${echapperHtml(donnees.departement)}</button></p>
+  ${commande}
 </form>
 
 <p class="discret">

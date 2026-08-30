@@ -350,6 +350,10 @@ test("aucune adresse d'infrastructure de l'editeur n'est codee en dur", () => {
     // definie juste au-dessus dans le meme fichier. L'entree est nominative pour que
     // l'exception reste visible — elle ne couvre pas une interpolation quelconque.
     "http://${ADRESSE_ECOUTE}",
+    // Le meme fichier imprime aussi l'adresse sous son nom lisible. `NOM_LOCAL` vaut
+    // « localhost » et est defini a cote de `ADRESSE_ECOUTE` : l'ecoute ne bouge pas,
+    // c'est l'etiquette qui change. Nominative pour la meme raison que ci-dessus.
+    "http://${NOM_LOCAL}",
     // Ces trois-la decrivent ce que `src/` contient — des exemples imprimes a
     // l'utilisateur, jamais des cibles de requete. Elles ne suivent donc pas le
     // renommage du corpus de test vers `.example`.

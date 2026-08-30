@@ -55,7 +55,11 @@ test("le serveur n'ecoute que sur la boucle locale, et son jeton change a chaque
   const premier = await servir(t);
   const second = await servir(t);
 
-  assert.match(premier.url, /^http:\/\/127\.0\.0\.1:\d+\/\?jeton=/);
+  // L'adresse montree porte le nom lisible, celle de secours l'adresse numerique. Les
+  // deux designent la meme ecoute : `localhost` n'est pas une seconde porte, c'est une
+  // etiquette que `hoteAccepte` admet deja.
+  assert.match(premier.url, /^http:\/\/localhost:\d+\/\?jeton=/);
+  assert.match(premier.urlNumerique, /^http:\/\/127\.0\.0\.1:\d+\/\?jeton=/);
   assert.notEqual(premier.jeton, second.jeton, "un jeton reconduit survivrait a un redemarrage");
   assert.notEqual(premier.port, second.port);
 });
@@ -63,7 +67,7 @@ test("le serveur n'ecoute que sur la boucle locale, et son jeton change a chaque
 test("l'ouverture par l'URL imprimee pose le cookie et sert l'ecran", async (t) => {
   const serveur = await servir(t);
 
-  const echange = await fetch(serveur.url, { redirect: "manual" });
+  const echange = await fetch(serveur.urlNumerique, { redirect: "manual" });
   assert.equal(echange.status, 303);
   const pose = echange.headers.get("set-cookie") ?? "";
   assert.match(pose, new RegExp(`${NOM_COOKIE}=`));

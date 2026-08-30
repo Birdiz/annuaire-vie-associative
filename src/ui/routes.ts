@@ -23,6 +23,7 @@ import type { Counters } from "../metrics/counters.ts";
 import type { Clock } from "../clock.ts";
 import { lireAsset } from "./assets.ts";
 import { page } from "./rendu.ts";
+import type { EtatCollecte } from "./rendu.ts";
 import {
   departementParDefaut,
   departementsConnus,
@@ -31,8 +32,8 @@ import {
   runsRecents,
 } from "./requetes.ts";
 import { arbitrer, estActionRevue } from "./revue.ts";
-import { ecranSynthese, fragmentSuivi, fragmentReglages } from "./vues/synthese.ts";
-import type { DonneesSuivi, DonneesReglages } from "./vues/synthese.ts";
+import { ecranSynthese, fragmentSuivi, fragmentReglages, fragmentChiffres } from "./vues/synthese.ts";
+import type { DonneesSuivi, DonneesReglages, DonneesSynthese } from "./vues/synthese.ts";
 import type { SurfacePilote } from "./pilote.ts";
 import { ecranRevue, fragmentFile } from "./vues/revue.ts";
 import { ecranExport } from "./vues/export.ts";
@@ -232,6 +233,10 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     return html(fragmentSuivi(donneesSuivi(ctx, departement)));
   }
 
+  if (requete.methode === "GET" && requete.chemin === "/chiffres") {
+    return html(fragmentChiffres(donneesSynthese(ctx, departement, departements, donneesReglages(ctx))));
+  }
+
   // Lancer et arreter. Rien n'est attendu ici : le pilote rend la main aussitot, et
   // c'est le bloc de suivi — deja rafraichi toutes les deux secondes — qui rend compte.
   if (requete.methode === "POST" && requete.chemin === "/run") {
@@ -286,12 +291,27 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
           avecRejetes,
           lignes: compterLignes(ctx.db, options),
           rejetes: distributionRevue(ctx.db, departement).rejetes,
+          collecte: etatCollecte(ctx),
         }),
       }),
     );
   }
 
   if (requete.methode === "GET" && requete.chemin === "/export.csv") {
+    // Retirer le bouton ne suffit pas : l'URL du formulaire se garde en favori, et un
+    // fichier telecharge pendant un run sortirait sans les contacts a venir ni le score
+    // de ceux que l'etape [8] n'a pas encore vus. La CLI, elle, n'est pas bridee : qui
+    // tape `annuaire exporter` sait ce qu'il demande.
+    if (etatCollecte(ctx).kind === "pilote") {
+      return texte(
+        "Export suspendu : un run est en cours depuis cette interface.\n\n" +
+          "Un fichier pris maintenant serait incomplet — les contacts a venir y manqueraient, et\n" +
+          "ceux que l'etape [8] n'a pas encore notes en sortiraient sans score. Arretez le run ou\n" +
+          "attendez sa fin ; rien n'est perdu entre-temps.\n",
+        409,
+      );
+    }
+
     const options = {
       departement,
       scoreMin: seuilTolerant(requete.requete.get("score-min") ?? ""),
@@ -321,7 +341,16 @@ function syntheseComplete(
   departements: readonly string[],
   reglages: DonneesReglages,
 ): string {
-  return ecranSynthese({
+  return ecranSynthese(donneesSynthese(ctx, departement, departements, reglages));
+}
+
+function donneesSynthese(
+  ctx: ContexteUi,
+  departement: string,
+  departements: readonly string[],
+  reglages: DonneesReglages,
+): DonneesSynthese {
+  return {
     departement,
     departements,
     suivi: donneesSuivi(ctx, departement),
@@ -331,7 +360,28 @@ function syntheseComplete(
     prefiltre: distributionDuJour(ctx, departement),
     normalisation: distributionNormalisation(ctx.db, departement),
     revue: distributionRevue(ctx.db, departement),
-  });
+  };
+}
+
+/**
+ * Y a-t-il une collecte en cours, et l'interface en repond-elle ?
+ *
+ * La distinction est ce qui autorise a barrer l'export sans risquer de le barrer pour
+ * toujours : le pilote est un fait de ce process, alors qu'une ligne `run` restee « en
+ * cours » peut n'etre qu'un reste de `kill -9`. On barre sur le premier, on previent sur
+ * la seconde.
+ */
+function etatCollecte(ctx: ContexteUi): EtatCollecte {
+  const pilote = ctx.pilote.etat();
+  const ligne = runsRecents(ctx.db).find((run) => run.statut === "en_cours");
+
+  if (pilote.kind === "en_cours") {
+    return { kind: "pilote", departement: pilote.departement, phase: ligne?.phase ?? null };
+  }
+  if (ligne !== undefined) {
+    return { kind: "orphelin", departement: ligne.departement, phase: ligne.phase };
+  }
+  return { kind: "inactif" };
 }
 
 function donneesSuivi(ctx: ContexteUi, departement: string): DonneesSuivi {
@@ -375,6 +425,7 @@ function donneesRevue(
     file: fileRevue(ctx.db, departement, TAILLE_FILE),
     distribution: distributionRevue(ctx.db, departement),
     refus,
+    collecte: etatCollecte(ctx),
   };
 }
 

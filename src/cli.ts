@@ -416,6 +416,10 @@ async function commandeUi(
       "",
       `  ${serveur.url}`,
       "",
+      // L'adresse numerique n'est pas du bavardage : sur un poste ou `localhost` resout
+      // d'abord vers `::1`, le navigateur ne trouve personne — l'ecoute est en IPv4.
+      `Si votre navigateur n'y arrive pas : ${serveur.urlNumerique}`,
+      "",
       `Le serveur n'ecoute que sur ${ADRESSE_ECOUTE} et rien n'en sort. Le jeton de`,
       "l'adresse est tire a ce demarrage et change au suivant : c'est lui qui empeche une",
       "page ouverte par ailleurs dans le navigateur d'ecrire dans cette base.",

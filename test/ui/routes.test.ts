@@ -340,7 +340,7 @@ test("POST /reglages enregistre l'URL de contact, et le bouton apparait", (t) =>
 
   assert.equal(reponse.statut, 200);
   assert.deepEqual(ctx.reglages.ecrites, ["https://exemple.example/nous-ecrire"]);
-  assert.match(corpsTexte(router(ctx, requete("/suivi")).corps), /Lancer un run/);
+  assert.match(corpsTexte(router(ctx, requete("/suivi")).corps), /Lancer le run complet/);
 });
 
 test("une URL de contact invalide est refusee sur place, sans passer par l'URL", (t) => {
@@ -375,5 +375,104 @@ test("un run que cette interface ne pilote pas est signale, sans bloquer le bout
 
   assert.match(suivi, /phase decouverte/, "la phase vient de la base, pas de la memoire de l'interface");
   assert.match(suivi, /n'est pas pilote depuis cette interface/);
-  assert.match(suivi, /Lancer un run/, "une ligne orpheline ne doit pas condamner l'interface");
+  assert.match(suivi, /Lancer le run complet/, "une ligne orpheline ne doit pas condamner l'interface");
+});
+
+/**
+ * Ce que l'ecran dit pendant un run.
+ *
+ * Trois ecrans montraient des chiffres qu'un run est en train de changer, et deux d'entre
+ * eux se contredisaient : la revue annoncait « 418 a arbitrer » au-dessus de « Rien a
+ * arbitrer », parce que le compteur additionnait des lignes que l'etape [8] n'avait pas
+ * encore notees — et qui, faute de note, n'entrent pas dans la file.
+ */
+
+function lancerRunPilote(ctx: ContexteTest): void {
+  ctx.pilote.poser({
+    kind: "en_cours",
+    departement: DEPARTEMENT,
+    demarre: "2026-09-01T09:00:00.000Z",
+    runId: 1,
+  });
+}
+
+/** Remet les contacts du corpus dans l'etat « collectes, pas encore notes ». */
+function sansNotation(ctx: ContexteTest): void {
+  ctx.db.prepare("UPDATE contact SET score = NULL, score_version = NULL").run();
+}
+
+test("la revue ne compte comme « a arbitrer » que ce qui est note", (t) => {
+  const ctx = contexte(t);
+  sansNotation(ctx);
+
+  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(ecran, /0 pret\(s\) a arbitrer/, "la file est vide, le compteur doit le dire");
+  assert.match(ecran, /en attente de notation/);
+  assert.doesNotMatch(
+    ecran,
+    /Rien a arbitrer pour ce departement\./,
+    "cette phrase promet qu'il n'y a plus rien a faire, ce qui est faux tant que [8] n'est pas passee",
+  );
+});
+
+test("pendant un run pilote, la revue le dit et n'invite pas a lancer la normalisation", (t) => {
+  const ctx = contexte(t);
+  sansNotation(ctx);
+  lancerRunPilote(ctx);
+
+  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(ecran, /Run en cours sur le departement 35/);
+  assert.match(ecran, /Rien a arbitrer pour l'instant/);
+  assert.doesNotMatch(
+    ecran,
+    /Lancez <code>annuaire normaliser/,
+    "la normalisation est la derniere passe du run : la reclamer serait un contresens",
+  );
+});
+
+test("pendant un run pilote, l'export est retire et l'URL du fichier refuse", (t) => {
+  const ctx = contexte(t);
+  lancerRunPilote(ctx);
+
+  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /Run en cours sur le departement 35/);
+  assert.doesNotMatch(ecran, /Telecharger l'annuaire/, "un bouton grise invite a chercher comment l'activer");
+
+  // Le bouton retire ne suffit pas : l'URL du formulaire se garde en favori.
+  const fichier = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`));
+  assert.equal(fichier.statut, 409);
+  assert.match(corpsTexte(fichier.corps), /Export suspendu/);
+});
+
+test("une ligne de run orpheline previent mais ne barre ni l'export ni la revue", (t) => {
+  const ctx = contexte(t);
+  ctx.db
+    .prepare("INSERT INTO run (departement, started_at, statut, phase) VALUES (?, ?, 'en_cours', 'decouverte')")
+    .run(DEPARTEMENT, "2026-09-01T09:00:00.000Z");
+
+  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /sans etre pilote depuis cette interface/);
+  assert.match(ecran, /Telecharger l'annuaire/, "un reste de kill -9 ne doit pas condamner l'export");
+
+  assert.equal(router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`)).statut, 200);
+});
+
+test("les chiffres ont leur propre fragment, rafraichi comme le suivi", (t) => {
+  const ctx = contexte(t);
+
+  const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /id="chiffres"/);
+  assert.match(ecran, /hx-get="\/chiffres\?departement=35"/);
+
+  // Sans cette route, le bloc se viderait a la premiere seconde de rafraichissement.
+  const fragment = router(ctx, requete(`/chiffres?departement=${DEPARTEMENT}`));
+  assert.equal(fragment.statut, 200);
+  assert.match(corpsTexte(fragment.corps), /Entonnoir/);
+  assert.doesNotMatch(
+    corpsTexte(fragment.corps),
+    /<input/,
+    "un bloc qui se remplace tout seul efface ce qu'on est en train d'y taper",
+  );
 });

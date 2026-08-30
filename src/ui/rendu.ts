@@ -116,13 +116,66 @@ export function choixDepartement(chemin: string, departements: readonly string[]
 </form>`;
 }
 
-/** Tableau simple : en-tetes, puis des cellules deja rendues. */
+/** Marqueur des cellules numeriques, pose par l'appelant qui sait ce qu'il rend. */
+const MARQUE_NOMBRE = '<span class="n">';
+
+/**
+ * Tableau simple : en-tetes, puis des cellules deja rendues.
+ *
+ * **Une colonne de nombres s'aligne a droite, en-tete comprise.** Le CSS alignait la
+ * cellule et pas le titre : sur la table des etats de la file — six nombres, une seule
+ * ligne — chaque valeur flottait a droite d'un titre reste a gauche, et on ne savait plus
+ * quel chiffre allait avec quel etat. La colonne est reconnue a `span.n`, le marqueur que
+ * l'appelant pose deja : le passer une seconde fois en parametre laisserait les deux se
+ * contredire.
+ */
 export function tableau(entetes: readonly string[], lignes: readonly (readonly string[])[]): string {
   if (lignes.length === 0) return '<p class="discret">Rien a afficher.</p>';
+  const numerique = entetes.map((_, colonne) =>
+    lignes.every((ligne) => (ligne[colonne] ?? "").startsWith(MARQUE_NOMBRE)),
+  );
+  const classe = (colonne: number): string => (numerique[colonne] === true ? ' class="num"' : "");
+
   return `<table>
-<thead><tr>${entetes.map((titre) => `<th>${echapperHtml(titre)}</th>`).join("")}</tr></thead>
+<thead><tr>${entetes.map((titre, i) => `<th${classe(i)}>${echapperHtml(titre)}</th>`).join("")}</tr></thead>
 <tbody>
-${lignes.map((ligne) => `<tr>${ligne.map((cellule) => `<td>${cellule}</td>`).join("")}</tr>`).join("\n")}
+${lignes
+  .map((ligne) => `<tr>${ligne.map((cellule, i) => `<td${classe(i)}>${cellule}</td>`).join("")}</tr>`)
+  .join("\n")}
 </tbody>
 </table>`;
+}
+
+/**
+ * Ce que l'interface sait d'une collecte en cours.
+ *
+ * Deux cas, et ils n'autorisent pas la meme fermete. `pilote` : c'est cette interface qui
+ * a lance le run, le fait est certain. `orphelin` : une ligne `run` est restee « en cours »
+ * sans que le pilote la tienne — soit un `annuaire run` dans un terminal, soit un reste de
+ * `kill -9`. Bloquer sur ce second cas condamnerait l'ecran jusqu'au prochain run ; on
+ * previent, on ne barre pas. C'est la meme prudence que le bloc de suivi.
+ */
+export type EtatCollecte =
+  | { kind: "inactif" }
+  | { kind: "pilote"; departement: string; phase: string | null }
+  | { kind: "orphelin"; departement: string; phase: string | null };
+
+function phrasePhase(phase: string | null): string {
+  return phase === null ? "" : ` — phase ${echapperHtml(phase)}`;
+}
+
+/**
+ * Le bandeau porte par les ecrans qui montrent des chiffres qu'un run est en train de
+ * changer. Rendu au meme endroit sur les trois ecrans : c'est ce qui permet de le
+ * reconnaitre sans le lire.
+ */
+export function banniereRun(etat: EtatCollecte, consequence: string): string {
+  if (etat.kind === "inactif") return "";
+  if (etat.kind === "pilote") {
+    return `<p class="avis"><strong>Run en cours sur le departement ${echapperHtml(etat.departement)}</strong>${phrasePhase(etat.phase)}.
+${echapperHtml(consequence)}</p>`;
+  }
+  return `<p class="avis">Un run est marque « en cours » sur le departement ${echapperHtml(etat.departement)}${phrasePhase(etat.phase)},
+sans etre pilote depuis cette interface — un <code>annuaire run</code> dans un terminal, ou un reste
+d'interruption brutale. ${echapperHtml(consequence)}</p>`;
 }
