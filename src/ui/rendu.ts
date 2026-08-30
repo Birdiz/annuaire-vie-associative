@@ -13,6 +13,8 @@
  * trois ecrans.
  */
 
+import type { Amorce } from "./requetes.ts";
+
 const ENTITES: Record<string, string> = {
   "&": "&amp;",
   "<": "&lt;",
@@ -43,9 +45,28 @@ export function nombre(valeur: number): string {
   return valeur.toLocaleString("fr-FR");
 }
 
+/** La marque du pluriel, en francais : zero et un restent au singulier. */
+export function pluriel(valeur: number): string {
+  return Math.abs(valeur) >= 2 ? "s" : "";
+}
+
 export function pourcent(numerateur: number, denominateur: number): string {
   if (denominateur === 0) return "—";
   return `${((numerateur / denominateur) * 100).toFixed(1).replace(".", ",")} %`;
+}
+
+/**
+ * Un volume d'octets en clair : « 1,25 Go », « 340 Mo ».
+ *
+ * Sert a dire ou en est la lecture du dump RNA. Les paliers s'arretent au gigaoctet :
+ * au-dela le chiffre ne dit plus rien a qui regarde avancer une amorce, et en deca du
+ * megaoctet il n'y a rien a regarder.
+ */
+export function octets(valeur: number): string {
+  const borne = Math.max(0, valeur);
+  if (borne < 1024 * 1024) return `${Math.round(borne / 1024).toLocaleString("fr-FR")} Ko`;
+  if (borne < 1024 * 1024 * 1024) return `${Math.round(borne / (1024 * 1024)).toLocaleString("fr-FR")} Mo`;
+  return `${(borne / (1024 * 1024 * 1024)).toFixed(2).replace(".", ",")} Go`;
 }
 
 /**
@@ -122,9 +143,11 @@ function deuxChiffres(valeur: number): string {
  * revue. L'element natif porte sa valeur dans un attribut, se met en forme en CSS, et
  * annonce tout seul sa progression aux lecteurs d'ecran.
  */
-export function barre(faits: number, total: number, libelle: string): string {
+export function barre(faits: number, total: number, libelle: string, phrase?: string): string {
   const borne = Math.max(0, Math.min(faits, total));
-  const texte = `${nombre(borne)} sur ${nombre(total)} ${libelle}`;
+  // `phrase` sert aux unites qui ne se comptent pas : « 340 Mo sur 1,25 Go » se lit,
+  // « 356 515 840 sur 1 342 177 280 octets » non.
+  const texte = phrase ?? `${nombre(borne)} sur ${nombre(total)} ${libelle}`;
   return `<div class="progression">
   <progress max="${total}" value="${borne}" aria-label="${echapperHtml(texte)}"></progress>
   <span class="etiquette">${echapperHtml(texte)} — ${pourcent(borne, total)}</span>
@@ -133,17 +156,96 @@ export function barre(faits: number, total: number, libelle: string): string {
 
 export type Onglet = "synthese" | "revue" | "export";
 
+/** Le chemin de chaque onglet. La barre de portee y renvoie, pour rester sur l'ecran. */
+export const CHEMIN_ONGLET: Record<Onglet, string> = {
+  synthese: "/",
+  revue: "/revue",
+  export: "/export",
+};
+
+/**
+ * De quoi rendre la barre de portee : le departement affiche, ceux que la base connait
+ * deja, et ce qu'elle contient pour celui-ci.
+ */
+export type DonneesPortee = {
+  departement: string;
+  departements: readonly string[];
+  onglet: Onglet;
+  amorce: Amorce;
+  /** Message quand le code saisi n'a pas la forme d'un departement. */
+  refus: string | undefined;
+};
+
+/**
+ * La barre de portee : **le seul endroit de l'interface ou le departement se dit**.
+ *
+ * Elle remplace un selecteur qui ne s'affichait qu'a partir de deux departements en base
+ * et ne listait que l'existant. Consequence : depuis une base amorcee sur le seul 35, il
+ * n'y avait aucun chemin vers le 88 — le departement etait partout a l'ecran et nulle
+ * part modifiable, et il fallait passer par la ligne de commande pour en ouvrir un autre.
+ *
+ * D'ou une **saisie libre** plutot qu'une liste : un departement qui n'est pas encore en
+ * base est justement celui qu'on veut pouvoir demander. Les departements deja amorces
+ * restent offerts, en liens et en `datalist` — un `datalist` seul est une affordance
+ * invisible.
+ *
+ * Le `pattern` reprend la forme acceptee par le pipeline (35, 2A, 971). Il fait refuser
+ * la saisie par le navigateur avant l'aller-retour ; le serveur revalide de son cote,
+ * puisqu'une contrainte de formulaire ne protege rien.
+ */
+export function barrePortee(donnees: DonneesPortee): string {
+  const chemin = CHEMIN_ONGLET[donnees.onglet];
+  const courant = echapperHtml(donnees.departement);
+
+  const connus = donnees.departements.filter((dept) => dept !== donnees.departement);
+  const liste = connus
+    .map(
+      (dept) =>
+        `<a href="${chemin}?departement=${encodeURIComponent(dept)}">${echapperHtml(dept)}</a>`,
+    )
+    .join(" ");
+  const options = donnees.departements
+    .map((dept) => `<option value="${echapperHtml(dept)}"></option>`)
+    .join("");
+
+  const etat =
+    donnees.amorce.communes === 0
+      ? `<span class="vide">Jamais amorce. Le lancer le remplira depuis le registre national.</span>`
+      : `<span>${nombre(donnees.amorce.associations)} association${pluriel(donnees.amorce.associations)}
+         dans ${nombre(donnees.amorce.communes)} commune${pluriel(donnees.amorce.communes)}</span>`;
+
+  const autres = liste === "" ? "" : `<span class="autres">Deja en base : ${liste}</span>`;
+  const refus = donnees.refus === undefined ? "" : `<p class="refus">${echapperHtml(donnees.refus)}</p>`;
+
+  return `<div class="portee">
+  <form method="get" action="${chemin}">
+    <label for="portee-departement">Departement</label>
+    <input type="text" id="portee-departement" name="departement" value="${courant}"
+           list="portee-connus" size="4" maxlength="3" autocomplete="off" required
+           pattern="[0-9]{2}|[0-9][ABab]|[0-9]{3}"
+           title="Deux chiffres (35), un chiffre et une lettre en Corse (2A), trois chiffres outre-mer (971).">
+    <datalist id="portee-connus">${options}</datalist>
+    <button type="submit">Ouvrir</button>
+  </form>
+  ${etat}
+  ${autres}
+</div>
+${refus}`;
+}
+
 export type OptionsPage = {
   titre: string;
   onglet: Onglet;
   departement: string;
   contenu: string;
   version: string;
+  /** La barre de portee, deja rendue : la page ne lit pas la base. */
+  portee: string;
 };
 
 export function page(options: OptionsPage): string {
-  const onglet = (cible: Onglet, chemin: string, libelle: string): string =>
-    `<a href="${chemin}?departement=${encodeURIComponent(options.departement)}"` +
+  const onglet = (cible: Onglet, libelle: string): string =>
+    `<a href="${CHEMIN_ONGLET[cible]}?departement=${encodeURIComponent(options.departement)}"` +
     `${options.onglet === cible ? ' class="actif" aria-current="page"' : ""}>${libelle}</a>`;
 
   return `<!doctype html>
@@ -162,41 +264,24 @@ export function page(options: OptionsPage): string {
 </head>
 <body>
 <header>
-  <strong>Annuaire de la vie associative</strong>
+  <span class="marque">Annuaire de la vie associative</span>
   <nav>
-    ${onglet("synthese", "/", "Synthese")}
-    ${onglet("revue", "/revue", "Revue")}
-    ${onglet("export", "/export", "Export")}
+    ${onglet("synthese", "Synthese")}
+    ${onglet("revue", "Revue")}
+    ${onglet("export", "Export")}
   </nav>
-  <span class="discret">departement ${echapperHtml(options.departement)} · v${echapperHtml(options.version)}</span>
+  <span class="version">v${echapperHtml(options.version)}</span>
 </header>
+${options.portee}
 <main>
 ${options.contenu}
 </main>
-<footer class="discret">
+<footer>
   Serveur local : rien de ce qui est affiche ici ne sort de cette machine.
 </footer>
 </body>
 </html>
 `;
-}
-
-/** Selecteur de departement, rendu en tete des ecrans qui en dependent. */
-export function choixDepartement(chemin: string, departements: readonly string[], courant: string): string {
-  if (departements.length <= 1) return "";
-  const options = departements
-    .map(
-      (dept) =>
-        `<option value="${echapperHtml(dept)}"${dept === courant ? " selected" : ""}>${echapperHtml(dept)}</option>`,
-    )
-    .join("");
-  // Pas de `onchange="..."` : la CSP du serveur interdit le JS en ligne, et c'est elle
-  // qui rend l'ecran de revue sur d'afficher des chaines venues d'un site tiers. Un
-  // bouton coute un clic et ne demande aucune derogation.
-  return `<form method="get" action="${chemin}" class="choix">
-  <label>Departement <select name="departement">${options}</select></label>
-  <button type="submit">Afficher</button>
-</form>`;
 }
 
 /** Marqueur des cellules numeriques, pose par l'appelant qui sait ce qu'il rend. */

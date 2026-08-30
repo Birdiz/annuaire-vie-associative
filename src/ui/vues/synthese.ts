@@ -15,7 +15,6 @@ import {
   nombre,
   pourcent,
   tableau,
-  choixDepartement,
   barre,
   dateHeure,
   duree,
@@ -42,9 +41,10 @@ import { ETATS_JOB } from "../../jobs/queue.ts";
  * enfile de nouvelles. D'ou deux choses distinctes : l'etape, qui dit **ou**, et
  * l'avancement, qui dit **de combien**.
  *
- * `avancement` manque pendant l'amorce : rien n'y donne un denominateur honnete — le
- * nombre de communes du departement n'est connu qu'une fois le dump de l'Annuaire lu.
- * Une barre inventee pour cette passe serait pire qu'aucune barre.
+ * Chaque passe a son denominateur : les octets du dump pendant l'amorce, les communes
+ * pendant la decouverte, les contacts pendant la notation. `avancement` ne manque que
+ * lorsque la base n'a pas encore de quoi le calculer — une barre inventee serait pire
+ * qu'aucune barre.
  */
 export type Progression = {
   phase: PhaseRun;
@@ -54,6 +54,11 @@ export type Progression = {
         total: number;
         /** Ce que comptent `faits` et `total`, au pluriel : « communes explorees ». */
         unite: string;
+        /**
+         * Remplace « N sur M unite » quand le decompte ne se lit pas tel quel. Les octets
+         * du dump en sont le cas : « 340 Mo sur 1,25 Go » se lit, le compte brut non.
+         */
+        phrase: string | undefined;
         /** Chiffre d'appoint, sans denominateur fiable. */
         detail: string | undefined;
       }
@@ -68,12 +73,12 @@ export type DonneesSuivi = {
   pilote: EtatPilote;
   /** Dernier refus du pilote, ou `undefined`. */
   refus: string | undefined;
-  /** Sans URL de contact, aucune collecte ne part (§4.4) : le bouton n'a pas lieu d'etre. */
+  /** Sans URL de contact, aucune collecte ne part : le bouton n'a pas lieu d'etre. */
   collecteConfiguree: boolean;
   /** Avancement du run ouvert en base, absent quand il n'y en a pas. */
   progression: Progression | undefined;
   /**
-   * Le drapeau §4.6 qui s'appliquera au lancement. Redit ici, alors qu'il se regle dans
+   * Le drapeau des mobiles qui s'appliquera au lancement. Redit ici, alors qu'il se regle dans
    * un bloc a part : c'est ici qu'est le bouton, et un opt-in sur une donnee personnelle
    * doit etre visible a l'instant du clic, pas seulement a l'instant ou on le coche.
    */
@@ -85,7 +90,7 @@ export type DonneesSuivi = {
   maintenant: number;
 };
 
-/** Le drapeau §4.6, tel que l'ecran le presente. Hors du bloc rafraichi. */
+/** Le drapeau des mobiles, tel que l'ecran le presente. Hors du bloc rafraichi. */
 export type DonneesMobiles = {
   /** Ce qui s'appliquera au prochain run. */
   actif: boolean;
@@ -104,7 +109,6 @@ export type DonneesReglages = {
 
 export type DonneesSynthese = {
   departement: string;
-  departements: readonly string[];
   suivi: DonneesSuivi;
   reglages: DonneesReglages;
   mobiles: DonneesMobiles;
@@ -199,20 +203,20 @@ function progression(progression: Progression | undefined): string {
   const rang = PHASES_RUN.indexOf(progression.phase);
   const etapes = PHASES_RUN.map((phase, index) => {
     const etat = index < rang ? "faite" : index === rang ? "courante" : "a_venir";
-    return `<li class="${etat}">${echapperHtml(phase)}</li>`;
+    return `<li class="${etat}">${echapperHtml(LIBELLE_PHASE[phase] ?? phase)}</li>`;
   }).join("");
 
   const avancement = progression.avancement;
   if (avancement === undefined) {
     return `<ol class="etapes">${etapes}</ol>
-<p class="discret">Cette passe n'a pas de decompte : le nombre de communes du departement
-n'est connu qu'une fois le dump de l'Annuaire lu.</p>`;
+<p class="discret">Cette passe n'a pas encore de decompte : elle vient de commencer, et la
+base n'a pas de quoi en calculer un qui ne soit pas invente.</p>`;
   }
 
   const detail =
     avancement.detail === undefined ? "" : `\n<p class="discret">${echapperHtml(avancement.detail)}</p>`;
   return `<ol class="etapes">${etapes}</ol>
-${barre(avancement.faits, avancement.total, avancement.unite)}${detail}`;
+${barre(avancement.faits, avancement.total, avancement.unite, avancement.phrase)}${detail}`;
 }
 
 /**
@@ -247,17 +251,22 @@ ${mentionMobiles(suivi.pilote.avecMobiles, "Ce run conserve")}${refus}`;
 ${issue}${refus}`;
   }
 
-  // Le libelle nomme les trois passes, et la duree est celle du run entier. « Une
-  // quarantaine de minutes » etait le chiffre du lot 3 pour la seule decouverte : lu
-  // devant un run complet, il faisait croire a un mode d'essai.
+  // Le libelle ne redit pas le departement : la barre de portee, en haut de page, est le
+  // seul endroit ou il se lit — et le seul ou il se change. La duree est celle du run
+  // entier ; « une quarantaine de minutes » etait le chiffre de la seule decouverte, et
+  // lu devant un run complet il faisait croire a un mode d'essai.
   return `<form method="post" action="/run" hx-post="/run" hx-target="#suivi" class="commandes">
   <input type="hidden" name="departement" value="${departement}">
-  <button type="submit">Lancer le run complet sur le departement ${departement}</button>
-  <span class="discret">Les trois passes a la suite : amorce RNA (dump national de 1,25 Go), decouverte
-  des sites de mairie (20 pages par commune), puis normalisation et notation.
-  <strong>Comptez plusieurs heures</strong> — le delai de 2 s par domaine en fixe le plancher.
-  Le run se reprend ou il s'arrete : fermer l'outil ne perd rien.</span>
+  <button type="submit" class="primaire">Lancer le run complet</button>
+  <span class="discret">Les trois passes a la suite : lecture du registre national des associations,
+  decouverte des sites de mairie (20 pages par commune), puis normalisation et notation.
+  <strong>Comptez plusieurs heures</strong> — le delai de 2 s entre deux requetes vers un meme
+  site en fixe le plancher. Le run se reprend ou il s'arrete : fermer l'outil ne perd rien.</span>
 </form>
+<p class="discret">Le registre national fait 1,25 Go et n'est <strong>pas conserve sur cette
+machine</strong> : il est lu au fil de l'eau et seules les lignes de ce departement sont gardees.
+Une interruption reprend a l'octet ou elle s'est arretee, mais ouvrir un autre departement
+relit le registre depuis le debut.</p>
 ${mentionMobiles(suivi.mobilesActifs, "Ce run conservera")}${issue}${refus}`;
 }
 
@@ -274,6 +283,13 @@ function mentionMobiles(actif: boolean, verbe: string): string {
     designent presque toujours une personne physique : vous en etes responsable de
     traitement.</p>`;
 }
+
+/** Le libelle des passes du run, en francais plutot qu'en nom de phase interne. */
+const LIBELLE_PHASE: Record<string, string> = {
+  amorce: "Amorce",
+  decouverte: "Decouverte",
+  normalisation: "Normalisation",
+};
 
 /**
  * L'URL de contact (§4.4), demandee la ou l'on en a besoin.
@@ -335,17 +351,19 @@ export function fragmentMobiles(mobiles: DonneesMobiles): string {
        Un mobile publie sur le site d'une commune est presque toujours la ligne personnelle
        d'un benevole — president, secretaire — et non le telephone d'un local associatif. Il
        identifie donc directement une personne physique : la base legale et la mise en
-       balance vous incombent, et l'information des personnes (art. 14) porte sur une donnee
-       qui les designe (ADR-025). Ce choix ne vaut que pour cette session.</p>`
-    : `<p class="discret">Les numeros mobiles (06/07) sont <strong>exclus</strong>, comme le
-       veut le §4.6. Un mobile publie sur le site d'une commune est presque toujours la ligne
-       personnelle d'un benevole plutot que le telephone d'un local associatif : le conserver
-       ouvre un traitement dont vous etes responsable (ADR-025). Les conserver reste possible,
-       le temps de cette session seulement.</p>`;
+       balance vous incombent, et l'obligation d'informer les personnes concernees
+       (art. 14 du RGPD) porte alors sur une donnee qui les designe. Ce choix ne vaut que
+       pour cette session.</p>`
+    : `<p class="discret">Les numeros mobiles (06/07) sont <strong>exclus</strong>. Un mobile
+       publie sur le site d'une commune est presque toujours la ligne personnelle d'un
+       benevole plutot que le telephone d'un local associatif : le conserver ouvre un
+       traitement de donnees personnelles dont vous etes responsable. Les conserver reste
+       possible, le temps de cette session seulement.</p>`;
 
   const verrou = mobiles.verrouille
-    ? `<p class="discret">Fige pendant le run : chaque job de page porte le drapeau depuis la
-       planification, le changer maintenant ne changerait rien a ce qui est collecte.</p>`
+    ? `<p class="discret">Fige pendant le run : le choix est inscrit dans chaque page a
+       visiter des la planification, le changer maintenant ne changerait rien a ce qui est
+       collecte.</p>`
     : "";
 
   return `${explication}${refus}
@@ -360,8 +378,7 @@ ${verrou}`;
 }
 
 export function ecranSynthese(donnees: DonneesSynthese): string {
-  return `${choixDepartement("/", donnees.departements, donnees.departement)}
-<h2>Collecte</h2>
+  return `<h2>Collecte</h2>
 <section id="reglages">
 ${fragmentReglages(donnees.reglages)}
 </section>
@@ -404,29 +421,29 @@ export function fragmentChiffres(donnees: DonneesSynthese): string {
     ["etage", "volume", "commentaire"],
     [
       [
-        "[1] associations actives",
+        "associations actives",
         `<span class="n">${nombre(couverture.actives)}</span>`,
         `dont ${nombre(dormance.nonDormantes)} ayant declare depuis le ${jour(dormance.borne)}`,
       ],
       [
-        "[3] pages explorees",
+        "pages explorees",
         `<span class="n">${nombre(prefiltre?.total ?? 0)}</span>`,
         prefiltre === undefined ? "aucune campagne de decouverte" : "derniere campagne",
       ],
       [
-        "[4] pages retenues",
+        "pages retenues",
         `<span class="n">${nombre(prefiltre?.retenues ?? 0)}</span>`,
         prefiltre === undefined
           ? "—"
           : `${pourcent(prefiltre.retenues, prefiltre.jugees)} des pages jugees`,
       ],
       [
-        "[5] contacts extraits",
+        "contacts extraits",
         `<span class="n">${nombre(normalisation.contacts)}</span>`,
         `${nombre(normalisation.invalides)} sans forme exploitable`,
       ],
       [
-        "[8] contacts notes",
+        "contacts notes",
         `<span class="n">${nombre(normalisation.notes)}</span>`,
         `${nombre(revue.arbitres)} arbitres en revue`,
       ],
@@ -475,12 +492,13 @@ ${chiffre(nombre(revue.aRevoir), "a arbitrer")}
 ${chiffre(nombre(revue.valides), "valides")}
 ${chiffre(nombre(revue.rejetes), "rejetes")}
 ${chiffre(nombre(revue.corriges), "corriges")}
-${chiffre(pourcent(revue.corriges, revue.arbitres), "taux de correction (§8)")}
+${chiffre(pourcent(revue.corriges, revue.arbitres), "taux de correction")}
 </div>
 <p class="discret">
-Le taux de correction est le seul proxy de precision d'extraction que le brief demande.
-Il se lit sur l'etat des lignes, pas sur un compteur d'evenements : changer d'avis sur un
-contact ne doit pas le compter deux fois.
+Le taux de correction est la seule mesure de precision d'extraction dont l'outil dispose :
+la part des contacts arbitres qu'un humain a du corriger. Il se lit sur l'etat des lignes
+et non sur un compteur d'evenements — changer d'avis sur un contact ne le compte pas deux
+fois.
 </p>
 
 <h2>Classification</h2>

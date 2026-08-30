@@ -12,14 +12,13 @@
  * fait descendre le chiffre, pas seulement le chiffre.
  */
 
-import { echapperHtml, lienSur, nombre, choixDepartement, banniereRun, dateHeure } from "../rendu.ts";
+import { echapperHtml, lienSur, nombre, pluriel, banniereRun, dateHeure } from "../rendu.ts";
 import type { EtatCollecte } from "../rendu.ts";
 import type { ContactARevoir, DistributionRevue } from "../requetes.ts";
 import type { Motifs } from "../../normalisation/score.ts";
 
 export type DonneesRevue = {
   departement: string;
-  departements: readonly string[];
   file: readonly ContactARevoir[];
   distribution: DistributionRevue;
   /** Message d'un arbitrage refuse, a afficher en tete. */
@@ -32,13 +31,49 @@ export type DonneesRevue = {
   pages: number;
 };
 
+/**
+ * L'en-tete de l'ecran, et il n'est pas decoratif.
+ *
+ * L'ecran affichait une valeur nue au-dessus de quatre boutons, sans jamais dire de quoi
+ * il s'agissait ni ce qui etait attendu du lecteur : devant `mairie@exemple.fr`, rien ne
+ * disait s'il fallait juger l'adresse, la commune a laquelle elle est rattachee, ou le
+ * fait qu'elle n'ait pas d'association. La legende des quatre boutons est repliee — elle
+ * se lit une fois, pas a chaque contact — mais le rappel de ce qu'est une carte, lui,
+ * reste visible.
+ */
+function introduction(): string {
+  return `<p class="intro">Chaque carte porte <strong>une valeur de contact lue sur une page de
+site communal</strong> — une adresse email ou un numero de telephone — que l'outil n'a pas su
+valider seul. <strong>Les moins sures d'abord</strong> : c'est la qu'un arbitrage humain apporte
+quelque chose. Les motifs sous la valeur disent ce qui a fait baisser le score, et le lien mene a
+la page ou elle a ete lue — c'est la qu'on verifie.</p>
+<details class="legende">
+  <summary>Que font les quatre boutons ?</summary>
+  <dl>
+    <dt>Valider</dt><dd>La valeur est bonne. Elle sort dans l'export.</dd>
+    <dt>Rejeter</dt><dd>La valeur est fausse ou hors sujet. Elle reste en base mais l'export
+      l'exclut par defaut.</dd>
+    <dt>Corriger</dt><dd>La valeur lue est presque bonne — une adresse cassee par un site,
+      typiquement. La version corrigee sort a cote de la version lue, et repasse a la notation.</dd>
+    <dt>Oublier</dt><dd>Suppression definitive : la ligne, sa copie dans le cache, et une
+      exclusion qui l'empeche de revenir au prochain run. Le motif est obligatoire.</dd>
+  </dl>
+</details>`;
+}
+
 export function ecranRevue(donnees: DonneesRevue): string {
-  return `${choixDepartement("/revue", donnees.departements, donnees.departement)}
-<h2>Revue</h2>
+  return `<h2>Revue</h2>
+${introduction()}
 <section id="file">
 ${fragmentFile(donnees)}
 </section>`;
 }
+
+/** Ce qu'est la valeur affichee. Sans cette etiquette, la carte montre une chaine nue. */
+const LIBELLE_KIND: Record<string, string> = {
+  email: "Adresse email",
+  phone: "Numero de telephone",
+};
 
 /** Cible des swaps htmx : chaque arbitrage renvoie la file recalculee. */
 export function fragmentFile(donnees: DonneesRevue): string {
@@ -54,14 +89,14 @@ export function fragmentFile(donnees: DonneesRevue): string {
   const prets = Math.max(0, d.aRevoir - d.nonNotes);
 
   const compteur =
-    `<p class="discret">${nombre(prets)} pret(s) a arbitrer · ${nombre(d.nonNotes)} en attente de notation · ` +
+    `<p class="discret">${nombre(prets)} pret${pluriel(prets)} a arbitrer · ${nombre(d.nonNotes)} en attente de notation · ` +
     `${nombre(d.valides)} valides · ${nombre(d.rejetes)} rejetes · ${nombre(d.corriges)} corriges</p>`;
 
   const attente =
     d.nonNotes === 0
       ? ""
       : `<p class="discret">${nombre(d.nonNotes)} contacts ne sont pas encore notes et ` +
-        "n'apparaissent pas ici : arbitrer avant l'etape [8] reviendrait a juger sans le " +
+        "n'apparaissent pas ici : arbitrer avant la notation reviendrait a juger sans le " +
         `seul element que l'outil apporte. ${
           donnees.collecte.kind === "inactif"
             ? `Lancez <code>annuaire normaliser --departement ${echapperHtml(donnees.departement)}</code>.`
@@ -71,8 +106,8 @@ export function fragmentFile(donnees: DonneesRevue): string {
   const aRenoter =
     d.correctionsANoter === 0
       ? ""
-      : `<p class="discret">${nombre(d.correctionsANoter)} correction(s) attendent une renotation : ` +
-        "une valeur corrigee n'est pas notee par cet ecran, c'est l'etape [8] qui repasse. " +
+      : `<p class="discret">${nombre(d.correctionsANoter)} correction${pluriel(d.correctionsANoter)} attend${pluriel(d.correctionsANoter)} une renotation : ` +
+        "une valeur corrigee n'est pas notee par cet ecran, c'est la passe de notation qui repasse. " +
         `<code>annuaire normaliser --departement ${echapperHtml(donnees.departement)}</code></p>`;
 
   const banniere = banniereRun(
@@ -91,7 +126,7 @@ export function fragmentFile(donnees: DonneesRevue): string {
       donnees.collecte.kind !== "inactif"
         ? "Rien a arbitrer pour l'instant : le run en cours n'a pas encore note de contact. Cet ecran se remplira tout seul."
         : d.nonNotes > 0
-          ? "Rien a arbitrer tant que l'etape [8] n'est pas passee sur les contacts ci-dessus."
+          ? "Rien a arbitrer tant que la notation n'est pas passee sur les contacts ci-dessus."
           : "Rien a arbitrer pour ce departement.";
     return `${entete}\n<p>${explication}</p>`;
   }
@@ -128,6 +163,23 @@ function pagination(donnees: DonneesRevue): string {
 </nav>`;
 }
 
+/**
+ * Une carte d'arbitrage.
+ *
+ * **Le type de la valeur est dit.** Une chaine nue au-dessus de quatre boutons laissait
+ * deviner s'il s'agissait d'une adresse, d'un numero, ou du nom de la commune juste
+ * en dessous.
+ *
+ * **Les actions sont groupees par intention**, et non alignees bout a bout : valider ou
+ * rejeter ne demande rien, corriger demande une valeur, oublier demande un motif. Un seul
+ * rang de boutons et de champs laissait croire que le champ voisin allait avec le bouton
+ * precedent.
+ *
+ * **Aucune des quatre n'est mise en avant.** « Valider » en bouton plein, repete sur dix
+ * cartes, fabrique un rang de boutons bleus qui appelle le clic — or l'ecran existe
+ * precisement pour que la decision soit prise contact par contact. Seul « Oublier » se
+ * distingue, et vers le bas : il supprime definitivement.
+ */
 function carte(contact: ContactARevoir, departement: string, page: number): string {
   const cible =
     contact.association === null
@@ -138,10 +190,10 @@ function carte(contact: ContactARevoir, departement: string, page: number): stri
     contact.kind !== "email"
       ? ""
       : contact.is_generique === 1
-        ? '<span class="discret">adresse generique</span>'
+        ? '<span class="etiquette bonne">adresse de fonction</span>'
         : contact.is_generique === 0
-          ? '<span class="alerte">adresse nominative (§4.7)</span>'
-          : '<span class="discret">regime indetermine</span>';
+          ? '<span class="etiquette alerte">adresse nominative — elle designe une personne</span>'
+          : '<span class="etiquette">regime indetermine</span>';
 
   const source = lienSur(contact.source_url);
   const lien =
@@ -152,32 +204,43 @@ function carte(contact: ContactARevoir, departement: string, page: number): stri
   // La page voyage avec l'action : sans elle, arbitrer depuis la page 4 renverrait la
   // premiere, et on perdrait sa place a chaque clic.
   const cheminAction = `/revue/${contact.id}?departement=${encodeURIComponent(departement)}&page=${page}`;
+  const type = LIBELLE_KIND[contact.kind] ?? contact.kind;
 
   return `<article class="contact" id="contact-${contact.id}">
-  <span class="score">score ${contact.score === null ? "—" : contact.score.toFixed(2)} · lu ${contact.confiance.toFixed(2)}</span>
+  <div class="chapeau">
+    <span class="type">${echapperHtml(type)}</span>
+    <span class="score">score ${contact.score === null ? "—" : contact.score.toFixed(2)}
+      <span class="discret">· lu ${contact.confiance.toFixed(2)}</span></span>
+  </div>
   <div class="valeur">${echapperHtml(contact.valeur)}</div>
-  <div>${cible}</div>
-  <div class="discret">${regime} · ${echapperHtml(contact.methode_extraction)} · vu le ${dateHeure(contact.collected_at)}</div>
+  <div class="cible">${cible}</div>
+  <div class="meta">${regime}<span class="discret">extraction ${echapperHtml(contact.methode_extraction)}</span><span class="discret">vue le ${dateHeure(contact.collected_at)}</span></div>
   ${motifsHtml(contact.score_motifs)}
-  <div>${lien}</div>
+  <div class="lien-source">Lue sur ${lien}</div>
   <!-- method/action en plus de hx-post : sans JS le formulaire part quand meme, et le
        serveur repond alors par une redirection plutot qu'un fragment. L'ecran de revue
        reste utilisable meme si htmx ne se charge pas. -->
   <form class="arbitrage" method="post" action="${cheminAction}"
         hx-post="${cheminAction}" hx-target="#file" hx-swap="innerHTML">
-    <button type="submit" name="action" value="valide">Valider</button>
-    <button type="submit" name="action" value="rejete">Rejeter</button>
-    <input type="text" name="valeur" placeholder="valeur corrigee" aria-label="valeur corrigee">
-    <button type="submit" name="action" value="corrige">Corriger</button>
-    <input type="text" name="note" placeholder="note (motif requis pour oublier)" aria-label="note de revue">
+    <div class="groupe">
+      <button type="submit" name="action" value="valide">Valider</button>
+      <button type="submit" name="action" value="rejete">Rejeter</button>
+    </div>
+    <div class="groupe">
+      <input type="text" name="valeur" placeholder="valeur corrigee" aria-label="valeur corrigee">
+      <button type="submit" name="action" value="corrige">Corriger</button>
+    </div>
     <!-- Oublier n'est pas rejeter. Rejeter ecrit un statut, que l'export sait remettre
          et que le run suivant recouvre ; oublier supprime la ligne, efface la copie en
-         cache et inscrit l'exclusion (art. 17 et 21). D'ou le motif obligatoire, et la
-         mise en garde portee par le titre du bouton. -->
-    <button type="submit" name="action" value="oublie" class="danger"
-            title="Supprime definitivement ce contact et l'empeche de revenir. Le motif, saisi dans la note, est obligatoire.">
-      Oublier
-    </button>
+         cache et inscrit l'exclusion. D'ou le motif obligatoire, et la mise en garde
+         portee par le titre du bouton. -->
+    <div class="groupe">
+      <input type="text" name="note" placeholder="motif, obligatoire pour oublier" aria-label="note de revue">
+      <button type="submit" name="action" value="oublie" class="danger"
+              title="Supprime definitivement ce contact et l'empeche de revenir. Le motif, saisi a cote, est obligatoire.">
+        Oublier
+      </button>
+    </div>
   </form>
 </article>`;
 }

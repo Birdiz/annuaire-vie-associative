@@ -375,7 +375,7 @@ test("un run que cette interface ne pilote pas est signale, sans bloquer le bout
 
   assert.match(
     suivi,
-    /<li class="courante">decouverte<\/li>/,
+    /<li class="courante">Decouverte<\/li>/,
     "la phase vient de la base, pas de la memoire de l'interface",
   );
   assert.match(suivi, /n'est pas pilote depuis cette interface/);
@@ -412,7 +412,7 @@ test("la revue ne compte comme « a arbitrer » que ce qui est note", (t) => {
 
   const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
 
-  assert.match(ecran, /0 pret\(s\) a arbitrer/, "la file est vide, le compteur doit le dire");
+  assert.match(ecran, /0 pret a arbitrer/, "la file est vide, le compteur doit le dire");
   assert.match(ecran, /en attente de notation/);
   assert.doesNotMatch(
     ecran,
@@ -459,7 +459,7 @@ test("une ligne de run orpheline previent mais ne barre ni l'export ni la revue"
 
   const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /sans etre pilote depuis cette interface/);
-  assert.match(ecran, /Telecharger l'annuaire/, "un reste de kill -9 ne doit pas condamner l'export");
+  assert.match(ecran, /Telecharger le fichier/, "un reste de kill -9 ne doit pas condamner l'export");
 
   assert.equal(router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`)).statut, 200);
 });
@@ -611,14 +611,42 @@ test("la barre de normalisation compte les contacts notes a la version courante"
   assert.match(suivi, /contacts notes/);
 });
 
-test("l'amorce affiche son etape sans barre : rien n'y donne de denominateur", (t) => {
+test("l'amorce sans dump ouvert affiche son etape, mais aucune barre", (t) => {
   const ctx = contexte(t);
   ouvrirRun(ctx, "amorce");
 
   const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
 
-  assert.match(suivi, /<li class="courante">amorce<\/li>/);
-  assert.doesNotMatch(suivi, /<progress/);
+  assert.match(suivi, /<li class="courante">Amorce<\/li>/);
+  assert.doesNotMatch(suivi, /<progress/, "sans octet lu, une barre serait inventee");
+});
+
+/**
+ * Le decompte de l'amorce existait en base sans etre lu.
+ *
+ * `dump.consumed_bytes` est l'offset de reprise : il est avance dans la meme transaction
+ * que les lignes produites, donc il ne ment pas. L'ecran affichait pourtant « cette passe
+ * n'a pas de decompte » pendant les vingt minutes que dure la lecture du registre.
+ */
+test("l'amorce compte en octets ce que le dump a consomme", (t) => {
+  const ctx = contexte(t);
+  ouvrirRun(ctx, "amorce");
+  ctx.db
+    .prepare(
+      "INSERT INTO dump (source, url, statut, consumed_bytes, total_bytes, started_at) " +
+        "VALUES ('rna_waldec', 'https://exemple.test/rna.csv', 'en_cours', ?, ?, ?)",
+    )
+    .run(536870912, 1342177280, "2026-09-01T09:00:00.000Z");
+
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(suivi, /<progress max="1342177280" value="536870912"/);
+  assert.match(suivi, /512 Mo sur 1,25 Go lus/, "les octets bruts ne se lisent pas");
+  assert.match(
+    suivi,
+    /jamais ecrit sur le disque/,
+    "le registre est lu en flux : l'ecran ne doit pas laisser croire a un fichier telecharge",
+  );
 });
 
 test("sans run ouvert, il n'y a ni etapes ni barre a afficher", (t) => {
@@ -727,4 +755,99 @@ test("sans deuxieme page, aucun lien de pagination n'est rendu", (t) => {
 
   const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
   assert.doesNotMatch(ecran, /page 1 sur 1/, "une seule page ne se navigue pas");
+});
+
+/**
+ * Ouvrir un autre departement.
+ *
+ * Le selecteur ne s'affichait qu'a partir de deux departements en base et ne listait que
+ * l'existant : depuis une base amorcee sur le seul 35, il n'y avait aucun chemin vers le
+ * 88. Le departement etait partout a l'ecran et nulle part modifiable, et il fallait la
+ * ligne de commande pour en ouvrir un second. La barre de portee est ce chemin.
+ */
+
+test("la barre de portee est rendue meme quand la base ne connait qu'un departement", (t) => {
+  const ctx = contexte(t);
+
+  for (const chemin of ["/", "/revue", "/export"]) {
+    const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
+    assert.match(ecran, /class="portee"/, `${chemin} doit porter la barre`);
+    assert.match(
+      ecran,
+      /<input type="text" id="portee-departement"/,
+      `${chemin} doit offrir une saisie libre, pas seulement les departements connus`,
+    );
+  }
+});
+
+test("un departement jamais amorce s'ouvre, et l'ecran dit qu'il est vide", (t) => {
+  const ctx = contexte(t);
+
+  const ecran = corpsTexte(router(ctx, requete("/?departement=88")).corps);
+
+  assert.match(ecran, /value="88"/, "le departement demande est celui qu'on affiche");
+  assert.match(ecran, /Jamais amorce/, "un ecran de zeros ne dit pas s'il est vide ou non collecte");
+  assert.match(ecran, /Deja en base : /, "les departements deja collectes restent joignables");
+  assert.match(ecran, /Lancer le run complet/, "c'est le run qui amorcera ce departement");
+});
+
+test("un code de departement malforme est refuse, sans emporter l'ecran", (t) => {
+  const ctx = contexte(t);
+
+  const ecran = corpsTexte(router(ctx, requete("/?departement=TOUS")).corps);
+
+  // Le message passe par `echapperHtml` : l'apostrophe y devient `&#39;`.
+  assert.match(ecran, /pas un code de departement/);
+  assert.match(ecran, /« TOUS »/, "le refus redit ce qui a ete saisi");
+  assert.match(ecran, /value="35"/, "on retombe sur le departement courant, on ne casse pas la page");
+});
+
+test("le departement saisi est normalise : « 2a » et « 2A » sont le meme", (t) => {
+  const ctx = contexte(t);
+
+  const ecran = corpsTexte(router(ctx, requete("/?departement=+2a+")).corps);
+
+  assert.match(ecran, /value="2A"/);
+});
+
+test("le departement ne se redit plus dans les libelles d'action", (t) => {
+  const ctx = contexte(t);
+
+  const synthese = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+  const exporter = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+
+  // La barre de portee le dit une fois. Repete sur chaque bouton, il donnait a l'outil
+  // l'air d'etre soude a un departement dont on ne pouvait pas sortir.
+  assert.doesNotMatch(synthese, /Lancer le run complet sur le departement/);
+  assert.doesNotMatch(exporter, /Telecharger l'annuaire du departement/);
+  assert.match(exporter, /Telecharger le fichier/);
+});
+
+test("aucun ecran n'affiche de reference ADR ou de numero de paragraphe du brief", (t) => {
+  const ctx = contexte(t);
+
+  for (const chemin of ["/", "/revue", "/export"]) {
+    const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
+    // Ce qui est lu, et rien d'autre. Les commentaires HTML voyagent jusqu'au navigateur
+    // sans etre affiches ; le `<head>` porte la configuration htmx, dont les codes de
+    // statut `[23]..` et `[45]..` sont des expressions regulieres, pas des numeros d'etape.
+    const visible = ecran
+      .replace(/<!--[\s\S]*?-->/g, "")
+      .replace(/<head>[\s\S]*?<\/head>/, "");
+    assert.doesNotMatch(visible, /ADR-\d+/, `${chemin} : une reference ADR ne parle a personne`);
+    assert.doesNotMatch(visible, /§\s*\d/, `${chemin} : un numero de paragraphe du brief non plus`);
+    // Les etages de l'entonnoir portaient « [1] associations actives » : la numerotation
+    // des etapes du brief, qui ne veut rien dire pour qui lit l'ecran.
+    assert.doesNotMatch(visible, /\[\d+\]/, `${chemin} : ni un numero d'etape interne`);
+  }
+});
+
+test("l'ecran de revue dit ce qu'on arbitre avant de montrer une valeur nue", (t) => {
+  const ctx = contexte(t);
+
+  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(ecran, /valeur de contact lue sur une page de/, "une chaine nue ne se juge pas");
+  assert.match(ecran, /Que font les quatre boutons/, "la legende des actions est a portee");
+  assert.match(ecran, /class="type">Adresse email</, "chaque carte nomme le type de sa valeur");
 });

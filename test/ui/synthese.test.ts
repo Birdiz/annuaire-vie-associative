@@ -55,12 +55,12 @@ test("un run en cours annonce son numero et sa phase", () => {
       jobs: { ...JOBS, pending: 12 },
       progression: {
         phase: "decouverte",
-        avancement: { faits: 8, total: 20, unite: "communes explorees", detail: undefined },
+        avancement: { faits: 8, total: 20, unite: "communes explorees", phrase: undefined, detail: undefined },
       },
     }),
   );
   assert.match(html, /Run #7/);
-  assert.match(html, /<li class="courante">decouverte<\/li>/, "l'etape se lit dans l'indicateur");
+  assert.match(html, /<li class="courante">Decouverte<\/li>/, "l'etape se lit dans l'indicateur");
 });
 
 test("sans URL de contact, le lancement n'est pas offert (§4.4)", () => {
@@ -198,13 +198,13 @@ test("l'indicateur d'etape situe la passe en cours, faites derriere et a venir d
     suivi({
       progression: {
         phase: "normalisation",
-        avancement: { faits: 40, total: 100, unite: "contacts notes", detail: undefined },
+        avancement: { faits: 40, total: 100, unite: "contacts notes", phrase: undefined, detail: undefined },
       },
     }),
   );
-  assert.match(html, /<li class="faite">amorce<\/li>/);
-  assert.match(html, /<li class="faite">decouverte<\/li>/);
-  assert.match(html, /<li class="courante">normalisation<\/li>/);
+  assert.match(html, /<li class="faite">Amorce<\/li>/);
+  assert.match(html, /<li class="faite">Decouverte<\/li>/);
+  assert.match(html, /<li class="courante">Normalisation<\/li>/);
 });
 
 test("la barre porte sa valeur en attribut : la CSP interdit un style en ligne", () => {
@@ -212,7 +212,7 @@ test("la barre porte sa valeur en attribut : la CSP interdit un style en ligne",
     suivi({
       progression: {
         phase: "decouverte",
-        avancement: { faits: 8, total: 20, unite: "communes explorees", detail: "31 pages visitees" },
+        avancement: { faits: 8, total: 20, unite: "communes explorees", phrase: undefined, detail: "31 pages visitees" },
       },
     }),
   );
@@ -227,9 +227,9 @@ test("la barre porte sa valeur en attribut : la CSP interdit un style en ligne",
 
 test("l'amorce n'invente pas de denominateur", () => {
   const html = fragmentSuivi(suivi({ progression: { phase: "amorce", avancement: undefined } }));
-  assert.match(html, /<li class="courante">amorce<\/li>/);
+  assert.match(html, /<li class="courante">Amorce<\/li>/);
   assert.doesNotMatch(html, /<progress/, "une barre inventee serait pire qu'aucune barre");
-  assert.match(html, /pas de decompte/);
+  assert.match(html, /pas encore de decompte/);
 });
 
 /**

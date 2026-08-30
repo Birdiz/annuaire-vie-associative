@@ -6,12 +6,11 @@
  * qui voyage avec chaque ligne n'aurait plus de garantie unique.
  */
 
-import { echapperHtml, nombre, choixDepartement, banniereRun } from "../rendu.ts";
+import { echapperHtml, nombre, banniereRun } from "../rendu.ts";
 import type { EtatCollecte } from "../rendu.ts";
 
 export type DonneesExport = {
   departement: string;
-  departements: readonly string[];
   scoreMin: string;
   avecRejetes: boolean;
   lignes: number;
@@ -24,24 +23,23 @@ export function ecranExport(donnees: DonneesExport): string {
   const dept = encodeURIComponent(donnees.departement);
 
   // Exporter pendant un run livre un fichier que la fin du run rendrait faux : les
-  // contacts arrives apres manquent, ceux que l'etape [8] n'a pas encore notes sortent
-  // sans score, et le seuil ne veut plus rien dire. Le bouton est donc retire — pas
+  // contacts arrives apres manquent, ceux qui ne sont pas encore notes sortent sans
+  // score, et le seuil ne veut plus rien dire. Le bouton est donc retire — pas
   // seulement grise : un bouton desactive invite a chercher comment l'activer.
   const bloque = donnees.collecte.kind === "pilote";
   const banniere = banniereRun(
     donnees.collecte,
     bloque
-      ? "L'export est suspendu jusqu'a la fin : un fichier pris maintenant sortirait sans les contacts a venir, et sans le score de ceux que l'etape [8] n'a pas encore notes."
+      ? "L'export est suspendu jusqu'a la fin : un fichier pris maintenant sortirait sans les contacts a venir, et sans le score de ceux qui ne sont pas encore notes."
       : "Les chiffres ci-dessous bougent encore, et un fichier pris maintenant serait incomplet.",
   );
 
   const commande = bloque
     ? `<p class="discret">Le bouton revient des que le run est fini ou arrete. Rien n'est perdu entre-temps :
        l'export lit la base, il ne la consomme pas.</p>`
-    : `<p><button type="submit">Telecharger l'annuaire du departement ${echapperHtml(donnees.departement)}</button></p>`;
+    : `<p><button type="submit" class="primaire">Telecharger le fichier</button></p>`;
 
-  return `${choixDepartement("/export", donnees.departements, donnees.departement)}
-<h2>Export CSV</h2>
+  return `<h2>Export CSV</h2>
 ${banniere}
 <form method="get" action="/export.csv">
   <input type="hidden" name="departement" value="${echapperHtml(donnees.departement)}">
@@ -80,7 +78,7 @@ qui ne changerait rien au fichier livre ne servirait a rien. <a href="/revue?dep
 
 <!-- L'avertissement est ici, et pas seulement dans le README : c'est le moment ou le
      fichier quitte l'outil, donc le seul ou il sera lu par quelqu'un qui est sur le point
-     d'en avoir besoin. Voir ADR-025. -->
+     d'en avoir besoin. -->
 <p class="avertissement">
 <strong>Ce fichier contient des donnees personnelles, et vous en etes responsable de
 traitement.</strong> La colonne <code>regime</code> distingue les adresses de fonction

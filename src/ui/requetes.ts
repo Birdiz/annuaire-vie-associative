@@ -239,3 +239,56 @@ export function progressionNotation(
   if (ligne === undefined || Number(ligne.contacts) === 0) return undefined;
   return { contacts: Number(ligne.contacts), notes: Number(ligne.notes) };
 }
+
+/**
+ * Ce que la base contient deja pour un departement.
+ *
+ * L'interface doit pouvoir ouvrir un departement qui n'a jamais ete amorce — c'est le
+ * seul moyen d'en charger un second sans passer par la ligne de commande. Un ecran de
+ * zeros ne dit pas la difference entre « rien trouve » et « jamais collecte » ; ces deux
+ * compteurs la disent.
+ */
+export type Amorce = { communes: number; associations: number };
+
+export function amorceDuDepartement(db: Database, departement: string): Amorce {
+  const ligne = db
+    .prepare(
+      `SELECT (SELECT count(*) FROM commune WHERE departement = ?) AS communes,
+              (SELECT count(*) FROM association a
+                 JOIN commune c ON c.code_insee = a.code_insee
+                WHERE c.departement = ?) AS associations`,
+    )
+    .get(departement, departement) as { communes?: number; associations?: number } | undefined;
+  return {
+    communes: Number(ligne?.communes ?? 0),
+    associations: Number(ligne?.associations ?? 0),
+  };
+}
+
+/**
+ * Ou en est la lecture du dump RNA, en octets.
+ *
+ * Le dump n'est jamais ecrit sur disque : il est lu en flux et seul l'offset atteint est
+ * persiste, pour que la reprise reparte par `Range` la ou elle s'est arretee. Cet offset
+ * est donc le seul decompte honnete de la passe d'amorce — et il existait deja quand
+ * l'ecran affichait « cette passe n'a pas de decompte ».
+ *
+ * `total` manque tant que le miroir n'a pas annonce sa taille : on rend alors les octets
+ * lus seuls, plutot qu'une barre assise sur un denominateur invente.
+ */
+export type ProgressionAmorce = { octetsLus: number; octetsTotal: number | undefined };
+
+export function progressionAmorce(db: Database): ProgressionAmorce | undefined {
+  const ligne = db
+    .prepare(
+      "SELECT consumed_bytes, total_bytes FROM dump WHERE statut = 'en_cours' " +
+        "ORDER BY id DESC LIMIT 1",
+    )
+    .get() as { consumed_bytes?: number; total_bytes?: number | null } | undefined;
+  if (ligne === undefined) return undefined;
+  const total = ligne.total_bytes === null || ligne.total_bytes === undefined ? undefined : Number(ligne.total_bytes);
+  return {
+    octetsLus: Number(ligne.consumed_bytes ?? 0),
+    octetsTotal: total === undefined || total <= 0 ? undefined : total,
+  };
+}

@@ -1,27 +1,43 @@
 /* Ecrit a la main (D5). Pas de framework : trois ecrans ne le justifient pas, et le
-   poids du bundle est un critere de conception. */
+   poids du bundle est un critere de conception.
+
+   Aucun style en ligne nulle part : la CSP du serveur est `default-src 'self'`, donc
+   `style-src 'self'`. Un `style="..."` serait refuse par le navigateur sans que rien ne
+   le signale — c'est pour cela que la barre de progression est un `<progress>` natif et
+   que la mise en page passe par des classes. */
 
 :root {
-  --fond: #fbfaf8;
+  --fond: #f7f6f3;
   --fond-carte: #ffffff;
+  --fond-creux: #efece6;
   --texte: #1c1a17;
   --discret: #6b655c;
   --trait: #ddd8d0;
+  --trait-fort: #c6bfb4;
   --accent: #1c4f7c;
+  --accent-doux: #e7eff6;
   --alerte: #8c2f16;
+  --alerte-doux: #f8ebe6;
   --bon: #2f6b3a;
+  --ombre: 0 1px 2px rgb(28 26 23 / 6%), 0 1px 6px rgb(28 26 23 / 4%);
+  --rayon: 8px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --fond: #161513;
-    --fond-carte: #1f1e1b;
+    --fond: #14130f;
+    --fond-carte: #1e1d19;
+    --fond-creux: #26241f;
     --texte: #eae7e1;
     --discret: #9c968c;
     --trait: #35322d;
+    --trait-fort: #4a463f;
     --accent: #7fb0d8;
+    --accent-doux: #1b2b38;
     --alerte: #e8a08a;
+    --alerte-doux: #33201a;
     --bon: #8fc79b;
+    --ombre: none;
   }
 }
 
@@ -31,25 +47,8 @@ body {
   margin: 0;
   background: var(--fond);
   color: var(--texte);
-  font: 16px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
 }
-
-header {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 1rem;
-  align-items: baseline;
-  padding: 0.9rem 1.5rem;
-  border-bottom: 1px solid var(--trait);
-  background: var(--fond-carte);
-}
-
-header nav { display: flex; gap: 1rem; flex: 1; }
-header nav a { color: var(--accent); text-decoration: none; padding-bottom: 2px; }
-header nav a.actif { border-bottom: 2px solid var(--accent); }
-
-main { max-width: 62rem; margin: 0 auto; padding: 1.5rem; }
-footer { max-width: 62rem; margin: 0 auto; padding: 0 1.5rem 2rem; }
 
 a { color: var(--accent); }
 
@@ -59,117 +58,372 @@ code {
   font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
   font-variant-ligatures: none;
   font-feature-settings: "liga" 0, "calt" 0;
+  font-size: 0.9em;
+  background: var(--fond-creux);
+  border-radius: 3px;
+  padding: 0.05em 0.3em;
 }
 
-h2 { font-size: 1.15rem; margin: 2rem 0 0.75rem; }
-h2:first-child { margin-top: 0; }
-h3 { font-size: 1rem; margin: 0 0 0.35rem; }
+/* ---- Bandeau et navigation ------------------------------------------------ */
 
-.discret { color: var(--discret); font-size: 0.875rem; }
-.alerte { color: var(--alerte); }
-
-/* L'avertissement de l'ecran d'export (ADR-025). Encadre plutot que « discret » : il est
-   la pour etre lu au moment ou le fichier quitte l'outil, pas pour meubler le bas de page. */
-.avertissement {
-  border-left: 3px solid var(--alerte);
-  padding: 0.75rem 1rem;
-  margin-top: 1.5rem;
+header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  align-items: center;
+  padding: 0.7rem 1.5rem;
   background: var(--fond-carte);
+  border-bottom: 1px solid var(--trait);
+}
+
+header .marque { font-weight: 650; letter-spacing: -0.01em; }
+header nav { display: flex; gap: 0.35rem; flex: 1; }
+header .version { color: var(--discret); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+
+header nav a {
+  color: var(--discret);
+  text-decoration: none;
+  padding: 0.25rem 0.7rem;
+  border-radius: 999px;
+}
+header nav a:hover { color: var(--texte); background: var(--fond-creux); }
+header nav a.actif { color: var(--accent); background: var(--accent-doux); font-weight: 600; }
+
+/* ---- Barre de portee ------------------------------------------------------
+
+   Le seul endroit ou le departement se dit, et le seul ou il se change. Elle a sa
+   propre bande, sous le bandeau : coincee dans l'en-tete elle passait pour un ornement,
+   alors qu'elle porte la question « sur quoi je travaille ». */
+
+.portee {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.6rem 1.25rem;
+  padding: 0.6rem 1.5rem;
+  background: var(--fond-creux);
+  border-bottom: 1px solid var(--trait);
   font-size: 0.9375rem;
 }
 
-/* « Oublier » supprime definitivement, la ou « rejeter » pose un statut. Le bouton le dit. */
-button.danger { color: var(--alerte); border-color: var(--alerte); }
+.portee form { display: flex; align-items: center; gap: 0.5rem; }
+.portee label { color: var(--discret); }
+.portee input[type="text"] {
+  flex: 0 0 auto;
+  width: 4.5rem;
+  text-align: center;
+  font-weight: 650;
+  font-size: 1rem;
+  letter-spacing: 0.04em;
+}
+.portee .vide { color: var(--alerte); }
+.portee .autres { color: var(--discret); margin-left: auto; }
+.portee .autres a { margin-left: 0.4rem; }
+
+/* ---- Ossature -------------------------------------------------------------
+
+   62rem centres dans un ecran de 2000 px laissaient deux marges vides plus larges que
+   le contenu. La colonne s'elargit, mais le texte suivi garde une longueur de ligne
+   lisible : c'est `.prose` qui la borne, pas la page. */
+
+main {
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: 1.75rem 1.5rem 3rem;
+}
+
+footer {
+  max-width: 74rem;
+  margin: 0 auto;
+  padding: 0 1.5rem 2.5rem;
+  color: var(--discret);
+  font-size: 0.875rem;
+}
+
+main > p, main > .discret, .intro, section > p {
+  max-width: 72ch;
+}
+
+h2 {
+  font-size: 1.0625rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: var(--discret);
+  margin: 2.25rem 0 0.9rem;
+  padding-bottom: 0.4rem;
+  border-bottom: 1px solid var(--trait);
+}
+h2:first-child { margin-top: 0; }
+h3 { font-size: 0.9375rem; margin: 1.5rem 0 0.5rem; }
+
+section { margin-bottom: 0.5rem; }
+
+.discret { color: var(--discret); font-size: 0.875rem; }
+.alerte { color: var(--alerte); }
 .bon { color: var(--bon); }
 
-.cartes { display: flex; flex-wrap: wrap; gap: 0.75rem; }
+/* ---- Encarts --------------------------------------------------------------
+
+   Trois niveaux, et ils ne disent pas la meme chose : `avis` informe, `avertissement`
+   engage la responsabilite du lecteur, `refus` dit qu'une action n'a pas eu lieu. */
+
+.avis, .avertissement, .refus {
+  border-left: 3px solid;
+  border-radius: 0 var(--rayon) var(--rayon) 0;
+  padding: 0.7rem 1rem;
+  margin: 0 0 1rem;
+  max-width: 72ch;
+  font-size: 0.9375rem;
+}
+
+.avis { border-color: var(--accent); background: var(--accent-doux); }
+.avertissement { border-color: var(--alerte); background: var(--alerte-doux); }
+.refus { border-color: var(--alerte); background: var(--alerte-doux); color: var(--alerte); }
+
+/* ---- Champs et boutons ---------------------------------------------------- */
+
+input[type="text"], input[type="url"], select {
+  font: inherit;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid var(--trait-fort);
+  border-radius: 6px;
+  background: var(--fond-carte);
+  color: var(--texte);
+}
+input[type="text"], input[type="url"] { flex: 1 1 14rem; min-width: 0; }
+input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible,
+summary:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+input:invalid { border-color: var(--alerte); }
+
+button {
+  font: inherit;
+  padding: 0.4rem 0.9rem;
+  border: 1px solid var(--trait-fort);
+  border-radius: 6px;
+  background: var(--fond-carte);
+  color: var(--texte);
+  cursor: pointer;
+  white-space: nowrap;
+}
+button:hover { border-color: var(--accent); color: var(--accent); }
+
+/* L'action que l'ecran attend. Une seule par bloc : deux boutons pleins cote a cote ne
+   designent plus rien. */
+button.primaire {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: var(--fond-carte);
+  font-weight: 600;
+}
+button.primaire:hover { filter: brightness(1.12); color: var(--fond-carte); }
+
+/* « Oublier » supprime definitivement, la ou « rejeter » pose un statut. Le bouton le dit. */
+button.danger { color: var(--alerte); border-color: var(--alerte); }
+button.danger:hover { background: var(--alerte-doux); color: var(--alerte); border-color: var(--alerte); }
+
+:disabled { cursor: not-allowed; opacity: 0.55; }
+
+/* ---- Chiffres -------------------------------------------------------------
+
+   Une grille plutot qu'une rangee flex : sur un ecran large, `flex: 1 1 8rem` etirait
+   quatre cartes sur toute la largeur et un chiffre de trois caracteres flottait au
+   milieu de vingt centimetres de vide. */
+
+.cartes {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
 
 .chiffre {
-  flex: 1 1 8rem;
   background: var(--fond-carte);
   border: 1px solid var(--trait);
-  border-radius: 6px;
-  padding: 0.75rem 0.9rem;
+  border-radius: var(--rayon);
+  padding: 0.85rem 1rem;
+  box-shadow: var(--ombre);
 }
-.chiffre b { display: block; font-size: 1.5rem; font-weight: 600; }
-.chiffre span { color: var(--discret); font-size: 0.8125rem; }
+.chiffre b {
+  display: block;
+  font-size: 1.6rem;
+  font-weight: 650;
+  line-height: 1.2;
+  letter-spacing: -0.02em;
+}
+.chiffre span { color: var(--discret); font-size: 0.8125rem; line-height: 1.35; display: block; margin-top: 0.2rem; }
 
-table { border-collapse: collapse; width: 100%; font-size: 0.9375rem; }
-th, td { text-align: left; padding: 0.35rem 0.6rem; border-bottom: 1px solid var(--trait); }
-th { color: var(--discret); font-weight: 600; }
+/* ---- Tableaux ------------------------------------------------------------- */
+
+table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 0.9375rem;
+  background: var(--fond-carte);
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  overflow: hidden;
+}
+th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--trait); }
+tbody tr:last-child td { border-bottom: none; }
+th {
+  color: var(--discret);
+  font-weight: 600;
+  font-size: 0.8125rem;
+  text-transform: uppercase;
+  letter-spacing: 0.03em;
+  background: var(--fond-creux);
+}
 /* Une colonne de nombres s'aligne a droite, titre compris — sans quoi le titre reste a
    gauche pendant que la valeur file a droite, et la lecture se perd. */
 th.num, td.num { text-align: right; }
 td > span.n { display: block; }
 td > span.n, .chiffre b { font-variant-numeric: tabular-nums; }
 
+/* ---- Ecran de revue -------------------------------------------------------
+
+   La carte etait un bloc plat : valeur, metadonnees et six controles alignes bout a
+   bout, sans que rien ne dise ce qu'on regardait. Elle a maintenant un chapeau qui
+   nomme le type, un corps, et des actions groupees par intention. */
+
+.intro { font-size: 0.9375rem; }
+
+.legende {
+  margin: 0.75rem 0 1.5rem;
+  border: 1px solid var(--trait);
+  border-radius: var(--rayon);
+  background: var(--fond-carte);
+  max-width: 72ch;
+}
+.legende summary {
+  cursor: pointer;
+  padding: 0.6rem 1rem;
+  font-size: 0.9375rem;
+  color: var(--accent);
+}
+.legende dl { margin: 0; padding: 0 1rem 0.9rem; font-size: 0.9375rem; }
+.legende dt { font-weight: 650; margin-top: 0.6rem; }
+.legende dd { margin: 0.1rem 0 0; color: var(--discret); }
+
 .contact {
   background: var(--fond-carte);
   border: 1px solid var(--trait);
-  border-radius: 6px;
-  padding: 1rem 1.1rem;
-  margin-bottom: 0.9rem;
-}
-
-.contact .valeur { font-size: 1.15rem; font-weight: 600; word-break: break-all; }
-.contact .score { float: right; font-variant-numeric: tabular-nums; color: var(--discret); }
-.contact ul { margin: 0.5rem 0; padding-left: 1.1rem; color: var(--discret); font-size: 0.875rem; }
-.contact .source { word-break: break-all; }
-
-form.arbitrage { display: flex; flex-wrap: wrap; gap: 0.5rem; align-items: center; margin-top: 0.75rem; }
-form.choix { margin-bottom: 1.25rem; }
-
-input[type="text"], select {
-  font: inherit;
-  padding: 0.35rem 0.5rem;
-  border: 1px solid var(--trait);
-  border-radius: 4px;
-  background: var(--fond);
-  color: var(--texte);
-}
-input[type="text"], input[type="url"] { flex: 1 1 14rem; }
-
-button {
-  font: inherit;
-  padding: 0.35rem 0.85rem;
-  border: 1px solid var(--trait);
-  border-radius: 4px;
-  background: var(--fond);
-  color: var(--texte);
-  cursor: pointer;
-}
-button:hover { border-color: var(--accent); color: var(--accent); }
-
-.refus {
-  border-left: 3px solid var(--alerte);
-  padding: 0.5rem 0.75rem;
+  border-radius: var(--rayon);
+  padding: 1rem 1.15rem 0.9rem;
   margin-bottom: 1rem;
-  color: var(--alerte);
+  box-shadow: var(--ombre);
 }
 
-.barre { display: inline-block; height: 0.7rem; background: var(--accent); border-radius: 2px; }
+.contact .chapeau {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  align-items: baseline;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--trait);
+  padding-bottom: 0.5rem;
+  margin-bottom: 0.7rem;
+}
+.contact .type {
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 650;
+  color: var(--discret);
+}
+.contact .score { font-variant-numeric: tabular-nums; font-size: 0.875rem; }
 
-/* Barre de progression du run.
+.contact .valeur {
+  font-size: 1.2rem;
+  font-weight: 650;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+.contact .cible { margin-top: 0.15rem; }
 
-   `<progress>` natif, et non un div dont on reglerait la largeur : la CSP du serveur est
-   `default-src 'self'`, donc `style-src 'self'`, et un attribut `style` en ligne serait
-   refuse par le navigateur — la barre resterait vide sans que rien ne le signale.
-   L'apparence par defaut differe d'un moteur a l'autre, d'ou les trois selecteurs :
-   `appearance: none` puis le fond, la valeur WebKit, la valeur Gecko. */
-.progression { display: flex; align-items: center; gap: 0.75rem; flex-wrap: wrap; margin: 0.25rem 0 0.75rem; }
+.contact .meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem 0.75rem;
+  align-items: center;
+  margin-top: 0.5rem;
+  font-size: 0.8125rem;
+}
+
+/* Le regime d'une adresse est une qualification juridique, pas une note de bas de page :
+   il se distingue du reste de la ligne de metadonnees. */
+.contact .meta .etiquette {
+  border: 1px solid var(--trait-fort);
+  border-radius: 999px;
+  padding: 0.05rem 0.55rem;
+  color: var(--discret);
+}
+.contact .meta .etiquette.bonne { color: var(--bon); border-color: var(--bon); }
+.contact .meta .etiquette.alerte { color: var(--alerte); border-color: var(--alerte); }
+
+.contact ul {
+  margin: 0.7rem 0 0;
+  padding: 0.55rem 0.75rem 0.55rem 1.9rem;
+  background: var(--fond-creux);
+  border-radius: 6px;
+  color: var(--discret);
+  font-size: 0.875rem;
+}
+.contact ul li { margin: 0.1rem 0; }
+
+.contact .lien-source { margin-top: 0.7rem; font-size: 0.875rem; color: var(--discret); }
+.contact .source { word-break: break-all; overflow-wrap: anywhere; }
+
+/* Trois groupes, trois intentions : trancher, corriger, effacer. Alignes bout a bout,
+   un champ paraissait appartenir au bouton qui le precede. */
+form.arbitrage {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  align-items: center;
+  margin-top: 0.9rem;
+  padding-top: 0.85rem;
+  border-top: 1px solid var(--trait);
+}
+form.arbitrage .groupe {
+  display: flex;
+  gap: 0.4rem;
+  align-items: center;
+  flex: 0 1 auto;
+}
+form.arbitrage .groupe:nth-child(2) { flex: 1 1 16rem; }
+form.arbitrage .groupe:nth-child(3) { flex: 1 1 18rem; }
+form.arbitrage .groupe:nth-child(3) { margin-left: auto; }
+
+/* ---- Suivi du run --------------------------------------------------------- */
+
+/* `<progress>` natif, et non un div dont on reglerait la largeur : un attribut `style`
+   en ligne serait refuse par la CSP, et la barre resterait vide sans que rien ne le
+   signale. L'apparence par defaut differe d'un moteur a l'autre, d'ou les trois
+   selecteurs : `appearance: none` puis le fond, la valeur WebKit, la valeur Gecko. */
+.progression {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 0.5rem 0 0.75rem;
+}
 
 .progression progress {
   appearance: none;
   flex: 1 1 18rem;
-  height: 0.7rem;
+  height: 0.6rem;
   border: none;
-  border-radius: 4px;
+  border-radius: 999px;
   background: var(--trait);
   overflow: hidden;
 }
-.progression progress::-webkit-progress-bar { background: var(--trait); border-radius: 4px; }
-.progression progress::-webkit-progress-value { background: var(--accent); border-radius: 4px; }
-.progression progress::-moz-progress-bar { background: var(--accent); border-radius: 4px; }
+.progression progress::-webkit-progress-bar { background: var(--trait); border-radius: 999px; }
+.progression progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; }
+.progression progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
 .progression .etiquette { font-size: 0.875rem; font-variant-numeric: tabular-nums; }
 
 /* Les trois passes du run. Une liste ordonnee : c'est bien une suite d'etapes, et un
@@ -179,7 +433,7 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   flex-wrap: wrap;
   gap: 0.4rem 1.4rem;
   list-style: none;
-  margin: 0.5rem 0;
+  margin: 0.75rem 0 0.5rem;
   padding: 0;
   font-size: 0.875rem;
 }
@@ -188,17 +442,11 @@ button:hover { border-color: var(--accent); color: var(--accent); }
   content: "→";
   position: absolute;
   left: -1rem;
-  color: var(--trait);
+  color: var(--trait-fort);
 }
 .etapes li.faite { color: var(--bon); }
 .etapes li.faite::after { content: " ✓"; }
-.etapes li.courante { color: var(--texte); font-weight: 600; }
-
-/* La case du drapeau §4.6 : elle ouvre un traitement de donnees personnelles, elle ne
-   se glisse donc pas dans une ligne de formulaire ordinaire. */
-label.bascule { flex: 1 1 22rem; display: flex; align-items: center; gap: 0.5rem; cursor: pointer; }
-label.bascule input { width: 1.1rem; height: 1.1rem; accent-color: var(--alerte); }
-form.reglages :disabled { cursor: not-allowed; opacity: 0.6; }
+.etapes li.courante { color: var(--texte); font-weight: 650; }
 
 /* Lancer, arreter, regler : les seules commandes de l'interface qui agissent. */
 .commandes, .reglages {
@@ -208,18 +456,38 @@ form.reglages :disabled { cursor: not-allowed; opacity: 0.6; }
   gap: 0.75rem;
   margin-bottom: 0.75rem;
 }
-.commandes .discret, .reglages label { flex: 1 1 18rem; }
+.commandes .discret, .reglages label { flex: 1 1 20rem; }
 .reglages label { display: flex; align-items: center; gap: 0.5rem; }
 
-/* Ce qui merite d'etre lu avant d'agir, sans etre un refus. */
-.avis {
-  border-left: 3px solid var(--accent);
-  padding: 0.5rem 0.75rem;
-  margin-bottom: 1rem;
-}
+/* La case du drapeau des mobiles : elle ouvre un traitement de donnees personnelles,
+   elle ne se glisse donc pas dans une ligne de formulaire ordinaire. */
+label.bascule { flex: 1 1 22rem; display: flex; align-items: center; gap: 0.6rem; cursor: pointer; }
+label.bascule input { width: 1.1rem; height: 1.1rem; accent-color: var(--alerte); flex: 0 0 auto; }
 
 /* Les liens de page, rendus deux fois : au-dessus et au-dessous de la file. Une carte de
    revue est haute, et remonter chercher « suivante » apres avoir lu dix contacts est le
    genre de frottement qui fait abandonner une revue. */
-.pages { display: flex; flex-wrap: wrap; gap: 0.9rem; align-items: baseline; margin: 0.9rem 0; }
+.pages {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.9rem;
+  align-items: baseline;
+  margin: 1rem 0;
+  font-size: 0.9375rem;
+}
 .pages span { font-variant-numeric: tabular-nums; }
+
+/* ---- Ecrans etroits -------------------------------------------------------
+
+   Un telephone n'est pas la cible, mais l'outil s'ouvre dans le navigateur du poste :
+   une fenetre a demi-ecran est un cas courant, et les trois groupes d'arbitrage doivent
+   y rester distincts plutot que de s'empiler en un seul rang illisible. */
+
+@media (max-width: 40rem) {
+  header, .portee, main, footer { padding-left: 1rem; padding-right: 1rem; }
+  .portee .autres { margin-left: 0; }
+  form.arbitrage { gap: 0.6rem; }
+  form.arbitrage .groupe { flex: 1 1 100%; }
+  form.arbitrage .groupe:nth-child(3) { margin-left: 0; }
+  .contact .valeur { font-size: 1.05rem; }
+}

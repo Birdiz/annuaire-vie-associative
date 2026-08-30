@@ -22,13 +22,15 @@ import type { JobQueue } from "../jobs/queue.ts";
 import type { Counters } from "../metrics/counters.ts";
 import type { Clock } from "../clock.ts";
 import { lireAsset } from "./assets.ts";
-import { page, nombre } from "./rendu.ts";
-import type { EtatCollecte } from "./rendu.ts";
+import { page, nombre, octets, barrePortee } from "./rendu.ts";
+import type { EtatCollecte, Onglet } from "./rendu.ts";
 import {
+  amorceDuDepartement,
   departementParDefaut,
   departementsConnus,
   distributionRevue,
   fileRevue,
+  progressionAmorce,
   progressionDecouverte,
   progressionNotation,
   runsRecents,
@@ -49,7 +51,7 @@ import type {
   DonneesSynthese,
   Progression,
 } from "./vues/synthese.ts";
-import { estPhaseRun } from "../pipeline.ts";
+import { estPhaseRun, departementBienForme } from "../pipeline.ts";
 import { VERSION_SCORE } from "../normalisation/score.ts";
 import type { SurfacePilote } from "./pilote.ts";
 import { ecranRevue, fragmentFile } from "./vues/revue.ts";
@@ -214,6 +216,66 @@ export function verifierAcces(ctx: ContexteUi, requete: RequeteUi): ReponseUi | 
   );
 }
 
+/**
+ * Le departement affiche, et ce qu'il faut pour en changer.
+ *
+ * Resolu une fois par requete, puis promene tel quel : c'est ce qui permet a la barre de
+ * portee d'etre rendue au meme endroit sur les trois ecrans, et au departement de ne plus
+ * etre repete dans les libelles de boutons.
+ */
+export type Portee = {
+  departement: string;
+  departements: readonly string[];
+  /** Message quand le code saisi n'a pas la forme d'un departement. */
+  refus: string | undefined;
+};
+
+/**
+ * Lit le departement demande, le normalise, et refuse ce qui n'en a pas la forme.
+ *
+ * Le champ de la barre de portee est une saisie libre — c'est ce qui rend un departement
+ * jamais amorce atteignable — donc n'importe quoi peut arriver ici. Une valeur malformee
+ * n'est pas promenee d'ecran en ecran : on retombe sur le departement courant et on dit
+ * pourquoi. Le `pattern` du formulaire fait le meme controle cote navigateur, et ne
+ * dispense pas de celui-ci.
+ */
+function resoudrePortee(ctx: ContexteUi, requete: RequeteUi): Portee {
+  const brut = requete.requete.get("departement");
+  const demande = brut === null ? "" : brut.trim().toUpperCase();
+  const malforme = demande !== "" && !departementBienForme(demande);
+
+  return {
+    departement: departementParDefaut(ctx.db, malforme ? null : demande, ctx.departementSecours),
+    departements: departementsConnus(ctx.db),
+    refus: malforme
+      ? `« ${brut} » n'est pas un code de departement. Attendu : deux chiffres (35), ` +
+        "un chiffre et une lettre en Corse (2A), trois chiffres outre-mer (971)."
+      : undefined,
+  };
+}
+
+/** Une page complete, barre de portee comprise. Le seul endroit qui la rend. */
+function pageComplete(
+  ctx: ContexteUi,
+  portee: Portee,
+  vue: { titre: string; onglet: Onglet; contenu: string },
+): string {
+  return page({
+    titre: vue.titre,
+    onglet: vue.onglet,
+    departement: portee.departement,
+    version: ctx.version,
+    contenu: vue.contenu,
+    portee: barrePortee({
+      departement: portee.departement,
+      departements: portee.departements,
+      onglet: vue.onglet,
+      amorce: amorceDuDepartement(ctx.db, portee.departement),
+      refus: portee.refus,
+    }),
+  });
+}
+
 export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   const asset = requete.chemin.startsWith("/assets/") ? requete.chemin.slice("/assets/".length) : undefined;
   if (asset !== undefined) {
@@ -227,23 +289,11 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     };
   }
 
-  const departement = departementParDefaut(
-    ctx.db,
-    requete.requete.get("departement"),
-    ctx.departementSecours,
-  );
-  const departements = departementsConnus(ctx.db);
+  const portee = resoudrePortee(ctx, requete);
+  const departement = portee.departement;
 
   if (requete.methode === "GET" && requete.chemin === "/") {
-    return html(
-      page({
-        titre: "Synthese",
-        onglet: "synthese",
-        departement,
-        version: ctx.version,
-        contenu: syntheseComplete(ctx, departement, departements, donneesReglages(ctx)),
-      }),
-    );
+    return html(ecran(ctx, portee, donneesReglages(ctx)));
   }
 
   if (requete.methode === "GET" && requete.chemin === "/suivi") {
@@ -251,7 +301,7 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   }
 
   if (requete.methode === "GET" && requete.chemin === "/chiffres") {
-    return html(fragmentChiffres(donneesSynthese(ctx, departement, departements, donneesReglages(ctx))));
+    return html(fragmentChiffres(donneesSynthese(ctx, departement, donneesReglages(ctx))));
   }
 
   // Lancer et arreter. Rien n'est attendu ici : le pilote rend la main aussitot, et
@@ -277,40 +327,27 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     const statut = resultat.kind === "refus" ? 422 : 200;
     if (requete.entetes["hx-request"] === "true") return html(fragmentMobiles(donneesMobiles(ctx)), statut);
     if (resultat.kind === "refus") {
-      return html(
-        page({
-          titre: "Synthese",
-          onglet: "synthese",
-          departement,
-          version: ctx.version,
-          contenu: syntheseComplete(ctx, departement, departements, donneesReglages(ctx)),
-        }),
-        statut,
-      );
+      return html(ecran(ctx, portee, donneesReglages(ctx)), statut);
     }
     return redirection(`/?departement=${encodeURIComponent(departement)}`);
   }
 
   if (requete.methode === "POST" && requete.chemin === "/reglages") {
-    return enregistrerReglages(ctx, requete, departement, departements);
+    return enregistrerReglages(ctx, requete, portee);
   }
 
   if (requete.methode === "GET" && requete.chemin === "/revue") {
     return html(
-      page({
+      pageComplete(ctx, portee, {
         titre: "Revue",
         onglet: "revue",
-        departement,
-        version: ctx.version,
-        contenu: ecranRevue(
-          donneesRevue(ctx, departement, departements, undefined, requete.requete.get("page")),
-        ),
+        contenu: ecranRevue(donneesRevue(ctx, departement, undefined, requete.requete.get("page"))),
       }),
     );
   }
 
   if (requete.methode === "POST" && requete.chemin.startsWith("/revue/")) {
-    return arbitrage(ctx, requete, departement, departements);
+    return arbitrage(ctx, requete, portee);
   }
 
   if (requete.methode === "GET" && requete.chemin === "/export") {
@@ -322,14 +359,11 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
       avecRejetes,
     };
     return html(
-      page({
+      pageComplete(ctx, portee, {
         titre: "Export",
         onglet: "export",
-        departement,
-        version: ctx.version,
         contenu: ecranExport({
           departement,
-          departements,
           scoreMin,
           avecRejetes,
           lignes: compterLignes(ctx.db, options),
@@ -375,27 +409,24 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
 }
 
 /**
- * L'ecran de synthese au complet. Huit champs, ecrits deux fois a l'identique : la seule
- * chose qui variait entre les deux appels etait le bloc de reglages.
+ * La page de synthese au complet. Ecrite deux fois a l'identique : la seule chose qui
+ * variait entre les deux appels etait le bloc de reglages.
  */
-function syntheseComplete(
-  ctx: ContexteUi,
-  departement: string,
-  departements: readonly string[],
-  reglages: DonneesReglages,
-): string {
-  return ecranSynthese(donneesSynthese(ctx, departement, departements, reglages));
+function ecran(ctx: ContexteUi, portee: Portee, reglages: DonneesReglages): string {
+  return pageComplete(ctx, portee, {
+    titre: "Synthese",
+    onglet: "synthese",
+    contenu: ecranSynthese(donneesSynthese(ctx, portee.departement, reglages)),
+  });
 }
 
 function donneesSynthese(
   ctx: ContexteUi,
   departement: string,
-  departements: readonly string[],
   reglages: DonneesReglages,
 ): DonneesSynthese {
   return {
     departement,
-    departements,
     suivi: donneesSuivi(ctx, departement),
     reglages,
     mobiles: donneesMobiles(ctx),
@@ -468,6 +499,34 @@ function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progressi
   if (enCours === undefined || !estPhaseRun(enCours.phase)) return undefined;
   const departement = enCours.departement;
 
+  // L'amorce se comptait « sans decompte honnete », alors que la table `dump` porte
+  // l'offset atteint et la taille annoncee par le miroir : le denominateur existait, il
+  // n'etait pas lu. C'est aussi le seul endroit ou l'ecran peut dire que ce 1,25 Go
+  // n'est pas telecharge dans un fichier mais consomme au fil de l'eau.
+  if (enCours.phase === "amorce") {
+    const avance = progressionAmorce(ctx.db);
+    if (avance === undefined || avance.octetsLus === 0) {
+      return { phase: "amorce", avancement: undefined };
+    }
+    if (avance.octetsTotal === undefined) {
+      // Le miroir n'a pas annonce la taille : on dit ce qui est lu, sans barre.
+      return {
+        phase: "amorce",
+        avancement: undefined,
+      };
+    }
+    return {
+      phase: "amorce",
+      avancement: {
+        faits: avance.octetsLus,
+        total: avance.octetsTotal,
+        unite: "octets du registre national",
+        phrase: `${octets(avance.octetsLus)} sur ${octets(avance.octetsTotal)} lus`,
+        detail: "Le fichier est lu au fil de l'eau, jamais ecrit sur le disque.",
+      },
+    };
+  }
+
   if (enCours.phase === "decouverte") {
     const campagne = derniereCampagne(ctx.db, departement);
     const avance = campagne === undefined ? undefined : progressionDecouverte(ctx.db, departement, campagne);
@@ -478,6 +537,7 @@ function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progressi
         faits: avance.explorees,
         total: avance.communes,
         unite: "communes explorees",
+        phrase: undefined,
         // Sans denominateur : le nombre de pages grandit a chaque lien retenu, et
         // l'annoncer comme un reste a faire serait faux dans le sens le plus decevant.
         detail: `${nombre(avance.pagesVisitees)} pages visitees sur ${nombre(avance.pages)} planifiees a ce jour`,
@@ -494,6 +554,7 @@ function progressionDuRun(ctx: ContexteUi, runs: readonly LigneRun[]): Progressi
         faits: avance.notes,
         total: avance.contacts,
         unite: "contacts notes",
+        phrase: undefined,
         detail: undefined,
       },
     };
@@ -523,7 +584,6 @@ function distributionDuJour(ctx: ContexteUi, departement: string) {
 function donneesRevue(
   ctx: ContexteUi,
   departement: string,
-  departements: readonly string[],
   refus: string | undefined,
   pageDemandee: string | null,
 ) {
@@ -537,7 +597,6 @@ function donneesRevue(
 
   return {
     departement,
-    departements,
     file: fileRevue(ctx.db, departement, TAILLE_FILE, (page - 1) * TAILLE_FILE),
     distribution,
     refus,
@@ -574,12 +633,7 @@ function reponseSuivi(ctx: ContexteUi, requete: RequeteUi, departement: string):
  * L'URL de contact (§4.4). Le refus est rendu sur place, jamais renvoye dans l'URL : la
  * valeur saisie y passerait, et l'historique du navigateur la garderait.
  */
-function enregistrerReglages(
-  ctx: ContexteUi,
-  requete: RequeteUi,
-  departement: string,
-  departements: readonly string[],
-): ReponseUi {
+function enregistrerReglages(ctx: ContexteUi, requete: RequeteUi, portee: Portee): ReponseUi {
   const saisie = new URLSearchParams(requete.corps).get("contactUrl") ?? "";
   const resultat = ctx.reglages.enregistrer(saisie);
   const erreur = "erreur" in resultat ? resultat.erreur : undefined;
@@ -590,17 +644,10 @@ function enregistrerReglages(
   const statut = erreur === undefined ? 200 : 422;
 
   if (requete.entetes["hx-request"] === "true") return html(fragmentReglages(donnees), statut);
-  if (erreur === undefined) return redirection(`/?departement=${encodeURIComponent(departement)}`);
-  return html(
-    page({
-      titre: "Synthese",
-      onglet: "synthese",
-      departement,
-      version: ctx.version,
-      contenu: syntheseComplete(ctx, departement, departements, donnees),
-    }),
-    statut,
-  );
+  if (erreur === undefined) {
+    return redirection(`/?departement=${encodeURIComponent(portee.departement)}`);
+  }
+  return html(ecran(ctx, portee, donnees), statut);
 }
 
 /**
@@ -609,22 +656,16 @@ function enregistrerReglages(
  * page rejouerait l'arbitrage. Un refus, lui, est rendu sur place dans les deux cas : le
  * faire voyager dans l'URL y ferait passer la valeur saisie.
  */
-function arbitrage(
-  ctx: ContexteUi,
-  requete: RequeteUi,
-  departement: string,
-  departements: readonly string[],
-): ReponseUi {
+function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): ReponseUi {
+  const departement = portee.departement;
   const htmx = requete.entetes["hx-request"] === "true";
   const rendre = (refus: string | undefined, statut: number): ReponseUi => {
-    const donnees = donneesRevue(ctx, departement, departements, refus, requete.requete.get("page"));
+    const donnees = donneesRevue(ctx, departement, refus, requete.requete.get("page"));
     if (htmx) return html(fragmentFile(donnees), statut);
     return html(
-      page({
+      pageComplete(ctx, portee, {
         titre: "Revue",
         onglet: "revue",
-        departement,
-        version: ctx.version,
         contenu: ecranRevue(donnees),
       }),
       statut,
