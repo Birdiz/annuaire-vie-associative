@@ -21,7 +21,10 @@ import { nomsAssets } from "../src/ui/assets.ts";
  */
 
 const RACINE = dirname(fileURLToPath(new URL("../package.json", import.meta.url)));
-const GARDE_RESEAU = fileURLToPath(new URL("./helpers/pas-de-reseau.ts", import.meta.url));
+// Une URL `file://`, et non un chemin : `--import` traite son argument comme un
+// specifieur de module, et sous Windows un chemin absolu commence par `D:\\`, que
+// Node lit comme un schema d'URL inconnu — ERR_UNSUPPORTED_ESM_URL_SCHEME.
+const GARDE_RESEAU = new URL("./helpers/pas-de-reseau.ts", import.meta.url).href;
 
 let dossier: string | undefined;
 let bundle: string | undefined;

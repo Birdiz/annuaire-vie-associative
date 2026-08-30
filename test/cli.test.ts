@@ -10,7 +10,10 @@ import { makeTempDir } from "./helpers/tmp.ts";
 const CLI = fileURLToPath(new URL("../src/bin.ts", import.meta.url));
 // Le garde-fou anti-reseau vit dans le processus de test ; ces commandes s'executent
 // dans un sous-processus, qui doit donc le precharger a son tour.
-const GARDE_RESEAU = fileURLToPath(new URL("./helpers/pas-de-reseau.ts", import.meta.url));
+// Une URL `file://`, et non un chemin : `--import` traite son argument comme un
+// specifieur de module, et sous Windows un chemin absolu commence par `D:\\`, que
+// Node lit comme un schema d'URL inconnu — ERR_UNSUPPORTED_ESM_URL_SCHEME.
+const GARDE_RESEAU = new URL("./helpers/pas-de-reseau.ts", import.meta.url).href;
 
 type Resultat = { code: number; stdout: string; stderr: string };
 

@@ -97,7 +97,10 @@ function preparer(t: TestContext): { dbFile: string; cacheDir: string; urls: str
 // precharger a son tour. La fixture lit le cache disque et n'emet rien — mais elle
 // importe `src/http/cache.ts` et vit a cote du crawl : la frontiere est celle
 // d'aujourd'hui, pas une garantie.
-const GARDE_RESEAU = fileURLToPath(new URL("../helpers/pas-de-reseau.ts", import.meta.url));
+// Une URL `file://`, et non un chemin : `--import` traite son argument comme un
+// specifieur de module, et sous Windows un chemin absolu commence par `D:\\`, que
+// Node lit comme un schema d'URL inconnu — ERR_UNSUPPORTED_ESM_URL_SCHEME.
+const GARDE_RESEAU = new URL("../helpers/pas-de-reseau.ts", import.meta.url).href;
 
 type Run = { code: number | null; signal: NodeJS.Signals | null };
 

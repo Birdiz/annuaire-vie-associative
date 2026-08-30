@@ -12,7 +12,10 @@ import type { Handler, TestServer } from "../helpers/server.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
 
 const WORKER = fileURLToPath(new URL("../fixtures/crawl-worker.ts", import.meta.url));
-const GARDE_RESEAU = fileURLToPath(new URL("../helpers/pas-de-reseau.ts", import.meta.url));
+// Une URL `file://`, et non un chemin : `--import` traite son argument comme un
+// specifieur de module, et sous Windows un chemin absolu commence par `D:\\`, que
+// Node lit comme un schema d'URL inconnu — ERR_UNSUPPORTED_ESM_URL_SCHEME.
+const GARDE_RESEAU = new URL("../helpers/pas-de-reseau.ts", import.meta.url).href;
 const LEASE_MS = 800;
 const CAMPAGNE = "2026-08-18";
 

@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import { existsSync } from "node:fs";
 import { resolveDataDir, buildPaths, resolvePaths, ensurePaths } from "../src/paths.ts";
 import type { Environment } from "../src/paths.ts";
@@ -45,11 +45,21 @@ test("une variable vide est traitee comme absente", () => {
 });
 
 test("les chemins derives tiennent tous sous le repertoire de donnees", () => {
-  const paths = buildPaths("/data");
-  for (const p of Object.values(paths)) {
-    assert.ok(p.startsWith("/data"), `${p} sort du repertoire de donnees`);
+  const racine = resolve("/data");
+  const paths = buildPaths(racine);
+
+  // `relative` plutot que `startsWith` : le prefixe litteral « /data » comparait une
+  // chaine a separateurs POSIX au resultat de `join`, qui rend « \data\... » sous
+  // Windows. C'est aussi le seul controle de confinement qui ne se laisse pas duper par
+  // un « /data-autre » ou par un « .. » au milieu du chemin.
+  for (const chemin of Object.values(paths)) {
+    const rel = relative(racine, chemin);
+    assert.ok(
+      rel === "" || (!rel.startsWith("..") && !isAbsolute(rel)),
+      `${chemin} sort du repertoire de donnees`,
+    );
   }
-  assert.equal(paths.dbFile, join("/data", "annuaire.sqlite"));
+  assert.equal(paths.dbFile, join(racine, "annuaire.sqlite"));
 });
 
 test("ensurePaths cree l'arborescence et se rejoue sans erreur", (t) => {
