@@ -77,6 +77,15 @@ Ce qui reste vérifié sous Windows **à chaque push**, c'est le binaire lui-mê
 lancement, ouverture de la base et de l'interface. C'était le but du poste Windows ; la suite
 complète en était un ajout, pas la raison.
 
+**Le premier passage sous Windows a payé sa place immédiatement.** Trente-six tests y sont tombés
+d'un coup — aucun sur une assertion, tous sur le ménage du répertoire temporaire. Les hooks `after`
+de `node:test` s'exécutent dans leur ordre d'enregistrement : celui du répertoire est posé par
+`makeTempDir`, donc avant le `db.close()` que l'appelant enregistre juste après. Linux délie sans
+broncher un fichier encore ouvert, Windows répond `EPERM`. Le défaut était là depuis le lot 1, vert
+sur toutes les machines de développement, et il fallait exactement ce job pour le voir. Le ménage se
+fait désormais en deux temps : une tentative à la fin du test, un balayage à la sortie du process —
+donc après toutes les fermetures — et aucune ligne à changer dans les quarante tests concernés.
+
 ## Conséquences
 
 - L'utilisateur Windows télécharge un fichier depuis la page Releases. Rien d'autre.
