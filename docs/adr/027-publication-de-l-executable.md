@@ -37,13 +37,45 @@ et attaché à une release.**
 - **Publication sur tag `v*` seulement.** Les autres branches s'arrêtent à l'artefact du
   run, téléchargeable trente jours. Une release est un geste délibéré, pas une
   conséquence d'un commit.
-- **La suite complète tourne dans un job distinct**, sur Windows elle aussi. Séparée à
+- **La suite complète tourne dans des jobs distincts** de la construction. Séparée à
   dessein : un test rouge n'empêche pas d'obtenir un binaire à inspecter, mais il bloque la
-  release, qui dépend des deux jobs.
+  release, qui dépend de tous les jobs.
 - **`gh release create`, pas d'action tierce.** Le `gh` des runners GitHub suffit ; la
   règle de parcimonie qui vaut pour les dépendances runtime vaut aussi pour les
   dépendances de chaîne de construction, où une action tierce est du code exécuté avec un
   jeton d'écriture sur le dépôt.
+
+## Où tourne la suite de tests — mesure, puis correction
+
+Le premier jet faisait tourner la suite complète sur Windows à chaque push, au motif que
+c'est le seul système où le produit est distribué sans Node. La mesure a tranché autrement :
+
+| | Durée |
+|---|---|
+| Construction + fumée, Windows | **55 s** |
+| Suite complète, Linux | **19 s** |
+| Suite complète, Windows | **> 11 min, sans avoir fini** |
+
+Le coût n'est pas dans les assertions, il est dans les process. 58 fichiers de test, donc 58
+démarrages de Node avec retrait des types ; `test/cli.test.ts` y ajoute à lui seul **60
+lancements de la CLI en sous-processus**, et cinq autres fichiers en lancent d'autres pour
+vérifier la reprise après `kill -9`. Sous Linux, ces 118 démarrages coûtent 19 s ; Windows
+les multiplie par cinq environ. Deux pistes ont été essayées et écartées, chiffres à
+l'appui : `--experimental-test-isolation=none` **ralentit** (39 s contre 19, la parallélisation
+entre fichiers étant perdue), et `NODE_COMPILE_CACHE` ne gagne rien de mesurable (18,1 s
+contre 17,9 s).
+
+D'où la répartition retenue :
+
+- **La suite tourne sur `ubuntu-latest` à chaque push.** C'est le retour qu'attend un
+  développeur, il tourne là où il est rapide.
+- **Elle tourne aussi sous Windows, sur `main` et sur les tags**, découpée en trois tranches
+  par `--test-shard`. Elle garde la porte de la release, sans être payée à chaque commit
+  d'une branche de travail.
+
+Ce qui reste vérifié sous Windows **à chaque push**, c'est le binaire lui-même : construction,
+lancement, ouverture de la base et de l'interface. C'était le but du poste Windows ; la suite
+complète en était un ajout, pas la raison.
 
 ## Conséquences
 

@@ -114,13 +114,12 @@ jobs:
           if-no-files-found: error
           retention-days: 30
 
+  # La suite complete, a chaque push : c'est le retour que le developpeur attend, donc il
+  # tourne la ou il est rapide. 19 s sous Linux, contre plus de onze minutes sous Windows —
+  # mesure faite, ce n'est pas une supposition (ADR-027).
   suite:
-    # La suite complete sur Windows, dans son propre job : ce systeme est le seul ou le
-    # produit est distribue sans Node, et donc le seul ou une regression de chemins ou de
-    # fins de ligne passerait inapercue. Separe de `construire` a dessein — un test rouge
-    # ici ne doit pas priver d'un binaire a inspecter, mais il interdit la release.
-    runs-on: windows-latest
-    timeout-minutes: 30
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -130,11 +129,32 @@ jobs:
       - run: npm ci
       - run: npm test
 
+  # La meme suite sous Windows, mais seulement la ou elle paie : `main` et les tags, dont
+  # elle garde la porte. Le cout vient du nombre de process — 58 fichiers de test, plus 60
+  # lancements de la CLI en sous-processus, chacun redemarrant Node et retirant les types.
+  # Windows multiplie ce cout par cinq ; `--test-shard` le repartit sur trois runners.
+  suite-windows:
+    if: github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/tags/v')
+    runs-on: windows-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        tranche: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          cache: npm
+      - run: npm ci
+      - run: node --test --test-shard=${{ matrix.tranche }}/3 --import ./test/helpers/pas-de-reseau.ts "test/**/*.test.ts"
+
   publier:
     # Seuls les tags `v*` publient. Les autres branches s'arretent a l'artefact de build,
     # telechargeable depuis la page du run pendant trente jours.
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: [construire, suite]
+    needs: [construire, suite, suite-windows]
     runs-on: ubuntu-latest
     permissions:
       contents: write
