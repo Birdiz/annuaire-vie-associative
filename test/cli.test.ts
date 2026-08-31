@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import type { TestContext } from "node:test";
 import { makeTempDir } from "./helpers/tmp.ts";
 import { SIGNAUX_POSIX } from "./helpers/plateforme.ts";
+import { VERSION } from "../src/version.ts";
 
 const CLI = fileURLToPath(new URL("../src/bin.ts", import.meta.url));
 // Le garde-fou anti-reseau vit dans le processus de test ; ces commandes s'executent
@@ -304,7 +305,9 @@ test("metrics --json produit un document exploitable sans journal parasite", asy
   assert.equal(code, 0);
 
   const document = JSON.parse(stdout) as { version: string; runs: { run: number; departement: string }[] };
-  assert.equal(document.version, "0.1.0");
+  // Compare a la constante, pas a un litteral : fige en dur, cette assertion casse a
+  // chaque montee de version alors qu'elle ne dit rien de plus.
+  assert.equal(document.version, VERSION);
   assert.equal(document.runs[0]?.departement, "35");
 });
 

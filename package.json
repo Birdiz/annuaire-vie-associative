@@ -1,6 +1,6 @@
 {
   "name": "annuaire-vie-associative",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "description": "Constitution d'annuaires de la vie associative locale a partir des donnees ouvertes.",
   "private": true,
   "type": "module",
