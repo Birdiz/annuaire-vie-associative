@@ -28,6 +28,7 @@ import { mesurerCouverture } from "./metrics/couverture.ts";
 import { ETATS_JOB } from "./jobs/queue.ts";
 import { messageDe } from "./log.ts";
 import { oublier } from "./oubli.ts";
+import { reinitialiser } from "./reinitialisation.ts";
 import type { Portee } from "./oubli.ts";
 import { formaterOctets } from "./texte.ts";
 
@@ -64,6 +65,7 @@ Commandes
   purge                   Force la purge des donnees de plus de trois ans
   fetch <url>             Recupere une URL via le client conforme (diagnostic)
   oublier --contact <v>   Efface une donnee et l'empeche de revenir (art. 17 et 21)
+  reinitialiser           Efface tout un departement pour le recollecter a neuf
           | --domaine <d> | --commune <insee>   --motif <texte> obligatoire
 
 Options de run
@@ -96,6 +98,11 @@ Options d'export
                           (entre 0 et 1, par exemple 0.6)
   --avec-rejetes          Sort aussi les contacts qu'un humain a rejetes en revue,
                           exclus par defaut
+
+Options de reinitialisation
+  --simulation            Montre ce qui serait efface, sans rien ecrire
+  --confirmer             Exigee pour effacer reellement : l'operation est
+                          irreversible et ne demande pas de confirmation au clavier
 
 Options d'oubli
   --contact <valeur>      Efface cette adresse ou ce numero, sous sa forme normalisee
@@ -170,6 +177,8 @@ export async function main(argv: readonly string[]): Promise<number> {
         domaine: { type: "string" },
         commune: { type: "string" },
         motif: { type: "string" },
+        simulation: { type: "boolean", default: false },
+        confirmer: { type: "boolean", default: false },
         port: { type: "string" },
         "sans-navigateur": { type: "boolean", default: false },
         tout: { type: "boolean", default: false },
@@ -287,6 +296,13 @@ export async function main(argv: readonly string[]): Promise<number> {
         return commandeDumps(ouvrir, values.json === true);
       case "fetch":
         return await commandeFetch(ouvrir, positionals[1]);
+      case "reinitialiser":
+        return commandeReinitialiser(ouvrir, {
+          departement: values.departement,
+          simulation: values.simulation === true,
+          confirmer: values.confirmer === true,
+          json: values.json === true,
+        });
       case "oublier":
         return commandeOublier(ouvrir, {
           contact: values.contact,
@@ -667,6 +683,87 @@ async function commandeRun(
  * personne ne s'en apercevrait. C'est l'exclusion qui est l'objet durable ; la
  * suppression n'en est que la consequence immediate.
  */
+/**
+ * Efface un departement pour le recollecter a neuf.
+ *
+ * **Aucune question au clavier.** L'outil tourne aussi dans un conteneur, dans un
+ * executable lance par double-clic et dans un script : une confirmation interactive y
+ * serait tantot impossible, tantot silencieusement acceptee. Le drapeau explicite est le
+ * seul garde-fou qui vaille dans les trois cas, et `--simulation` permet de voir avant.
+ *
+ * Le refus pendant une collecte n'est pas de la prudence excessive : le worker ecrit des
+ * communes et des pages en continu, et effacer sous lui laisserait des lignes recreees
+ * juste apres la transaction — un departement « efface » qui ne l'est pas.
+ */
+function commandeReinitialiser(
+  ouvrir: () => App,
+  options: { departement: string | undefined; simulation: boolean; confirmer: boolean; json: boolean },
+): number {
+  if (!exigerDepartement(options.departement, "reinitialiser")) return 2;
+  const departement = options.departement.trim().toUpperCase();
+
+  if (!options.simulation && !options.confirmer) {
+    process.stderr.write(
+      `Cette commande efface definitivement toutes les donnees du departement ${departement}.\n\n` +
+        `Voyez d'abord ce qui partirait :\n` +
+        `  annuaire reinitialiser --departement ${departement} --simulation\n\n` +
+        `Puis confirmez :\n` +
+        `  annuaire reinitialiser --departement ${departement} --confirmer\n`,
+    );
+    return 2;
+  }
+
+  const app = ouvrir();
+  try {
+    const enCours = app.db
+      .prepare("SELECT id FROM run WHERE departement = ? AND statut = 'en_cours' LIMIT 1")
+      .get(departement) as { id?: number } | undefined;
+    if (enCours !== undefined && !options.simulation) {
+      process.stderr.write(
+        `Une collecte est ouverte sur le departement ${departement} (collecte n° ${enCours.id}).\n` +
+          "Attendez sa fin ou arretez-la : effacer pendant qu'elle ecrit laisserait des lignes\n" +
+          "recreees juste apres.\n",
+      );
+      return 1;
+    }
+
+    const bilan = reinitialiser(app.db, app.counters, departement, {
+      simulation: options.simulation,
+      supprimerCache: (chemin) => app.cache.supprimerParChemin(chemin),
+    });
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify(bilan, null, 2)}\n`);
+      return 0;
+    }
+
+    const verbe = bilan.simulation ? "seraient effaces" : "effaces";
+    process.stdout.write(
+      [
+        `Departement ${departement} — ${bilan.simulation ? "simulation, rien n'a ete ecrit" : "efface"}`,
+        `  communes      ${bilan.communes}`,
+        `  associations  ${bilan.associations}`,
+        `  contacts      ${bilan.contacts}`,
+        `  pages         ${bilan.pages}`,
+        `  collectes     ${bilan.runs}`,
+        // La ligne de cache n'a pas de sens en simulation : rien n'a ete efface.
+        ...(bilan.simulation ? [] : [`  cache HTTP    ${bilan.entreesCache} entrees`]),
+        "",
+        `Ces elements ${verbe}. Ne sont pas touches : les exclusions inscrites par`,
+        "« oublier », qui doivent survivre a toute collecte, le registre national deja",
+        "lu, et les verdicts MX, partages entre departements.",
+        "",
+        bilan.simulation
+          ? `Pour effacer : annuaire reinitialiser --departement ${departement} --confirmer`
+          : `Pour recollecter : annuaire run --departement ${departement}`,
+      ].join("\n") + "\n",
+    );
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
 function commandeOublier(
   ouvrir: () => App,
   options: {

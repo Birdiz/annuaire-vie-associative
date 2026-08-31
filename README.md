@@ -194,6 +194,7 @@ npm run annuaire -- --help
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |
 | `requeue <id\|cle>` | Remet en attente un job terminé, écarté ou mort |
 | `purge` | Force la purge des données de plus de trois ans |
+| `reinitialiser --departement <dd>` | Efface tout un département pour le recollecter à neuf (`--simulation`, `--confirmer`) |
 | `fetch <url>` | Récupère une URL via le client conforme (diagnostic) |
 | `oublier --contact\|--domaine\|--commune <v> --motif <texte>` | Efface une donnée et l'empêche de revenir (art. 17 et 21) |
 
@@ -203,7 +204,7 @@ double-clic. `npx` et l'image Docker impriment l'aide.
 ## Développer
 
 ```bash
-npm run check   # typecheck strict + 577 tests
+npm run check   # typecheck strict + 590 tests
 npm test        # tests seuls
 npm run demo    # le pipeline complet sur un faux site de mairie, hors ligne
 ```
