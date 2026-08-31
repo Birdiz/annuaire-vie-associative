@@ -1,6 +1,6 @@
 # ADR-031 — Réinitialiser un département, sans lever les exclusions
 
-Statut : acceptée — 2026-08-30
+Statut : acceptée — 2026-08-30, **révisée le même jour** (voir « Révision »)
 
 ## Contexte
 
@@ -17,7 +17,8 @@ qu'on cherche : une collecte neuve.
 
 ## Décision
 
-Une commande `annuaire reinitialiser --departement <dd>`, et **rien dans l'interface**.
+Une commande `annuaire reinitialiser --departement <dd>`, et — après révision — un bloc
+dédié sur l'écran de synthèse.
 
 **Ce à quoi elle ne touche pas** est le cœur de la décision, et se lit dans l'ordre
 d'importance :
@@ -69,11 +70,44 @@ raison.
   C'est ce qu'attend l'invariant 9 d'une commande relancée après interruption.
 - Les suppressions en base tiennent dans une transaction. Un département à moitié effacé
   ferait repartir une collecte sur une base incohérente.
-- **Rien dans l'interface, et c'est délibéré.** Un bouton « tout effacer » à côté du bouton
-  de lancement, dans un outil dont les utilisateurs sont des agents de collectivité, est un
-  piège. L'opération relève de la mise au point, pas de l'usage courant ; elle reste donc
-  là où l'on sait ce qu'on fait. Si le besoin apparaît côté écran, il devra passer par
-  autre chose qu'un bouton — et par sa propre décision.
 - La collecte suivante relit le registre national en entier pour ce département, puisque
   `ouvrirDump` ne reprend qu'une ligne `en_cours`. Réinitialiser ne change rien à ce coût,
   qui existait déjà pour tout nouveau département.
+
+## Révision — le même geste à l'écran
+
+Cette décision excluait d'abord toute exposition dans l'interface : « un bouton *tout
+effacer* à côté du bouton de lancement, dans un outil dont les utilisateurs sont des agents
+de collectivité, est un piège ». Le raisonnement portait sur **un bouton qui efface au
+clic**. Il ne vaut plus dès lors que le geste se fait en deux temps.
+
+Le bloc de l'écran de synthèse reprend donc exactement la mécanique de la ligne de commande,
+et pour les mêmes raisons :
+
+- **Le premier clic ne fait que compter.** Il affiche ce qui partirait — communes,
+  associations, contacts, pages, collectes — et, à côté, **ce qui reste** : les effacements
+  déjà demandés par des personnes, le registre national, les autres départements. Montrer
+  ce qui part sans dire ce qui survit serait mentir par omission, en particulier sur le
+  droit à l'effacement.
+- **Le second clic seul supprime**, sous un libellé qui nomme le département.
+- **Pas de `confirm()`.** La CSP est `default-src 'self'` : aucun script en ligne ne
+  s'exécute. C'est une contrainte heureuse — une boîte de dialogue du navigateur est
+  précisément ce qu'on renvoie sans lire, là où un aller-retour serveur impose un écran.
+
+Deux points de mise en œuvre qui ne sont pas des détails :
+
+- **Le bloc vit hors du suivi**, qui se remplace toutes les deux secondes (ADR-024). Un
+  écran de confirmation qui disparaît pendant qu'on le lit serait la meilleure façon de
+  faire cliquer sans comprendre.
+- **L'état vit dans le fragment rendu, pas en mémoire.** htmx remplace le bloc par la
+  réponse : la réponse *est* l'état. Un rechargement de page revient donc au repos, ce qui
+  est le sens de lecture le plus sûr pour une opération irréversible. Rien ne lie les deux
+  requêtes — l'onglet a pu rester ouvert une heure — donc **le décompte est refait à la
+  confirmation**, et le garde-fou de la collecte ouverte est revu aux deux temps : une
+  collecte a pu démarrer entre les deux écrans, et c'est l'état au moment d'effacer qui
+  compte. Un test le vérifie en démarrant une collecte entre la simulation et la
+  confirmation.
+
+Le bloc est placé en bas de l'écran, loin du bouton de lancement, dans un encadré à part.
+La couleur d'alerte est réservée au moment où l'on montre ce qui va partir, pas à
+l'invitation à regarder.

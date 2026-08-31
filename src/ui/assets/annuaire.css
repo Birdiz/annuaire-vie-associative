@@ -551,3 +551,38 @@ label.bascule input { width: 1.1rem; height: 1.1rem; accent-color: var(--alerte)
 }
 .faq dt:first-child { margin-top: 0; padding-top: 0; border-top: none; }
 .faq dd { margin: 0.3rem 0 0; color: var(--discret); }
+
+/* ---- Repartir de zero -----------------------------------------------------
+
+   Une operation irreversible n'a pas sa place a cote du bouton de lancement : elle est
+   en bas de page, dans un encadre qui se distingue sans crier. La couleur d'alerte est
+   reservee au moment ou l'on montre ce qui va partir, pas a l'invitation a regarder. */
+
+.zone-sensible {
+  border: 1px solid var(--trait-fort);
+  border-radius: var(--rayon);
+  padding: 1rem 1.15rem;
+  background: var(--fond-carte);
+  max-width: 72ch;
+}
+
+.zone-sensible .commandes { margin-bottom: 0; }
+.zone-sensible .commandes + .commandes { margin-top: 0.5rem; }
+
+/* Ce qui part, et ce qui reste : deux listes, et la seconde rassure autant que la
+   premiere avertit. Les donner l'une sans l'autre serait mentir par omission. */
+.zone-sensible .bilan, .zone-sensible .reste {
+  margin: 0.5rem 0 1rem;
+  padding-left: 1.25rem;
+  font-size: 0.9375rem;
+}
+.zone-sensible .bilan li { margin-bottom: 0.2rem; }
+.zone-sensible .reste {
+  color: var(--discret);
+  border-left: 3px solid var(--bon);
+  list-style: none;
+  padding: 0.5rem 0.75rem;
+  border-radius: 0 var(--rayon) var(--rayon) 0;
+}
+.zone-sensible .reste li { margin-bottom: 0.35rem; }
+.zone-sensible .reste li:last-child { margin-bottom: 0; }

@@ -30,6 +30,8 @@ import type { DistributionNormalisation } from "../../normalisation/rejeu.ts";
 import type { Couverture } from "../../metrics/couverture.ts";
 import type { Dormance } from "../../metrics/dormance.ts";
 import type { JobState } from "../../jobs/queue.ts";
+import { fragmentReinitialisation } from "./reinitialisation.ts";
+import type { DonneesReinitialisation } from "./reinitialisation.ts";
 import { ETATS_JOB } from "../../jobs/queue.ts";
 
 /**
@@ -109,6 +111,8 @@ export type DonneesReglages = {
 
 export type DonneesSynthese = {
   departement: string;
+  /** Hors du suivi : un ecran de confirmation ne doit pas disparaitre en le lisant. */
+  reinitialisation: DonneesReinitialisation;
   suivi: DonneesSuivi;
   reglages: DonneesReglages;
   mobiles: DonneesMobiles;
@@ -402,6 +406,11 @@ ${fragmentSuivi(donnees.suivi)}
 <section id="chiffres" hx-get="/chiffres?departement=${encodeURIComponent(donnees.departement)}"
          hx-trigger="every 10s" hx-swap="innerHTML">
 ${fragmentChiffres(donnees)}
+</section>
+
+<h2>Repartir de zéro</h2>
+<section id="reinitialisation" class="zone-sensible">
+${fragmentReinitialisation(donnees.reinitialisation)}
 </section>
 `;
 }

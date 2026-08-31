@@ -57,6 +57,9 @@ import type { SurfacePilote } from "./pilote.ts";
 import { ecranRevue, fragmentFile } from "./vues/revue.ts";
 import { ecranExport } from "./vues/export.ts";
 import { ecranAide } from "./vues/aide.ts";
+import { fragmentReinitialisation } from "./vues/reinitialisation.ts";
+import type { DonneesReinitialisation } from "./vues/reinitialisation.ts";
+import { reinitialiser } from "../reinitialisation.ts";
 import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts";
 import { distributionNormalisation } from "../normalisation/rejeu.ts";
 import { mesurerCouverture } from "../metrics/couverture.ts";
@@ -338,6 +341,13 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     return redirection(`/?departement=${encodeURIComponent(departement)}`);
   }
 
+  // Repartir de zero, en deux temps. La reponse *est* l'etat : htmx remplace le bloc,
+  // et un rechargement de page revient au repos — le sens de lecture le plus sur pour une
+  // operation irreversible.
+  if (requete.methode === "POST" && requete.chemin.startsWith("/reinitialiser")) {
+    return reinitialisation(ctx, requete, portee);
+  }
+
   if (requete.methode === "POST" && requete.chemin === "/reglages") {
     return enregistrerReglages(ctx, requete, portee);
   }
@@ -433,11 +443,16 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
  * La page de synthese au complet. Ecrite deux fois a l'identique : la seule chose qui
  * variait entre les deux appels etait le bloc de reglages.
  */
-function ecran(ctx: ContexteUi, portee: Portee, reglages: DonneesReglages): string {
+function ecran(
+  ctx: ContexteUi,
+  portee: Portee,
+  reglages: DonneesReglages,
+  reinit?: DonneesReinitialisation,
+): string {
   return pageComplete(ctx, portee, {
     titre: "Synthese",
     onglet: "synthese",
-    contenu: ecranSynthese(donneesSynthese(ctx, portee.departement, reglages)),
+    contenu: ecranSynthese(donneesSynthese(ctx, portee.departement, reglages, reinit)),
   });
 }
 
@@ -445,9 +460,17 @@ function donneesSynthese(
   ctx: ContexteUi,
   departement: string,
   reglages: DonneesReglages,
+  reinit?: DonneesReinitialisation,
 ): DonneesSynthese {
   return {
     departement,
+    reinitialisation: reinit ?? {
+      departement,
+      simulation: undefined,
+      fait: undefined,
+      collecteEnCours: etatCollecte(ctx).kind !== "inactif",
+      refus: undefined,
+    },
     suivi: donneesSuivi(ctx, departement),
     reglages,
     mobiles: donneesMobiles(ctx),
@@ -648,6 +671,62 @@ function bornerPage(demandee: string | null, pages: number): number {
 function reponseSuivi(ctx: ContexteUi, requete: RequeteUi, departement: string): ReponseUi {
   if (requete.entetes["hx-request"] === "true") return html(fragmentSuivi(donneesSuivi(ctx, departement)));
   return redirection(`/?departement=${encodeURIComponent(departement)}`);
+}
+
+/**
+ * Repartir de zero, en deux temps : compter, puis effacer.
+ *
+ * **Le decompte est refait a la confirmation**, et pas repris du fragment precedent. Rien
+ * ne lie les deux requetes — l'onglet a pu rester ouvert une heure — et c'est l'etat de la
+ * base au moment d'effacer qui compte, pas celui qu'on a montre.
+ *
+ * Le garde-fou de la collecte ouverte est verifie **aux deux temps** : le montrer a la
+ * simulation evite un ecran de confirmation qui ne mene nulle part, le revoir a la
+ * confirmation est ce qui protege reellement — une collecte a pu demarrer entre les deux.
+ */
+function reinitialisation(ctx: ContexteUi, requete: RequeteUi, portee: Portee): ReponseUi {
+  const departement = portee.departement;
+  const enCours = etatCollecte(ctx).kind !== "inactif";
+
+  const rendre = (donnees: Parameters<typeof fragmentReinitialisation>[0], statut = 200): ReponseUi => {
+    if (requete.entetes["hx-request"] === "true") return html(fragmentReinitialisation(donnees), statut);
+    // Sans htmx, on rend la page entiere : le bloc y porte le meme etat.
+    return html(ecran(ctx, portee, donneesReglages(ctx), donnees), statut);
+  };
+
+  const repos = {
+    departement,
+    simulation: undefined,
+    fait: undefined,
+    collecteEnCours: enCours,
+    refus: undefined,
+  };
+
+  if (requete.chemin === "/reinitialiser/annuler") return rendre(repos);
+
+  if (requete.chemin === "/reinitialiser") {
+    if (enCours) return rendre(repos);
+    return rendre({ ...repos, simulation: reinitialiser(ctx.db, ctx.counters, departement, { simulation: true }) });
+  }
+
+  if (requete.chemin === "/reinitialiser/confirmer") {
+    if (enCours) {
+      return rendre(
+        {
+          ...repos,
+          refus:
+            "Une collecte a démarré entre-temps : rien n'a été effacé. Arrêtez-la, ou attendez sa fin.",
+        },
+        422,
+      );
+    }
+    const bilan = reinitialiser(ctx.db, ctx.counters, departement, {
+      supprimerCache: ctx.supprimerCache,
+    });
+    return rendre({ ...repos, fait: bilan });
+  }
+
+  return texte("Introuvable.\n", 404);
 }
 
 /**

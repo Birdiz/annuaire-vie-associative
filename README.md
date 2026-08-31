@@ -159,6 +159,11 @@ abstient) :
   fait baisser leur note. Valider, rejeter, corriger. Une correction ne réécrit jamais ce qui a été
   lu ([ADR-021](docs/adr/021-correction-en-revue.md)).
 - **Export** — le même CSV que `annuaire exporter`, sans variante propre à l'interface.
+- **Repartir de zéro** — en bas de l'écran de synthèse, un bloc efface toutes les données du
+  département pour le recollecter à neuf. **En deux temps** : le premier clic ne fait que compter
+  et affiche ce qui partirait *et ce qui survit*, le second seul supprime. Les effacements déjà
+  demandés par des personnes ne sont jamais levés
+  ([ADR-031](docs/adr/031-reinitialiser-un-departement.md)).
 - **Aide** — le mode d'emploi, écrit pour qui n'ouvrira jamais un terminal : les cinq étapes, ce que
   la lenteur signifie, les obligations qui accompagnent le fichier produit, et où l'outil écrit sur
   la machine. Ce README-ci ne lui convient pas — il parle de `npm`, de CSP et renvoie à des ADR
@@ -204,7 +209,7 @@ double-clic. `npx` et l'image Docker impriment l'aide.
 ## Développer
 
 ```bash
-npm run check   # typecheck strict + 590 tests
+npm run check   # typecheck strict + 596 tests
 npm test        # tests seuls
 npm run demo    # le pipeline complet sur un faux site de mairie, hors ligne
 ```

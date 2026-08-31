@@ -897,3 +897,126 @@ test("le mode d'emploi couvre ce qu'on ne peut pas deviner de l'ecran", (t) => {
   assert.match(aide, /article 14 du RGPD/, "l'obligation d'information n'est pas devinable");
   assert.match(aide, /57, le 67 et le 68/, "un departement hors champ doit se dire avant l'essai");
 });
+
+/**
+ * Repartir de zéro depuis l'écran, en deux temps.
+ *
+ * Un bouton qui efface au clic serait un piège dans un outil destiné à des agents de
+ * collectivité. Un bouton qui commence par montrer ce qu'il emporte n'en est pas un. Et
+ * la CSP interdisant tout script en ligne, la confirmation ne peut pas être un
+ * `confirm()` : c'est un aller-retour serveur, donc un écran qu'il faut regarder.
+ */
+
+function poster(chemin: string, corps: string): RequeteUi {
+  return requete(chemin, {
+    methode: "POST",
+    corps,
+    entetes: {
+      host: `127.0.0.1:${PORT}`,
+      cookie: `${NOM_COOKIE}=${JETON}`,
+      "hx-request": "true",
+    },
+  });
+}
+
+test("le premier clic ne fait que compter : rien n'est effacé", (t) => {
+  const ctx = contexte(t);
+  const avant = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+  assert.match(avant, /id="reinitialisation"/, "le bloc est sur l'ecran de synthese");
+
+  const simulation = corpsTexte(
+    router(ctx, poster("/reinitialiser", `departement=${DEPARTEMENT}`)).corps,
+  );
+
+  assert.match(simulation, /effacera définitivement/);
+  assert.match(simulation, /Oui, effacer le département 35/, "le second geste est un autre bouton");
+  // Et la base n'a pas bougé.
+  const contacts = Number(
+    (ctx.db.prepare("SELECT count(*) AS n FROM contact").get() as { n: number }).n,
+  );
+  assert.ok(contacts > 0, "le premier clic ne doit rien supprimer");
+});
+
+test("l'écran de confirmation dit aussi ce qui survit", (t) => {
+  const ctx = contexte(t);
+
+  const simulation = corpsTexte(
+    router(ctx, poster("/reinitialiser", `departement=${DEPARTEMENT}`)).corps,
+  );
+
+  // Montrer ce qui part sans dire ce qui reste serait mentir par omission — en
+  // particulier sur les effacements demandés par des personnes, qui ne sont pas levés.
+  assert.match(simulation, /effacements déjà demandés par des personnes/);
+  assert.match(simulation, /registre national/);
+  assert.match(simulation, /autres départements/);
+});
+
+test("la confirmation efface, et le bloc rend compte", (t) => {
+  const ctx = contexte(t);
+
+  const fait = corpsTexte(
+    router(ctx, poster("/reinitialiser/confirmer", `departement=${DEPARTEMENT}`)).corps,
+  );
+
+  assert.match(fait, /Le département 35 est vide/);
+  assert.equal(
+    Number((ctx.db.prepare("SELECT count(*) AS n FROM contact").get() as { n: number }).n),
+    0,
+  );
+  assert.equal(
+    Number((ctx.db.prepare("SELECT count(*) AS n FROM commune").get() as { n: number }).n),
+    0,
+  );
+});
+
+test("annuler ramène au repos sans rien toucher", (t) => {
+  const ctx = contexte(t);
+  router(ctx, poster("/reinitialiser", `departement=${DEPARTEMENT}`));
+
+  const repos = corpsTexte(router(ctx, poster("/reinitialiser/annuler", `departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(repos, /Voir ce qui serait effacé/);
+  assert.doesNotMatch(repos, /Oui, effacer/);
+  assert.ok(Number((ctx.db.prepare("SELECT count(*) AS n FROM contact").get() as { n: number }).n) > 0);
+});
+
+/**
+ * Le garde-fou est revu **à la confirmation**, et pas seulement à la simulation : une
+ * collecte a pu démarrer entre les deux écrans, et c'est l'état au moment d'effacer qui
+ * compte. Le worker écrit des communes et des pages en continu ; effacer sous lui
+ * laisserait des lignes recréées juste après.
+ */
+test("une collecte en cours empêche l'effacement, même après la simulation", (t) => {
+  const ctx = contexte(t);
+  const simulation = corpsTexte(
+    router(ctx, poster("/reinitialiser", `departement=${DEPARTEMENT}`)).corps,
+  );
+  assert.match(simulation, /Oui, effacer/, "la simulation a bien eu lieu hors collecte");
+
+  // Le double enregistre l'appel sans changer d'etat : c'est `poser` qui le fixe.
+  ctx.pilote.poser({
+    kind: "en_cours",
+    departement: DEPARTEMENT,
+    demarre: "2026-09-01T09:00:00.000Z",
+    runId: 1,
+    avecMobiles: false,
+  });
+  const reponse = router(ctx, poster("/reinitialiser/confirmer", `departement=${DEPARTEMENT}`));
+
+  assert.equal(reponse.statut, 422);
+  assert.match(corpsTexte(reponse.corps), /a démarré entre-temps/);
+  assert.ok(
+    Number((ctx.db.prepare("SELECT count(*) AS n FROM contact").get() as { n: number }).n) > 0,
+    "la base doit etre intacte",
+  );
+});
+
+test("le bloc de reinitialisation vit hors du suivi, qui se remplace toutes les deux secondes", (t) => {
+  const ctx = contexte(t);
+
+  const suivi = corpsTexte(router(ctx, requete(`/suivi?departement=${DEPARTEMENT}`)).corps);
+
+  // Un ecran de confirmation qui disparait pendant qu'on le lit est la meilleure facon de
+  // faire cliquer sans comprendre.
+  assert.doesNotMatch(suivi, /reinitialiser/);
+});
