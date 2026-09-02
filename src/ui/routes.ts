@@ -64,7 +64,8 @@ import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts"
 import { distributionNormalisation } from "../normalisation/rejeu.ts";
 import { mesurerCouverture } from "../metrics/couverture.ts";
 import { mesurerDormance } from "../metrics/dormance.ts";
-import { compterLignes, lignesCsv } from "../export/csv.ts";
+import { compterLignes, compterSansNom, lignesCsv } from "../export/csv.ts";
+import type { ProfilExport } from "../export/csv.ts";
 
 export const NOM_COOKIE = "annuaire_jeton";
 
@@ -384,8 +385,10 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   if (requete.methode === "GET" && requete.chemin === "/export") {
     const scoreMin = requete.requete.get("score-min") ?? "";
     const avecRejetes = requete.requete.get("avec-rejetes") === "1";
+    const profil = profilTolerant(requete.requete.get("profil"));
     const options = {
       departement,
+      profil,
       scoreMin: seuilTolerant(scoreMin),
       avecRejetes,
     };
@@ -397,7 +400,9 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
           departement,
           scoreMin,
           avecRejetes,
+          profil,
           lignes: compterLignes(ctx.db, options),
+          sansNom: compterSansNom(ctx.db, options),
           rejetes: distributionRevue(ctx.db, departement).rejetes,
           collecte: etatCollecte(ctx),
         }),
@@ -420,17 +425,22 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
       );
     }
 
+    const profil = profilTolerant(requete.requete.get("profil"));
     const options = {
       departement,
+      profil,
       scoreMin: seuilTolerant(requete.requete.get("score-min") ?? ""),
       avecRejetes: requete.requete.get("avec-rejetes") === "1",
     };
+    // Deux fichiers qui ne se ressemblent pas ne portent pas le meme nom : cinq colonnes
+    // et seize colonnes finissent dans le meme dossier de telechargements.
+    const nom = profil === "simple" ? `annuaire-${departement}-simple.csv` : `annuaire-${departement}.csv`;
     return {
       statut: 200,
       entetes: {
         ...ENTETES_COMMUNES,
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": `attachment; filename="annuaire-${departement}.csv"`,
+        "Content-Disposition": `attachment; filename="${nom}"`,
       },
       corps: lignesCsv(ctx.db, options),
     };
@@ -796,6 +806,21 @@ function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): Reponse
   if (resultat.kind === "refus") return rendre(resultat.message, 422);
   if (htmx) return rendre(undefined, 200);
   return redirection(`/revue?departement=${encodeURIComponent(departement)}`);
+}
+
+/**
+ * Le profil demande, ou le defaut de l'interface.
+ *
+ * Deux defauts differents, et ils ne sont pas symetriques. **Absent** vaut `simple` :
+ * c'est ce que l'ecran offre, et la plupart des gens qui telechargent ici veulent le
+ * fichier a cinq colonnes. **Illisible** vaut `complet`, jamais `simple` — meme
+ * raisonnement que `seuilTolerant` juste dessous : `complet` contient `simple`, l'inverse
+ * est faux, et une URL gardee en favori avec un parametre mal recopie ne doit pas livrer
+ * un fichier ampute sans le dire.
+ */
+function profilTolerant(brut: string | null): ProfilExport {
+  if (brut === null || brut === "") return "simple";
+  return brut === "simple" ? "simple" : "complet";
 }
 
 /**

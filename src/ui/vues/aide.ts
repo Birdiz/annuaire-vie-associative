@@ -86,6 +86,12 @@ transmettre quoi que ce soit à l'éditeur de l'outil.</p>
     <p>Écran <a href="/export?departement=${dept}">Export</a>. Vous obtenez un fichier CSV, qui
     s'ouvre dans un tableur. Le « score minimum » filtre sur la confiance : <code>0.6</code> est un
     point de départ raisonnable, un champ vide sort tout, y compris ce dont l'outil doute.</p>
+    <p class="discret">Deux fichiers possibles. Le <strong>fichier simple</strong> tient en cinq
+    colonnes — département, commune, nom, téléphone, e-mail — avec une ligne par structure : c'est
+    celui qu'on travaille. Le <strong>fichier complet</strong> ajoute, pour chaque contact, la page
+    d'où il vient, la date de lecture, la méthode et le score : c'est celui qu'on garde pour
+    pouvoir répondre « d'où sort cette adresse ? ». Le fichier simple écarte les contacts que
+    l'outil n'a pas su nommer ; l'écran vous dit combien.</p>
   </li>
 </ol>
 
@@ -139,9 +145,11 @@ collecte d'après.</p>
   URL de contact. Vers l'éditeur de l'outil, jamais : aucune mesure d'usage, aucun envoi.</dd>
 
   <dt>Et les numéros de portable ?</dt>
-  <dd>Écartés par défaut. Un 06 publié sur le site d'une commune est presque toujours la ligne
+  <dd>Les numéros fixes sont toujours collectés ; la question ne porte que sur les mobiles. Ceux-là
+  sont écartés par défaut : un 06 publié sur le site d'une commune est presque toujours la ligne
   personnelle d'un bénévole, pas le téléphone d'un local associatif. Une case permet de les
-  conserver, avec ce que cela engage ; elle se remet à zéro à chaque lancement de l'outil.</dd>
+  conserver, avec ce que cela engage ; elle se remet à zéro à chaque lancement de l'outil. L'export,
+  lui, ne filtre aucun numéro : il sort ce qui a été collecté.</dd>
 
   <dt>Je veux un deuxième département.</dt>
   <dd>La barre du haut : tapez son code, puis lancez la collecte. Sachez que chaque département

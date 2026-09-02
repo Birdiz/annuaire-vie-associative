@@ -283,9 +283,9 @@ ${mentionMobiles(suivi.mobilesActifs, "Cette collecte conservera")}${issue}${ref
  */
 function mentionMobiles(actif: boolean, verbe: string): string {
   if (!actif) return "";
-  return `<p class="avertissement">${echapperHtml(verbe)} les numéros mobiles (06/07). Ils
-    désignent presque toujours une personne physique : vous en êtes responsable de
-    traitement.</p>`;
+  return `<p class="avertissement">${echapperHtml(verbe)} les numéros mobiles (06/07), en plus
+    des numéros fixes. Ils désignent presque toujours une personne physique : vous en êtes
+    responsable de traitement.</p>`;
 }
 
 /** Le libelle des passes du run, en francais plutot qu'en nom de phase interne. */
@@ -358,18 +358,21 @@ export function fragmentMobiles(mobiles: DonneesMobiles): string {
   const inerte = mobiles.verrouille ? " disabled" : "";
 
   const explication = mobiles.actif
-    ? `<p class="avertissement"><strong>Les numéros mobiles (06/07) sont conservés.</strong>
+    ? `<p class="avertissement"><strong>Les numéros mobiles (06/07) sont conservés</strong>,
+       en plus des numéros fixes, qui le sont toujours.
        Un mobile publié sur le site d'une commune est presque toujours la ligne personnelle
        d'un bénévole — président, secrétaire — et non le téléphone d'un local associatif. Il
        identifie donc directement une personne physique : la base légale et la mise en
        balance vous incombent, et l'obligation d'informer les personnes concernées
        (art. 14 du RGPD) porte alors sur une donnée qui les désigne. Ce choix ne vaut que
        pour cette session.</p>`
-    : `<p class="discret">Les numéros mobiles (06/07) sont <strong>exclus</strong>. Un mobile
-       publié sur le site d'une commune est presque toujours la ligne personnelle d'un
-       bénévole plutôt que le téléphone d'un local associatif : le conserver ouvre un
-       traitement de données personnelles dont vous êtes responsable. Les conserver reste
-       possible, le temps de cette session seulement.</p>`;
+    : `<p class="discret"><strong>Les numéros fixes sont toujours collectés</strong> ; ce
+       réglage ne porte que sur les mobiles. Les numéros mobiles (06/07) sont
+       <strong>exclus</strong> : un mobile publié sur le site d'une commune est presque
+       toujours la ligne personnelle d'un bénévole plutôt que le téléphone d'un local
+       associatif, et le conserver ouvre un traitement de données personnelles dont vous
+       êtes responsable. Les conserver reste possible, le temps de cette session
+       seulement.</p>`;
 
   const verrou = mobiles.verrouille
     ? `<p class="discret">Figé pendant la collecte : le choix est inscrit dans chaque page à
@@ -381,7 +384,7 @@ export function fragmentMobiles(mobiles: DonneesMobiles): string {
 <form method="post" action="/mobiles" hx-post="/mobiles" hx-target="#mobiles" class="reglages">
   <label class="bascule">
     <input type="checkbox" name="avecMobiles" value="1"${mobiles.actif ? " checked" : ""}${inerte}>
-    Conserver les numéros mobiles 06/07 pendant cette session
+    Conserver <em>aussi</em> les numéros mobiles 06/07 pendant cette session
   </label>
   <button type="submit"${inerte}>Appliquer</button>
 </form>

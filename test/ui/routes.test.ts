@@ -6,6 +6,7 @@ import { fixedClock } from "../../src/clock.ts";
 import { Counters } from "../../src/metrics/counters.ts";
 import { JobQueue } from "../../src/jobs/queue.ts";
 import { NOM_COOKIE, hoteAccepte, router, verifierAcces } from "../../src/ui/routes.ts";
+import { BOM } from "../../src/export/csv.ts";
 import type { ContexteUi, RequeteUi } from "../../src/ui/routes.ts";
 import { CAMPAGNE, CODE_INSEE, DEPARTEMENT, preparerCorpus } from "../helpers/corpus.ts";
 import { piloteDouble, reglagesDouble } from "../helpers/pilote-double.ts";
@@ -178,13 +179,89 @@ test("le fragment de suivi est du HTML nu, sans page autour", (t) => {
 
 test("l'export streame le CSV du lot 5, sans variante propre a l'UI", (t) => {
   const ctx = contexte(t);
-  const reponse = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`));
+  const reponse = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}&profil=complet`));
 
   assert.match(String(reponse.entetes["Content-Type"]), /text\/csv/);
   assert.match(String(reponse.entetes["Content-Disposition"]), /attachment; filename="annuaire-35.csv"/);
   const corps = corpsTexte(reponse.corps);
   assert.match(corps, /valeur_publiable/);
   assert.match(corps, /contact@tennis-bruzou\.example/);
+});
+
+test("sans parametre, l'ecran livre le fichier simple ; le nom du fichier le dit", (t) => {
+  const ctx = contexte(t);
+  const reponse = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`));
+
+  // Deux fichiers qui ne se ressemblent pas ne doivent pas porter le meme nom : ils
+  // atterrissent dans le meme dossier de telechargements.
+  assert.match(
+    String(reponse.entetes["Content-Disposition"]),
+    /attachment; filename="annuaire-35-simple.csv"/,
+  );
+  const corps = corpsTexte(reponse.corps);
+  assert.ok(corps.startsWith(`${BOM}departement;commune;nom;type;telephone;email\r\n`));
+  assert.doesNotMatch(corps, /source_url/, "le profil simple ne porte pas la provenance");
+});
+
+test("l'ecran d'export offre les deux profils, le simple presente", (t) => {
+  const ctx = contexte(t);
+  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+
+  assert.match(ecran, /value="simple"[^>]*checked/);
+  assert.match(ecran, /value="complet"/);
+  // Le paragraphe qui promet la provenance sur chaque ligne serait faux ici.
+  assert.doesNotMatch(ecran, /Chaque ligne porte son URL source/);
+  assert.match(ecran, /ne porte pas la provenance/);
+  // Et l'avertissement RGPD ne peut pas renvoyer a une colonne que ce fichier n'a pas.
+  assert.match(ecran, /ne distingue pas/);
+  assert.match(ecran, /--profil simple/, "l'equivalent en ligne de commande suit le choix");
+});
+
+test("l'ecran d'export en profil complet tient sa promesse de provenance", (t) => {
+  const ctx = contexte(t);
+  const ecran = corpsTexte(
+    router(ctx, requete(`/export?departement=${DEPARTEMENT}&profil=complet`)).corps,
+  );
+
+  assert.match(ecran, /Chaque ligne porte son URL source/);
+  assert.match(ecran, /<code>regime<\/code>/);
+  assert.doesNotMatch(ecran, /--profil simple/);
+});
+
+test("l'ecran dit combien de contacts le fichier simple laisse de cote", (t) => {
+  const ctx = contexte(t);
+  // Un numero orphelin : ni rattachement, ni bloc, et un telephone n'a pas de domaine.
+  // Rien ne peut le nommer, il sort donc du fichier simple.
+  ctx.db
+    .prepare(
+      "INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, source_url, " +
+        "methode_extraction, confiance, collected_at) " +
+        "VALUES (?, 'phone', '02 99 00 00 99', '+33299000099', 'https://bruzou.example/a', " +
+        "'texte:motif', 0.5, 't')",
+    )
+    .run(CODE_INSEE);
+
+  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  // Sans ce chiffre, l'exclusion est silencieuse et l'ecart avec le fichier complet se
+  // lit comme une perte de donnees.
+  assert.match(ecran, /sans nom de structure/);
+});
+
+test("l'ecran d'export leve le malentendu sur les telephones", (t) => {
+  const ctx = contexte(t);
+  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /tous les numéros fixes/);
+  assert.match(ecran, /ne filtre aucun numéro/);
+});
+
+test("un profil illisible retombe sur le complet, jamais sur le simple", (t) => {
+  const ctx = contexte(t);
+  const reponse = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}&profil=nimportequoi`));
+
+  // `complet` contient `simple`, l'inverse est faux. Une URL gardee en favori avec un
+  // parametre mal recopie ne doit pas livrer un fichier ampute sans le dire.
+  assert.match(corpsTexte(reponse.corps), /source_url/);
+  assert.match(String(reponse.entetes["Content-Disposition"]), /"annuaire-35\.csv"/);
 });
 
 test("un contact piege ne devient pas du balisage dans l'ecran de revue", (t) => {

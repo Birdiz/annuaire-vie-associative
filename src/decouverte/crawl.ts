@@ -30,6 +30,8 @@ import { extraireContacts } from "./extraction.ts";
 import { evaluerPage } from "./prefiltre.ts";
 import type { VerdictPrefiltre } from "./prefiltre.ts";
 import { indexerAssociations, rattacher } from "./rattachement.ts";
+import { VERSION_NOM, nomPressenti } from "./nom-pressenti.ts";
+import type { NomPressenti } from "./nom-pressenti.ts";
 import { PROFONDEUR_MAX, estReseauSocial, selectionner } from "./scoring.ts";
 import type { LienScore } from "./scoring.ts";
 
@@ -40,6 +42,8 @@ type ContactRattache = {
   contact: ContactExtrait;
   /** Nom normalise de l'association pressentie. L'identifiant est resolu au commit. */
   nomAssociation: string | undefined;
+  /** Le nom lu dans le bloc, que le RNA connaisse la structure ou non (ADR-033). */
+  pressenti: NomPressenti | undefined;
 };
 
 const SQL_MAJ_PAGE = `
@@ -92,6 +96,26 @@ const SQL_ASSOCIATIONS = `
  * commune : deux homonymes rendraient le choix arbitraire, et un contact rattache au
  * mauvais destinataire est pire qu'un contact rattache a la commune.
  */
+/**
+ * L'autre moitie de la regle du nom : **un nom absent se comble.**
+ *
+ * Exportee, comme `sqlContact`, pour etre testee directement : reproduire « une seconde
+ * vue moins sure du meme contact » par un crawl complet demanderait un second site de
+ * fixtures entier pour verifier deux lignes de SQL.
+ *
+ * L'`ON CONFLICT` de `sqlContact` n'ecrit que si la nouvelle vue est plus sure. Une
+ * seconde lecture, moins confiante mais qui a vu le nom dans son bloc, ne toucherait donc
+ * a rien — et le contact resterait anonyme alors que la page le nommait. Cette requete ne
+ * comble que les trous : `nom_pressenti IS NULL`, jamais un ecrasement.
+ */
+export const SQL_COMBLER_NOM = `
+  UPDATE contact
+     SET nom_pressenti = ?, nom_pressenti_normalise = ?, nom_pressenti_source = ?,
+         nom_pressenti_at = ?, nom_pressenti_version = ?
+   WHERE code_insee = ? AND kind = ? AND valeur_normalisee = ?
+     AND nom_pressenti IS NULL
+`;
+
 const SQL_RESOUDRE_ASSOCIATION = `
   SELECT id FROM association
    WHERE code_insee = ? AND nom_normalise = ? AND date_dissolution IS NULL
@@ -104,22 +128,32 @@ const SQL_RESOUDRE_ASSOCIATION = `
  * valide en revue ne doit pas repasser a « a revoir » : d'ou la garde sur la
  * confiance et l'absence de `review_statut` dans la liste mise a jour.
  */
-function sqlContact(rattache: boolean): string {
+export function sqlContact(rattache: boolean): string {
   const cible = rattache
     ? "(association_id, kind, valeur_normalisee) WHERE association_id IS NOT NULL"
     : "(code_insee, kind, valeur_normalisee) WHERE association_id IS NULL";
+  // Les cinq colonnes du nom bougent toujours ensemble, et jamais vers `NULL` : une
+  // seconde vue plus sure mais qui n'a rien lu effacerait sinon un nom deja trouve. La
+  // regle tient en une phrase — **un nom connu ne s'efface jamais** ; l'autre moitie,
+  // « un nom absent se comble », est `SQL_COMBLER_NOM` ci-dessous.
+  const garderLeNom = (colonne: string): string =>
+    `${colonne} = CASE WHEN excluded.nom_pressenti IS NULL THEN contact.${colonne} ELSE excluded.${colonne} END`;
+
   return `
     INSERT INTO contact
       (association_id, code_insee, kind, valeur, valeur_normalisee, is_generique,
-       source_url, methode_extraction, confiance, collected_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       source_url, methode_extraction, confiance, collected_at,
+       nom_pressenti, nom_pressenti_normalise, nom_pressenti_source, nom_pressenti_at,
+       nom_pressenti_version)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT ${cible} DO UPDATE SET
       valeur = excluded.valeur,
       is_generique = excluded.is_generique,
       source_url = excluded.source_url,
       methode_extraction = excluded.methode_extraction,
       confiance = excluded.confiance,
-      collected_at = excluded.collected_at
+      collected_at = excluded.collected_at,
+      ${["nom_pressenti", "nom_pressenti_normalise", "nom_pressenti_source", "nom_pressenti_at", "nom_pressenti_version"].map(garderLeNom).join(",\n      ")}
     WHERE excluded.confiance > contact.confiance
   `;
 }
@@ -175,9 +209,14 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
         nom_normalise: string;
       }[]).map((ligne) => ({ id: ligne.id, nomNormalise: ligne.nom_normalise })),
     );
+    // Le nom pressenti se calcule pour **tous** les contacts, y compris ceux qui trouvent
+    // une association : le cout est negligeable devant l'analyse DOM deja faite, et cela
+    // evite un piege reel — `nomAssociation` peut etre defini alors que la resolution
+    // rendra deux homonymes, auquel cas la ligne se retrouve orpheline **et** anonyme.
     const contacts: ContactRattache[] = extraction.contacts.map((contact) => ({
       contact,
       nomAssociation: rattacher(index, contact.contextes)?.nomNormalise,
+      pressenti: nomPressenti(contact.contextes, contact.empreinte),
     }));
 
     // Etape [4]. Elle vient apres [5] dans le code et avant elle dans l'entonnoir :
@@ -386,6 +425,7 @@ function ecrireContacts(
 ): void {
   const rattache = db.prepare(sqlContact(true));
   const orphelin = db.prepare(sqlContact(false));
+  const combler = db.prepare(SQL_COMBLER_NOM);
   const resoudre = db.prepare(SQL_RESOUDRE_ASSOCIATION);
   // Une opposition doit survivre a la campagne suivante : sans cette consultation,
   // effacer un contact ne servirait a rien, le crawl le retrouverait et le reecrirait.
@@ -398,7 +438,7 @@ function ecrireContacts(
   let nominatifs = 0;
 
   let exclus = 0;
-  for (const { contact, nomAssociation } of contacts) {
+  for (const { contact, nomAssociation, pressenti } of contacts) {
     if (exclu.get(contact.valeurNormalisee, payload.codeInsee) !== undefined) {
       exclus += 1;
       continue;
@@ -432,12 +472,34 @@ function ecrireContacts(
       methode,
       confiance,
       maintenant,
+      pressenti?.nom ?? null,
+      pressenti?.normalise ?? null,
+      pressenti?.source ?? null,
+      pressenti === undefined ? null : maintenant,
+      pressenti === undefined ? null : VERSION_NOM,
     ];
 
     const changes = Number(
       (associationId === undefined ? orphelin : rattache).run(...parametres).changes,
     );
-    if (changes === 0) continue;
+    if (changes === 0) {
+      // Le `SET` de l'`ON CONFLICT` est garde par la confiance : une vue moins sure
+      // n'ecrit rien, et n'apporterait donc jamais un nom manquant. C'est l'autre moitie
+      // de la regle — un nom absent se comble par n'importe quelle vue ulterieure.
+      if (pressenti !== undefined) {
+        combler.run(
+          pressenti.nom,
+          pressenti.normalise,
+          pressenti.source,
+          maintenant,
+          VERSION_NOM,
+          payload.codeInsee,
+          contact.kind,
+          contact.valeurNormalisee,
+        );
+      }
+      continue;
+    }
 
     ecrits += 1;
     if (associationId !== undefined) versAssociation += 1;

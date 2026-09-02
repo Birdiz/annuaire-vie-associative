@@ -35,6 +35,15 @@ export type ContactExtrait = {
    * que l'adresse, c'est la ligne qui porte aussi le nom de l'association.
    */
   contextes: readonly string[];
+  /**
+   * Ce qui a servi a reperer le contact dans la page : le `href` d'un `mailto:`/`tel:`,
+   * ou le texte trouve par un motif.
+   *
+   * Elle etait jusqu'ici passee a `contextesDe` puis jetee. La garder evite a
+   * `nomPressenti` de redeviner ou le contact se trouve dans le bloc — et redeviner,
+   * c'est se tromper sur les blocs qui portent deux adresses.
+   */
+  empreinte: string;
 };
 
 export type ResultatExtraction = {
@@ -162,6 +171,7 @@ export function extraireContacts(
       methode,
       confiance,
       contextes: contextesDe(doc.blocs, empreinte),
+      empreinte,
     });
   };
 
@@ -180,6 +190,7 @@ export function extraireContacts(
       methode,
       confiance,
       contextes: contextesDe(doc.blocs, empreinte),
+      empreinte,
     });
   };
 

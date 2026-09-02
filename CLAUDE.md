@@ -118,6 +118,28 @@ verifiees par un test — un fichier minifie ne se relit pas en revue de diff.
 - Syntaxe effacable uniquement : pas d'`enum`, pas de parametres-proprietes, pas de
   `namespace`. Utiliser des unions de litteraux de chaine a la place des `enum`.
 
+## Deux profils d'export, un seul chemin
+
+Le CSV sort en deux profils depuis le lot 10 (ADR-032) : `complet`, les colonnes de
+provenance et une ligne par contact — c'est l'artefact auditable, et le defaut de la CLI ;
+`simple`, six colonnes et **une ligne par structure**, defaut de l'interface. Le profil
+simple abandonne la provenance et le regime juridique, et l'ecran d'export le dit a
+l'endroit exact ou le fichier quitte l'outil.
+
+**Un seul endroit decide ce qu'est une ligne.** `compterLignes` consomme le generateur qui
+rend le fichier, il ne compte pas en SQL de son cote. La premiere version le faisait, et
+pour que les deux tombent d'accord le rendu devait accepter tout ce que la requete
+acceptait — ce qui livrait des lignes nommees « ffr.fr ». Un chiffre annonce que le
+fichier ne tient pas est pire qu'un ecran muet ; deux chemins qui doivent s'accorder
+finissent toujours par diverger.
+
+Le nom des structures que le RNA ignore vient d'une cascade (ADR-033) : nom RNA, puis nom
+lu dans le bloc DOM, puis deduction depuis le domaine, puis « Mairie de ». Un groupe que
+rien ne nomme est **ecarte**, et le compte des ecartes est annonce — sans lui, l'exclusion
+se lit comme une perte de donnees. `annuaire noms` rattrape une base deja collectee sans
+reseau, en relisant le cache ; `nom_pressenti_version` y sert de marqueur, et c'est lui —
+jamais la presence d'un nom — qui decide de ce qui est refait.
+
 ## Une seule porte d'entree DOM
 
 `node-html-parser` n'est importe que par `src/parse/html.ts`. Meme logique que la porte

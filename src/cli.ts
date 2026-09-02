@@ -19,7 +19,9 @@ import { SEUIL_EXTRACTION, SEUIL_PAR_DEFAUT } from "./decouverte/prefiltre.ts";
 import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./decouverte/rejeu.ts";
 import { distributionNormalisation } from "./normalisation/rejeu.ts";
 import { normaliser } from "./normalisation/rejeu.ts";
-import { compterLignes, lignesCsv } from "./export/csv.ts";
+import { remplirNoms } from "./decouverte/noms.ts";
+import { compterLignes, compterSansNom, lignesCsv } from "./export/csv.ts";
+import type { OptionsExport, ProfilExport } from "./export/csv.ts";
 import { demarrerServeur, ADRESSE_ECOUTE } from "./ui/serveur.ts";
 import { PiloteRun } from "./ui/pilote.ts";
 import { ouvrirNavigateur } from "./ui/navigateur.ts";
@@ -48,6 +50,8 @@ Commandes
   decouvrir --departement <dd>  Rejoue la seule decouverte sur une base deja amorcee
   communes --departement <dd>   Communes du departement et URL de leur mairie
   prefiltrer --departement <dd> Rejoue le pre-filtre [4] depuis le cache, sans reseau
+  noms --departement <dd>       Retrouve le nom des contacts non rattaches, depuis le
+                                cache et sans reseau
   normaliser --departement <dd> Rejoue la normalisation [7] et le scoring [8]
   exporter --departement <dd>   Exporte l'annuaire en CSV
   contacts --departement <dd>   Contacts collectes, avec leur provenance
@@ -92,12 +96,21 @@ Options de normalisation
   --tout                  Reclasse et renote aussi ce qui est deja a jour, et
                           reinterroge les verdicts MX encore frais
 
+Options de nommage
+  --tout                  Reexamine aussi les contacts que la version courante de
+                          l'heuristique a deja regardes
+
 Options d'export
   --fichier <chemin>      Ecrit dans un fichier plutot que sur la sortie standard
   --score-min <n>         Ne retient que les contacts notes au moins a cette valeur
                           (entre 0 et 1, par exemple 0.6)
   --avec-rejetes          Sort aussi les contacts qu'un humain a rejetes en revue,
                           exclus par defaut
+  --profil <p>            « complet » (defaut) : les colonnes de provenance, une ligne
+                          par contact. C'est le fichier auditable. « simple » : cinq
+                          colonnes — departement, commune, nom, telephone, email — et
+                          une ligne par structure, les valeurs multiples reunies dans
+                          la cellule. Les contacts sans nom en sont ecartes
 
 Options de reinitialisation
   --simulation            Montre ce qui serait efface, sans rien ecrire
@@ -173,6 +186,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         fichier: { type: "string" },
         "score-min": { type: "string" },
         "avec-rejetes": { type: "boolean", default: false },
+        profil: { type: "string" },
         contact: { type: "string" },
         domaine: { type: "string" },
         commune: { type: "string" },
@@ -276,11 +290,17 @@ export async function main(argv: readonly string[]): Promise<number> {
           tout: values.tout === true,
           json: values.json === true,
         });
+      case "noms":
+        return commandeNoms(ouvrir, values.departement, {
+          tout: values.tout === true,
+          json: values.json === true,
+        });
       case "exporter":
         return commandeExporter(ouvrir, values.departement, {
           fichier: values.fichier,
           scoreMin: values["score-min"],
           avecRejetes: values["avec-rejetes"] === true,
+          profil: values.profil,
         });
       case "contacts":
         return commandeContacts(ouvrir, values.departement, values.json === true, values.limit);
@@ -1387,11 +1407,84 @@ async function commandeNormaliser(
   }
 }
 
-/** L'artefact que l'outil produit : un CSV avec la provenance de chaque ligne. */
+/**
+ * Rattrapage du nom pressenti (ADR-033). Ne sort jamais sur le reseau : les corps sont
+ * relus dans le cache disque, comme le rejeu du pre-filtre.
+ *
+ * C'est la commande qui fait remonter le taux de lignes nommees sur une base **deja
+ * collectee** : le nom lu dans le bloc n'existe que depuis le lot 10, et tout ce qui a ete
+ * ramasse avant est anonyme.
+ */
+function commandeNoms(
+  ouvrir: () => App,
+  departement: string | undefined,
+  options: { tout: boolean; json: boolean },
+): number {
+  if (!exigerDepartement(departement, "noms")) return 2;
+
+  const app = ouvrir();
+  try {
+    const resultat = remplirNoms(app.db, app.cache, app.clock, {
+      departement,
+      tout: options.tout,
+      onTranche: (ecrites) => app.logger.debug("Tranche de nommage ecrite", { contacts: ecrites }),
+    });
+
+    if (options.json) {
+      process.stdout.write(`${JSON.stringify({ departement, noms: resultat }, null, 2)}\n`);
+      return 0;
+    }
+
+    if (resultat.examines === 0 && resultat.aJour === 0) {
+      process.stdout.write(
+        `Aucun contact a nommer pour le departement ${departement}.\n` +
+          `Soit tout est deja rattache a une association, soit rien n'a encore ete collecte :\n` +
+          `annuaire decouvrir --departement ${departement}\n`,
+      );
+      return 0;
+    }
+
+    process.stdout.write(
+      `${resultat.examines} contacts examines, ${resultat.aJour} deja evalues.\n` +
+        `${resultat.nommes} nommes depuis le bloc de leur page, ${resultat.sansNom} sans nom ` +
+        `plausible autour d'eux.\n`,
+    );
+    if (resultat.sansCache > 0) {
+      // Un cache froid n'est pas un verdict : ces contacts repasseront, et le dire evite
+      // de faire croire que la passe a converge alors qu'elle a seulement manque de corps.
+      process.stdout.write(
+        `${resultat.sansCache} sans corps en cache : ils seront repris au prochain passage, ` +
+          `apres une nouvelle collecte.\n`,
+      );
+    }
+    if (resultat.nommes > 0) {
+      process.stdout.write(
+        `\nLe fichier simple en profite deja : annuaire exporter --departement ${departement} --profil simple\n`,
+      );
+    }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
+
+/**
+ * L'artefact que l'outil produit. En profil `complet` — le defaut de la ligne de
+ * commande — chaque ligne porte sa provenance ; en profil `simple`, le fichier est un
+ * extrait a cinq colonnes, une ligne par structure (ADR-032).
+ *
+ * La CLI est stricte la ou l'interface est tolerante : qui tape une option la tape
+ * expres, et un profil inconnu est une erreur d'usage, pas une preference a deviner.
+ */
 async function commandeExporter(
   ouvrir: () => App,
   departement: string | undefined,
-  options: { fichier: string | undefined; scoreMin: string | undefined; avecRejetes: boolean },
+  options: {
+    fichier: string | undefined;
+    scoreMin: string | undefined;
+    avecRejetes: boolean;
+    profil: string | undefined;
+  },
 ): Promise<number> {
   if (!exigerDepartement(departement, "exporter")) return 2;
 
@@ -1401,10 +1494,17 @@ async function commandeExporter(
     return 2;
   }
 
+  const profil = lireProfil(options.profil);
+  if (profil === undefined) {
+    process.stderr.write(`--profil attend « simple » ou « complet », recu « ${options.profil} »\n`);
+    return 2;
+  }
+
   const app = ouvrir();
   try {
     const parametres = {
       departement,
+      profil,
       avecRejetes: options.avecRejetes,
       ...(scoreMin === null ? {} : { scoreMin }),
     };
@@ -1433,11 +1533,35 @@ async function commandeExporter(
     } finally {
       await new Promise<void>((resoudre, rejeter) => flux.end((erreur?: Error | null) => (erreur ? rejeter(erreur) : resoudre())));
     }
-    process.stdout.write(`${total} contacts exportes dans ${options.fichier}.\n`);
+    const quoi = profil === "simple" ? "lignes exportees" : "contacts exportes";
+    process.stdout.write(`${total} ${quoi} dans ${options.fichier}.${ecartes(app.db, parametres)}\n`);
     return 0;
   } finally {
     app.close();
   }
+}
+
+/**
+ * Le nombre de contacts que le profil simple laisse de cote, dit a voix haute.
+ *
+ * Sans cette phrase, l'exclusion des contacts sans nom est silencieuse : qui compare le
+ * fichier simple au fichier complet conclut a une perte de donnees, et il a raison de
+ * s'en inquieter — c'est a l'outil de dire ce qu'il n'a pas mis.
+ */
+function ecartes(db: App["db"], parametres: OptionsExport): string {
+  if (parametres.profil !== "simple") return "";
+  const sansNom = compterSansNom(db, parametres);
+  if (sansNom === 0) return "";
+  return (
+    `\n${sansNom} contacts sans nom de structure en ont ete ecartes : ils restent dans ` +
+    `le profil complet.`
+  );
+}
+
+/** `undefined` signifie « valeur invalide » ; l'absence d'option vaut « complet ». */
+function lireProfil(brut: string | undefined): ProfilExport | undefined {
+  if (brut === undefined) return "complet";
+  return brut === "simple" || brut === "complet" ? brut : undefined;
 }
 
 /** `null` signifie « non precise » ; `undefined`, « valeur invalide ». */
