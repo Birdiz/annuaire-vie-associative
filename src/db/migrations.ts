@@ -686,4 +686,53 @@ CREATE TABLE exclusion (
 CREATE INDEX idx_exclusion_portee_valeur ON exclusion (portee, valeur);
 `,
   },
+  {
+    version: 11,
+    name: "nom-pressenti-du-contact",
+    sql: `
+--------------------------------------------------------------------------------
+-- Contacts : le nom lu dans le bloc, quand le RNA n'en connait pas
+--------------------------------------------------------------------------------
+
+-- Le rattachement ne trouve un nom que s'il reconnait dans le bloc DOM un
+-- 'nom_normalise' **deja connu du RNA** (rattachement.ts), avec un plancher de huit
+-- caracteres. Toute structure absente du RNA, dissoute, homonyme ou au nom trop court
+-- ressort donc anonyme, et l'export ne peut rien en faire : « sans le nom, la ligne ne
+-- sert a rien ». Les colonnes ci-dessous gardent le nom **lu sur la page**, sans
+-- pretendre qu'il designe une association connue.
+--
+-- C'est une **derivee**, pas une donnee collectee : elle ne porte donc pas de
+-- contrainte de provenance, exactement comme 'prefiltre_*' a la migration 4. Sa
+-- provenance est celle du contact lui-meme, sur la meme ligne — source_url,
+-- collected_at, methode_extraction, confiance sont deja la et deja NOT NULL.
+--
+-- Pas de colonne de confiance non plus, et c'est delibere : ce serait affirmer une
+-- mesure la ou il n'y a qu'une heuristique binaire, trouve ou pas trouve.
+ALTER TABLE contact ADD COLUMN nom_pressenti TEXT;
+
+-- Meme paire que 'association.nom' / 'association.nom_normalise', et pour la meme
+-- raison : la cle de regroupement de l'export se calcule en SQL, ou 'normaliserNom'
+-- (NFD, sans accents) n'est pas exprimable. Sans cette colonne, un nom accentue et le
+-- meme nom sans accents feraient deux structures dans le fichier livre.
+ALTER TABLE contact ADD COLUMN nom_pressenti_normalise TEXT;
+
+-- La methode : quel cote du contact le segment a ete pris.
+ALTER TABLE contact ADD COLUMN nom_pressenti_source TEXT;
+
+ALTER TABLE contact ADD COLUMN nom_pressenti_at TEXT;
+
+-- Constante du code, incrementee des que l'heuristique change — meme discipline que
+-- 'prefiltre_version' et 'score_version'. Elle porte ici une seconde charge : elle
+-- distingue « jamais cherche » (NULL) de « cherche, rien trouve » (renseignee, nom
+-- nul). Sans cette distinction, la passe de rattrapage rebalayerait eternellement les
+-- memes pages sans jamais converger.
+ALTER TABLE contact ADD COLUMN nom_pressenti_version INTEGER;
+
+-- Sert au seul balayage de la passe de rattrapage. Partiel : il retrecit a mesure que
+-- le travail avance, et disparait quand tout est evalue. L'export, lui, trie sur une
+-- expression — aucun index ne lui epargnerait son trieur temporaire.
+CREATE INDEX idx_contact_a_nommer ON contact (code_insee)
+  WHERE association_id IS NULL AND nom_pressenti_version IS NULL;
+`,
+  },
 ];

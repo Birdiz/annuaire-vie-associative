@@ -83,8 +83,13 @@ const FAMILLES: ReadonlyMap<string, TypeAssociation> = new Map([
  * `normaliserNom` supprime les apostrophes sans separer les mots : « comite
  * d'animation » devient « comite danimation », d'ou la forme collee ci-dessous. Les
  * deux graphies sont presentes dans le RNA, les deux sont donc listees.
+ *
+ * Exportee parce qu'elle dit plus que le type : elle dit **« ce texte nomme une
+ * structure »**. `nom-pressenti.ts` s'en sert comme laissez-passer, et un test verifie
+ * qu'aucun de ces motifs n'est rejete par son filtre de mobilier de page — c'est ainsi
+ * qu'« Accueil de loisirs » cesse d'etre confondu avec un lien « Accueil ».
  */
-const MOTIFS_NOM: readonly (readonly [string, TypeAssociation, string])[] = [
+export const MOTIFS_NOM: readonly (readonly [string, TypeAssociation, string])[] = [
   ["comite des fetes", "comite_des_fetes", "nom:comite_des_fetes"],
   ["comite de fetes", "comite_des_fetes", "nom:comite_des_fetes"],
   ["comite danimation", "comite_des_fetes", "nom:comite_danimation"],

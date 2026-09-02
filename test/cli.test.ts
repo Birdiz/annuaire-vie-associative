@@ -8,6 +8,7 @@ import type { TestContext } from "node:test";
 import { makeTempDir } from "./helpers/tmp.ts";
 import { SIGNAUX_POSIX } from "./helpers/plateforme.ts";
 import { VERSION } from "../src/version.ts";
+import { openDatabase } from "../src/db/index.ts";
 
 const CLI = fileURLToPath(new URL("../src/bin.ts", import.meta.url));
 // Le garde-fou anti-reseau vit dans le processus de test ; ces commandes s'executent
@@ -259,6 +260,36 @@ test("normaliser sur une base sans contact dit quoi lancer, plutot que de ne rie
   assert.match(resultat.stderr, /annuaire decouvrir --departement 35/);
 });
 
+/**
+ * Le plus petit corpus qui exerce les deux profils : une association nommee par le RNA
+ * avec ses deux contacts, et un contact que rien ne peut nommer.
+ */
+function peuplerPourExport(fichier: string): void {
+  const db = openDatabase(fichier);
+  try {
+    db.prepare(
+      "INSERT INTO commune (code_insee, nom, departement, url_mairie, created_at, updated_at) " +
+        "VALUES ('35047', 'Bruzou', '35', 'https://bruzou.example', 't', 't')",
+    ).run();
+    db.prepare(
+      "INSERT INTO association (id, rna_id, code_insee, nom, nom_normalise, source_creation, " +
+        "created_at, updated_at) VALUES (1, 'W351', '35047', 'Club de Bruzou', 'club de bruzou', " +
+        "'rna', 't', 't')",
+    ).run();
+    const inserer = db.prepare(
+      "INSERT INTO contact (association_id, code_insee, kind, valeur, valeur_normalisee, " +
+        "is_generique, source_url, methode_extraction, confiance, collected_at) " +
+        "VALUES (?, '35047', ?, ?, ?, ?, 'https://bruzou.example/a', 'dom:mailto', 0.9, 't')",
+    );
+    inserer.run(1, "email", "contact@club-bruzou.example", "contact@club-bruzou.example", 1);
+    inserer.run(1, "phone", "02 99 00 00 00", "+33299000000", null);
+    // Ni rattache, ni nommable : le profil simple l'ecarte et le dit.
+    inserer.run(null, "email", "perdu@gmail.com", "perdu@gmail.com", 0);
+  } finally {
+    db.close();
+  }
+}
+
 test("exporter sur une base vide n'ecrit pas un fichier trompeur", async (t) => {
   const dir = dataDir(t);
   await annuaire(["init", "--data-dir", dir]);
@@ -283,6 +314,66 @@ test("un score minimal hors de [0, 1] est une erreur d'usage, pas d'execution", 
     assert.equal(resultat.code, 2, `--score-min ${valeur}`);
     assert.match(resultat.stderr, /--score-min attend un nombre entre 0 et 1/);
   }
+});
+
+test("un profil inconnu est une erreur d'usage, comme un score hors bornes", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  // La CLI est stricte la ou l'interface est tolerante : qui tape une option la tape
+  // exprès, et deviner ce qu'il voulait dire livrerait un fichier qu'il n'a pas demande.
+  const resultat = await annuaire([
+    "exporter", "--departement", "35", "--data-dir", dir, "--profil=nimportequoi",
+  ]);
+  assert.equal(resultat.code, 2);
+  assert.match(resultat.stderr, /--profil attend/);
+});
+
+test("sans --profil, la ligne de commande produit le fichier complet", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  peuplerPourExport(join(dir, "annuaire.sqlite"));
+
+  const complet = join(dir, "complet.csv");
+  const sansOption = await annuaire([
+    "exporter", "--departement", "35", "--data-dir", dir, "--fichier", complet,
+  ]);
+  assert.equal(sansOption.code, 0);
+  const enTeteComplet = readFileSync(complet, "utf8").split("\r\n")[0] ?? "";
+  assert.match(enTeteComplet, /code_insee;commune/);
+  assert.match(enTeteComplet, /source_url/);
+
+  const simple = join(dir, "simple.csv");
+  const avecOption = await annuaire([
+    "exporter", "--departement", "35", "--data-dir", dir, "--fichier", simple, "--profil", "simple",
+  ]);
+  assert.equal(avecOption.code, 0);
+  const lignes = readFileSync(simple, "utf8").split("\r\n").filter((ligne) => ligne !== "");
+  assert.match(lignes[0] ?? "", /departement;commune;nom;type;telephone;email$/);
+  // Une structure, une ligne : l'email et le telephone se retrouvent cote a cote.
+  assert.equal(lignes.length, 2);
+  assert.match(lignes[1] ?? "", /^35;Bruzou;Club de Bruzou;/);
+
+  // Et le message dit ce qui a ete laisse de cote : sans cette phrase, l'ecart entre
+  // les deux fichiers se lit comme une perte de donnees.
+  assert.match(avecOption.stdout, /sans nom de structure/);
+});
+
+test("annuaire noms sur une base vide dit quoi lancer plutot que de se taire", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const resultat = await annuaire(["noms", "--departement", "35", "--data-dir", dir]);
+
+  assert.equal(resultat.code, 0, "il n'y a rien a faire, ce n'est pas une erreur");
+  assert.match(resultat.stdout, /Aucun contact a nommer/);
+  assert.match(resultat.stdout, /annuaire decouvrir --departement 35/);
+});
+
+test("annuaire noms sans departement est une erreur d'usage", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const resultat = await annuaire(["noms", "--data-dir", dir]);
+  assert.equal(resultat.code, 2);
+  assert.match(resultat.stderr, /annuaire noms --departement/);
 });
 
 test("un fichier RNA inexistant est signale avant tout acces reseau", async (t) => {

@@ -14,6 +14,7 @@ import { Logger } from "../../src/log.ts";
 import { fixedClock } from "../../src/clock.ts";
 import { creerHandlersDecouverte } from "../../src/decouverte/index.ts";
 import { cleDecouverte } from "../../src/decouverte/contexte.ts";
+import { VERSION_NOM } from "../../src/decouverte/nom-pressenti.ts";
 import type { ContexteDecouverte } from "../../src/decouverte/contexte.ts";
 import { startServer, robotsAllowAll, text } from "../helpers/server.ts";
 import type { Handler, TestServer } from "../helpers/server.ts";
@@ -289,6 +290,26 @@ test("un contact trouve dans la ligne d'une association lui est rattache", async
     .prepare("SELECT count(*) AS n FROM contact WHERE association_id IS NOT NULL")
     .get() as { n: number };
   assert.ok(rattaches.n >= 3, `au moins trois contacts devraient etre rattaches, vu ${rattaches.n}`);
+});
+
+test("le crawl retient le nom lu dans le bloc, y compris pour un contact non rattache", async (t) => {
+  const { db, lancer } = await setup(t);
+  await lancer();
+
+  // La cellule voisine du tableau porte le nom : c'est ce que `nomPressenti` y lit, que
+  // le RNA connaisse la structure ou non.
+  const club = db
+    .prepare("SELECT nom_pressenti, nom_pressenti_version FROM contact WHERE valeur_normalisee = ?")
+    .get("club@asso.example") as { nom_pressenti: string | null; nom_pressenti_version: number | null };
+  assert.equal(club.nom_pressenti, "Club de Bruz");
+  assert.equal(club.nom_pressenti_version, VERSION_NOM);
+
+  // Et l'adresse de la mairie, elle, n'a rien de nommable autour d'elle : « Mairie » est
+  // du mobilier de page, pas un nom de structure.
+  const mairie = db
+    .prepare("SELECT nom_pressenti FROM contact WHERE valeur_normalisee = ?")
+    .get("contact@bruz.example") as { nom_pressenti: string | null };
+  assert.equal(mairie.nom_pressenti, null);
 });
 
 test("le budget de pages par commune n'est jamais depasse", async (t) => {

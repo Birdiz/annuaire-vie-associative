@@ -144,6 +144,16 @@ test("les mobiles sont annonces exclus par defaut, sans avertissement inutile", 
   assert.doesNotMatch(html, /checked/, "la case suit l'etat : rien n'est coche quand rien n'est arme");
 });
 
+test("le reglage dit, dans les deux etats, que les fixes ne sont jamais concernes", () => {
+  // Le client a cru que la case gouvernait « les telephones ». Elle ne gouverne que les
+  // mobiles : les fixes sont collectes par construction, dans les deux etats.
+  for (const actif of [false, true]) {
+    const html = fragmentMobiles(mobiles({ actif }));
+    assert.match(html, /fixes/, `etat actif=${actif}`);
+  }
+  assert.match(fragmentMobiles(mobiles()), /numéros fixes sont toujours collectés/);
+});
+
 test("le drapeau arme porte l'avertissement RGPD et dit qu'il ne dure qu'une session", () => {
   const html = fragmentMobiles(mobiles({ actif: true }));
 

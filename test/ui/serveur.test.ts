@@ -132,7 +132,8 @@ test("l'export sort en piece jointe, morceau par morceau", async (t) => {
   assert.equal(reponse.status, 200);
   assert.match(reponse.headers.get("content-disposition") ?? "", /attachment/);
   const csv = await reponse.text();
-  assert.match(csv, /code_insee;commune/);
+  // L'ecran sert le profil simple par defaut ; c'est celui qui traverse le socket.
+  assert.match(csv, /departement;commune;nom;type;telephone;email/);
   assert.ok(csv.split("\r\n").length > 2);
 });
 

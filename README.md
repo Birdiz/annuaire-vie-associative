@@ -130,8 +130,24 @@ Chaque étape se rejoue ensuite seule, sans relire le dump — c'est le mode d'i
 npm run annuaire -- decouvrir --departement 35 --max-pages 20
 npm run annuaire -- prefiltrer --departement 35     # depuis le cache, sans réseau
 npm run annuaire -- normaliser --departement 35
+npm run annuaire -- noms --departement 35        # nomme les orphelins, sans réseau
 npm run annuaire -- exporter --departement 35 --score-min 0.6 --fichier annuaire-35.csv
+npm run annuaire -- exporter --departement 35 --profil simple --fichier simple-35.csv
 ```
+
+**Deux fichiers possibles** ([ADR-032](docs/adr/032-deux-profils-d-export.md)). Le profil
+`complet` — le défaut en ligne de commande — sort une ligne par contact, avec la page d'origine,
+la date de lecture, la méthode et le score : c'est le fichier auditable, le seul qui permette de
+répondre « d'où sort cette adresse ? ». Le profil `simple` tient en six colonnes —
+`departement`, `commune`, `nom`, `type`, `telephone`, `email` — avec **une ligne par structure**,
+les valeurs multiples réunies dans la cellule et séparées par « / ». Il écarte les contacts que
+l'outil n'a pas su nommer, et dit combien.
+
+La colonne `type` porte les six valeurs du §6.7 (`sportive`, `culturelle`, `sociale`,
+`comite_des_fetes`, `centre_de_loisirs`, `diverses`). Pour une association du RNA, c'est le type
+calculé par la normalisation à partir du code objet ([ADR-018](docs/adr/018-classification-en-six-types.md)).
+Pour une structure que le registre ignore — un accueil de loisirs communal, par exemple — seul un
+motif de nom la classe ; la cellule reste **vide** sinon, plutôt que de deviner.
 
 ### L'interface
 
@@ -158,7 +174,8 @@ abstient) :
 - **Revue** — les contacts à arbitrer, les moins sûrs d'abord, avec le détail des signaux qui ont
   fait baisser leur note. Valider, rejeter, corriger. Une correction ne réécrit jamais ce qui a été
   lu ([ADR-021](docs/adr/021-correction-en-revue.md)).
-- **Export** — le même CSV que `annuaire exporter`, sans variante propre à l'interface.
+- **Export** — le même CSV que `annuaire exporter`, sans variante propre à l'interface. L'écran
+  propose les deux profils et présente le simple ; la ligne de commande, elle, part du complet.
 - **Repartir de zéro** — en bas de l'écran de synthèse, un bloc efface toutes les données du
   département pour le recollecter à neuf. **En deux temps** : le premier clic ne fait que compter
   et affiche ce qui partirait *et ce qui survit*, le second seul supprime. Les effacements déjà
@@ -191,7 +208,9 @@ npm run annuaire -- --help
 | `decouvrir --departement <dd>` | Rejoue la seule découverte sur une base déjà amorcée |
 | `prefiltrer --departement <dd>` | Rejoue le pré-filtre depuis le cache, sans réseau |
 | `normaliser --departement <dd>` | Rejoue la normalisation [7] et le scoring [8] |
+| `noms --departement <dd>` | Retrouve le nom des contacts non rattachés, depuis le cache |
 | `exporter --departement <dd>` | Exporte l'annuaire en CSV, provenance comprise |
+| `exporter --profil simple` | Cinq colonnes, une ligne par structure |
 | `ui [--port <n>]` | Interface locale : lancement et suivi d'un run, revue, export |
 | `communes`, `associations`, `contacts`, `pages` | Lectures de la base, `--departement <dd>` |
 | `dormance --departement <dd>` | Ancienneté de déclaration des associations |
