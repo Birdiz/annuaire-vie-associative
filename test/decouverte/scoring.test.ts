@@ -37,6 +37,36 @@ test("les rubriques administratives sont ecartees, meme sur un site par ailleurs
   }
 });
 
+test("un annuaire d'entreprises n'est pas un annuaire d'associations", () => {
+  // Le premier reproche du client sur la Loire : « des trucs qui n'ont rien a voir avec
+  // des assoc, genre les garages ». Ces pages-la marquaient +6 — « annuaire » compte dans
+  // le chemin et dans l'ancre — donc elles passaient avant la moitie des vraies rubriques.
+  for (const [chemin, ancre] of [
+    ["/commerces/annuaire-des-entreprises/", "Annuaire des entreprises"],
+    ["/vie-locale/producteurs-locaux", "Producteurs locaux"],
+    ["/vie-locale/commerces-artisans", "Commerces et artisans"],
+    ["/developpement-economique", "Developpement economique"],
+  ] as const) {
+    assert.ok(
+      scorerLien(new URL(`https://exemple.example${chemin}`), ancre) <= 0,
+      `${chemin} ne doit pas etre visite : le budget de la commune y passait`,
+    );
+  }
+});
+
+test("une rubrique qui annonce les deux reste visitee", () => {
+  // Le reglage tient a la difference de poids : -6 l'emporte sur « annuaire » (+3), pas
+  // sur « vie associative » (+6). Une page qui annonce les associations *et* les
+  // commerces parle quand meme des associations.
+  assert.ok(
+    scorerLien(
+      new URL("https://exemple.example/vie-associative/associations-et-commerces"),
+      "Associations et commerces",
+    ) > 0,
+  );
+  assert.ok(scorerLien(new URL("https://exemple.example/associations"), "Associations") > 0);
+});
+
 test("un pluriel qui ne contient pas son singulier est quand meme reconnu", () => {
   // « marches publics » ne contient pas « marche public » : la liste doit porter les
   // deux formes, sinon la rubrique la plus courante des sites de mairie passe.

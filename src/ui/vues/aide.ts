@@ -151,6 +151,23 @@ collecte d'après.</p>
   conserver, avec ce que cela engage ; elle se remet à zéro à chaque lancement de l'outil. L'export,
   lui, ne filtre aucun numéro : il sort ce qui a été collecté.</dd>
 
+  <dt>Certaines communes ne remontent rien, alors qu'elles ont bien un annuaire.</dt>
+  <dd>C'est attendu, et les causes sont connues. La plus fréquente de loin : <strong>aucun site
+  n'est déclaré</strong> pour la commune dans l'Annuaire de l'administration, la seule source
+  d'adresses de l'outil — sur un département testé, deux tiers des communes étaient dans ce cas, et
+  l'outil ne va alors nulle part. Viennent ensuite le <code>robots.txt</code> du site, qui interdit
+  la visite et se respecte sans dérogation ; l'annuaire <strong>affiché par du JavaScript</strong>,
+  que l'outil ne peut pas exécuter, ou <strong>publié en PDF</strong>, qu'il ne télécharge pas ;
+  l'annuaire <strong>paginé</strong> dont les pages suivantes changent d'adresse au point de
+  ne plus rien annoncer, et que l'outil ne reconnaît alors pas comme la suite ; le
+  <strong>budget de vingt pages</strong> par commune, atteint avant d'arriver à la bonne rubrique ;
+  les <strong>mobiles 06/07</strong> écartés par défaut, qui vident une fiche n'ayant qu'un
+  portable ; et enfin des contacts bel et bien collectés mais <strong>écartés du fichier
+  simple</strong>, faute de nom ou d'indice de vie associative — l'écran d'export les compte, et le
+  fichier complet les contient. Pour trancher commune par commune :
+  <code>annuaire communes --departement ${echapperHtml(donnees.departement)}</code> dit, pour
+  chacune, si un site a été trouvé et ce que la visite a donné.</dd>
+
   <dt>Je veux un deuxième département.</dt>
   <dd>La barre du haut : tapez son code, puis lancez la collecte. Sachez que chaque département
   relit le registre national en entier — 1,25 Go à chaque fois — car il n'est pas conservé sur

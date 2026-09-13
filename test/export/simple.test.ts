@@ -5,7 +5,7 @@ import { openDatabase } from "../../src/db/index.ts";
 import { systemClock } from "../../src/clock.ts";
 import { ResolveurMx } from "../../src/http/dns.ts";
 import { normaliser } from "../../src/normalisation/rejeu.ts";
-import { BOM, SEPARATEUR, compterLignes, compterSansNom, lignesCsv } from "../../src/export/csv.ts";
+import { BOM, SEPARATEUR, compterEcartes, compterLignes, lignesCsv } from "../../src/export/csv.ts";
 import { DEPARTEMENT, ajouterSansRna, preparerCorpus } from "../helpers/corpus.ts";
 import type { OptionsExport } from "../../src/export/csv.ts";
 import type { TestContext } from "node:test";
@@ -167,7 +167,7 @@ test("ce que le simple ecarte, le complet le garde — et il dit combien", async
 
   // Deux contacts que rien ne peut nommer : une adresse chez un fournisseur grand
   // public, et un numero — un telephone n'a pas de domaine, donc aucun repli.
-  assert.equal(compterSansNom(db, options), 2);
+  assert.equal(compterEcartes(db, options).sansNom, 2);
 
   const complet = [...lignesCsv(db, { departement: DEPARTEMENT, profil: "complet" })].join("");
   assert.match(complet, /jean\.perdu@gmail\.com/);
@@ -237,4 +237,84 @@ test("une valeur piegeuse reste desamorcee apres avoir ete reunie dans une cellu
   assert.match(brute, /"Club; ""piege"""/);
   // L'adresse commence par « = » : un tableur y verrait une formule.
   assert.match(brute, /'=1\+1@piege\.example/);
+});
+
+/**
+ * Le second reproche du client sur la Loire : « je comprends pas pourquoi il me sort des
+ * trucs qui n'ont rien a voir avec des assoc, genre les garages ».
+ *
+ * Le profil simple ne porte ni provenance ni regime (ADR-032) : une ligne y **affirme**
+ * une structure de la vie associative. Elle doit donc reposer sur un indice.
+ */
+function insererOrphelin(
+  db: ReturnType<typeof openDatabase>,
+  valeur: string,
+  nom: string | null,
+  url: string,
+): void {
+  db.prepare(
+    "INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, is_generique, source_url, " +
+      "methode_extraction, confiance, collected_at, nom_pressenti, nom_pressenti_normalise, " +
+      "nom_pressenti_version) " +
+      "VALUES ((SELECT code_insee FROM commune LIMIT 1), 'email', ?, ?, 1, ?, " +
+      "'dom:mailto', 0.8, 't', ?, ?, 1)",
+  ).run(valeur, valeur, url, nom, nom === null ? null : nom.toLowerCase());
+}
+
+test("un commerce ne sort pas, meme lu sur une page d'associations", (t) => {
+  const db = ouvrir(t);
+  insererOrphelin(db, "contact@garage-pupier.example", "Garage Pupier", "https://bruzou.example/associations");
+  insererOrphelin(db, "contact@amicale-meuniers.example", "Amicale des Meuniers", "https://bruzou.example/associations");
+
+  const noms = new Set(lireSimple(db).map((ligne) => ligne.nom));
+  assert.ok(!noms.has("Garage Pupier"), "une liste de commercants publiee sous /associations reste une liste de commercants");
+  assert.ok(noms.has("Amicale des Meuniers"));
+});
+
+test("un nom que rien n'appuie ne sort pas ; la page d'a cote suffit a l'appuyer", (t) => {
+  const db = ouvrir(t);
+  // Ni « Les Traives » ni « Le Grand Pre » ne disent quoi que ce soit par eux-memes :
+  // c'est la page qui les porte qui tranche.
+  insererOrphelin(db, "traives@exemple.example", "Les Traives", "https://bruzou.example/producteurs-locaux");
+  insererOrphelin(db, "pre@exemple.example", "Le Grand Pre", "https://bruzou.example/vie-associative/annuaire");
+
+  const noms = new Set(lireSimple(db).map((ligne) => ligne.nom));
+  assert.ok(!noms.has("Les Traives"));
+  assert.ok(noms.has("Le Grand Pre"));
+});
+
+test("l'indice se cumule sur tout le groupe, quelle que soit la page qui l'apporte", (t) => {
+  const db = ouvrir(t);
+  // Meme structure vue deux fois : une fois sur l'annuaire, une fois sur une page muette.
+  // Le tri place l'une ou l'autre en tete selon le score ; la ligne ne doit pas en
+  // dependre, sans quoi le fichier changerait sans que la collecte ait change.
+  insererOrphelin(db, "traives@exemple.example", "Les Traives", "https://bruzou.example/actualites");
+  insererOrphelin(db, "traives2@exemple.example", "Les Traives", "https://bruzou.example/vie-associative/annuaire");
+
+  const lignes = lireSimple(db).filter((ligne) => ligne.nom === "Les Traives");
+  assert.equal(lignes.length, 1);
+  assert.equal(lignes[0]?.email, "traives2@exemple.example / traives@exemple.example");
+});
+
+test("un nom deduit d'un domaine exige une page associative ; la mairie, non", (t) => {
+  const db = ouvrir(t);
+  insererOrphelin(db, "contact@cacharathistorique.example", null, "https://bruzou.example/actualites");
+  const noms = new Set(lireSimple(db).map((ligne) => ligne.nom));
+  assert.ok(!noms.has("Cacharathistorique"), "une inference sans corroboration se presenterait comme un fait");
+  // La mairie sort toujours : le libelle dit exactement ce qu'il est, et c'est souvent le
+  // seul contact d'une commune dont le site ne publie pas d'annuaire.
+  assert.ok([...noms].some((nom) => nom.startsWith("Mairie de ")));
+});
+
+test("les ecartes se comptent par motif, et le total annonce reste celui du fichier", (t) => {
+  const db = ouvrir(t);
+  insererOrphelin(db, "contact@garage-pupier.example", "Garage Pupier", "https://bruzou.example/associations");
+  const options: OptionsExport = { departement: DEPARTEMENT, profil: "simple" };
+
+  const { horsSujet } = compterEcartes(db, options);
+  assert.equal(horsSujet, 1, "un contact ecarte faute d'indice se compte a part de ceux qu'on ne sait pas nommer");
+  assert.equal(compterLignes(db, options), [...lignesCsv(db, options)].length - 1);
+
+  const complet = [...lignesCsv(db, { departement: DEPARTEMENT, profil: "complet" })].join("");
+  assert.match(complet, /garage-pupier/, "ce que le simple ecarte, le complet le garde");
 });

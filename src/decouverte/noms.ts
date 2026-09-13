@@ -62,7 +62,7 @@ const TAILLE_TRANCHE = 200;
  * version courante est refait.
  */
 const SQL_A_NOMMER = `
-  SELECT ct.id, ct.kind, ct.valeur_normalisee, ct.code_insee,
+  SELECT ct.id, ct.kind, ct.valeur_normalisee, ct.code_insee, c.nom AS commune,
          p.url_hash, p.url
     FROM contact ct
     JOIN commune c ON c.code_insee = ct.code_insee
@@ -73,7 +73,7 @@ const SQL_A_NOMMER = `
      AND p.campagne = (SELECT max(p2.campagne) FROM page p2
                         WHERE coalesce(p2.final_url, p2.url) = ct.source_url
                           AND p2.code_insee = ct.code_insee)
-   WHERE c.departement = ?
+   WHERE (? IS NULL OR c.departement = ?)
      AND ct.association_id IS NULL
      AND (? = 1 OR ct.nom_pressenti_version IS NULL OR ct.nom_pressenti_version <> ?)
    ORDER BY p.code_insee, p.url_hash, ct.id
@@ -100,7 +100,12 @@ export type ResultatNoms = {
 };
 
 export type OptionsNoms = {
-  departement: string;
+  /**
+   * Absent : tous les departements de la base. C'est ce dont la reparation au demarrage a
+   * besoin — elle repare ce qui est la, et ne sait pas au nom de quel departement le
+   * client va ouvrir l'outil.
+   */
+  departement?: string | undefined;
   /** Reevalue aussi ce que la version courante a deja regarde. */
   tout?: boolean | undefined;
   /** Meme role qu'au rejeu du pre-filtre : journal detaille, et point de crash testable. */
@@ -112,6 +117,7 @@ type LigneANommer = {
   kind: string;
   valeur_normalisee: string;
   code_insee: string;
+  commune: string;
   url_hash: string;
   url: string;
 };
@@ -125,10 +131,11 @@ export function remplirNoms(
   options: OptionsNoms,
 ): ResultatNoms {
   const tout = options.tout === true;
+  const departement = options.departement ?? null;
   const lignes = db
     .prepare(SQL_A_NOMMER)
-    .all(options.departement, tout ? 1 : 0, VERSION_NOM) as unknown as LigneANommer[];
-  const aJour = tout ? 0 : compterAJour(db, options.departement);
+    .all(departement, departement, tout ? 1 : 0, VERSION_NOM) as unknown as LigneANommer[];
+  const aJour = tout ? 0 : compterAJour(db, departement);
 
   let examines = 0;
   let nommes = 0;
@@ -157,7 +164,7 @@ export function remplirNoms(
 
     if (ligne.url_hash !== pageCourante) {
       pageCourante = ligne.url_hash;
-      noms = nomsDeLaPage(cache, ligne.url);
+      noms = nomsDeLaPage(cache, ligne.url, ligne.commune);
     }
 
     // Un cache froid n'est pas un verdict : la ligne n'est **pas** marquee, elle
@@ -200,14 +207,14 @@ export function remplirNoms(
  * resultat garde `nom_pressenti` a `NULL` et recoit sa version : il ne repassera pas, sauf
  * sous `--tout`. C'est ce qui fait converger la passe.
  */
-function compterAJour(db: Database, departement: string): number {
+function compterAJour(db: Database, departement: string | null): number {
   const ligne = db
     .prepare(
       "SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee " +
-        "WHERE c.departement = ? AND ct.association_id IS NULL AND ct.nom_pressenti IS NULL " +
-        "AND ct.nom_pressenti_version = ?",
+        "WHERE (? IS NULL OR c.departement = ?) AND ct.association_id IS NULL " +
+        "AND ct.nom_pressenti IS NULL AND ct.nom_pressenti_version = ?",
     )
-    .get(departement, VERSION_NOM) as { n?: number } | undefined;
+    .get(departement, departement, VERSION_NOM) as { n?: number } | undefined;
   return Number(ligne?.n ?? 0);
 }
 
@@ -221,7 +228,11 @@ function compterAJour(db: Database, departement: string): number {
  *
  * Le cache est adresse par l'URL **demandee**, comme partout ailleurs.
  */
-function nomsDeLaPage(cache: HttpCache, url: string): Map<string, NomPressenti> | undefined {
+function nomsDeLaPage(
+  cache: HttpCache,
+  url: string,
+  commune: string,
+): Map<string, NomPressenti> | undefined {
   const entree = cache.get(url);
   if (entree === undefined) return undefined;
   if (!estHtml(entree.meta.contentType)) return undefined;
@@ -231,7 +242,7 @@ function nomsDeLaPage(cache: HttpCache, url: string): Map<string, NomPressenti> 
 
   const noms = new Map<string, NomPressenti>();
   for (const contact of extraction.contacts) {
-    const trouve = nomPressenti(contact.contextes, contact.empreinte);
+    const trouve = nomPressenti(contact.contextes, contact.empreinte, commune);
     if (trouve !== undefined) noms.set(`${contact.kind} ${contact.valeurNormalisee}`, trouve);
   }
   return noms;

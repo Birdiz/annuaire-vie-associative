@@ -71,6 +71,27 @@ const TERMES_NEGATIFS: readonly string[] = [
 
 const POIDS_NEGATIF = -4;
 
+/**
+ * Rubriques qui listent des entreprises, des commercants ou des exploitants agricoles.
+ *
+ * Elles ne sont pas seulement inutiles, elles sont le premier reproche du client sur la
+ * Loire : « il me sort des trucs qui n'ont rien a voir avec des assoc, genre les
+ * garages ». Une page `/commerces/annuaire-des-entreprises/` marquait +6 — « annuaire »
+ * compte dans le chemin et dans l'ancre — donc elle passait avant la moitie des vraies
+ * rubriques associatives, et le budget de vingt pages y partait.
+ *
+ * **Poids distinct, et plus lourd que les autres negatifs.** A -4 ils n'auraient
+ * qu'annule « annuaire » ; a -6 ils l'emportent. Le reglage se lit ainsi : « vie
+ * associative » (+6 dans le chemin, +6 dans l'ancre) reste plus fort, donc une page qui
+ * annonce les deux — cela existe, « associations et commerces » — est encore visitee.
+ */
+const TERMES_HORS_SUJET: readonly string[] = [
+  "commerc", "entrepris", "artisan", "producteur", "immobili", "assurance",
+  "economique", "developpement economique", "emploi", "professionnel de sante",
+];
+
+const POIDS_HORS_SUJET = -6;
+
 /** Ce qui n'est pas une page : le fetch le decouvrirait, autant l'eviter avant. */
 const EXTENSIONS_REJETEES = new Set([
   "pdf", "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "rtf", "csv",
@@ -138,6 +159,9 @@ export function scorerLien(url: URL, ancre: string): number {
   }
   for (const terme of TERMES_NEGATIFS) {
     if (chemin.includes(terme) || texte.includes(terme)) score += POIDS_NEGATIF;
+  }
+  for (const terme of TERMES_HORS_SUJET) {
+    if (chemin.includes(terme) || texte.includes(terme)) score += POIDS_HORS_SUJET;
   }
   return score;
 }

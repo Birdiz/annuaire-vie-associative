@@ -209,10 +209,12 @@ test("les rebuts trouves sur un departement reel ne passent plus", () => {
 
 test("la ponctuation d'ornement se retire des deux bouts", () => {
   // « Elevage de bovins - » venait d'une cellule de tableau : le tiret n'appartient pas
-  // au nom, et le garder faisait passer l'outil pour negligent.
+  // au nom, et le garder faisait passer l'outil pour negligent. Cet exemple-la est
+  // desormais refuse pour une autre raison — c'est une exploitation, pas une association
+  // — d'ou le nom de remplacement : ce test ne parle que de la ponctuation.
   assert.equal(
-    nomPressenti(["Elevage de bovins - | contact@x.example"], "contact@x.example")?.nom,
-    "Elevage de bovins",
+    nomPressenti(["Ecole de musique - | contact@x.example"], "contact@x.example")?.nom,
+    "Ecole de musique",
   );
 });
 
@@ -261,4 +263,78 @@ test("les cellules d'un tableau, collees par des espaces, se separent quand meme
   // sans la regle des trois espaces, la ligne entiere ferait un seul segment.
   const bloc = "Club de Bruzou    02 99 00 00 00    contact@club.example";
   assert.equal(nomPressenti([bloc], "contact@club.example")?.nom, "Club de Bruzou");
+});
+
+/**
+ * Les valeurs ci-dessous ont toutes ete livrees a un client, dans le fichier de la Loire
+ * ou celui des Vosges. C'est leur seule justification : aucune n'a ete imaginee.
+ */
+test("ce que le client a refuse ne ressort pas", () => {
+  for (const bloc of [
+    "Dans tous les cas contact@x.example",
+    "Entrez en contact avec l'association en ecrivant a contact@x.example",
+    "A partir du 1er decembre 2025 contact@x.example",
+    "Retrouvez toutes les informations ICI contact@x.example",
+    "Cette rubrique est au service des associations. contact@x.example",
+    "Toutes demandes doivent etre adressees par mail a la mairie contact@x.example",
+    "Facebook | contact@x.example",
+    "Site internet | contact@x.example",
+    "Telecopie | contact@x.example",
+    "Page brouillon | contact@x.example",
+    "Directrice | contact@x.example",
+    "Associations / Sports contact@x.example",
+    "Garage Pupier contact@x.example",
+    "Boulangerie Vericel-Guyot contact@x.example",
+    "GAEC Jacquet Elevage contact@x.example",
+    "CS 10 032 - 42160 Andrezieux-Boutheon contact@x.example",
+    "France contact@x.example",
+    "De 8h30 a 12h contact@x.example",
+    "Organisation de bourses aux vetements contact@x.example",
+  ]) {
+    assert.equal(nomPressenti([bloc], "contact@x.example"), undefined, bloc);
+  }
+});
+
+test("ce qui nomme vraiment une structure passe toujours", () => {
+  // Le risque du filtre est ici, pas ailleurs : un filtre trop zele viderait le profil
+  // simple sans que personne ne comprenne pourquoi.
+  for (const [bloc, attendu] of [
+    ["Tennis Club de Bruzou — contact@x.example", "Tennis Club de Bruzou"],
+    ["Accueil de loisirs Les Petites Mains contact@x.example", "Accueil de loisirs Les Petites Mains"],
+    ["Association pour la sauvegarde du patrimoine contact@x.example", "Association pour la sauvegarde du patrimoine"],
+    ["AUTOUR DU LIVRE contact@x.example", "AUTOUR DU LIVRE"],
+    ["LES AMIS DU VIEUX BOUTHEON contact@x.example", "LES AMIS DU VIEUX BOUTHEON"],
+    ["Amicale des secretaires contact@x.example", "Amicale des secretaires"],
+  ] as const) {
+    assert.equal(nomPressenti([bloc], "contact@x.example")?.nom, attendu, bloc);
+  }
+});
+
+test("le nom de la commune n'est pas le nom d'une structure", () => {
+  // Il vient du pied de page ou de l'adresse postale. « Deyvillers » nommait dix-neuf
+  // contacts dans le fichier des Vosges.
+  assert.equal(nomPressenti(["Deyvillers mairie@x.example"], "mairie@x.example", "Deyvillers"), undefined);
+  // Sans la commune, le filtre ne peut rien affirmer : il ne devine pas.
+  assert.equal(nomPressenti(["Deyvillers mairie@x.example"], "mairie@x.example")?.nom, "Deyvillers");
+  // Et il ne mange pas ce qui contient le nom de la commune sans s'y reduire.
+  assert.equal(
+    nomPressenti(["Tennis Club de Deyvillers contact@x.example"], "contact@x.example", "Deyvillers")?.nom,
+    "Tennis Club de Deyvillers",
+  );
+});
+
+test("une region, une rubrique, le nom de la commune : rien de tout cela n'est une structure", () => {
+  // « France Grand Est », lu au bas de trente-sept fiches d'un meme annuaire, reunissait
+  // trente-sept associations sur une seule ligne du fichier livre.
+  for (const [bloc, commune] of [
+    ["France Grand Est contact@x.example", undefined],
+    ["Associations sportives contact@x.example", undefined],
+    ["Associations Patriotiques contact@x.example", undefined],
+    ["Services administratifs contact@x.example", undefined],
+    // Le pied de page ecrit le nom court, la base le nom complet : l'egalite stricte
+    // laissait passer « Plombieres » pour Plombieres-les-Bains.
+    ["Plombieres mairie@x.example", "Plombières-les-Bains"],
+  ] as const) {
+    assert.equal(nomPressenti([bloc], "", commune), undefined, bloc);
+  }
 });

@@ -22,6 +22,7 @@ export type DonneesExport = {
   lignes: number;
   /** Contacts que le profil simple ecarte faute de nom de structure. */
   sansNom: number;
+  horsSujet: number;
   rejetes: number;
   /** Un export pris au milieu d'un run livre un annuaire a moitie note. */
   collecte: EtatCollecte;
@@ -135,12 +136,22 @@ résout. La valeur corrigée en revue, quand il y en a une, sort à côté de la
 </p>`;
   }
 
-  const ecartes =
+  const sansNom =
     donnees.sansNom === 0
       ? ""
       : ` <strong>${nombre(donnees.sansNom)}</strong> contacts sans nom de structure en sont
       écartés — ni le RNA, ni la page, ni le domaine de leur adresse n'ont permis de les
       nommer, et une ligne sans nom ne se travaille pas. Ils restent dans le fichier complet.`;
+
+  const horsSujet =
+    donnees.horsSujet === 0
+      ? ""
+      : ` <strong>${nombre(donnees.horsSujet)}</strong> contacts portent un nom, mais rien
+      n'indique une structure de la vie associative — commerces, services municipaux,
+      personnes citées à côté d'une adresse : ils sont écartés eux aussi, et restent dans le
+      fichier complet.`;
+
+  const ecartes = `${sansNom}${horsSujet}`;
 
   return `<p class="discret">
 Le seuil courant sortirait <strong>${nombre(donnees.lignes)}</strong> lignes.${ecartes}

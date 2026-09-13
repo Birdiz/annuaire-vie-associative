@@ -20,7 +20,8 @@ import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./dec
 import { distributionNormalisation } from "./normalisation/rejeu.ts";
 import { normaliser } from "./normalisation/rejeu.ts";
 import { remplirNoms } from "./decouverte/noms.ts";
-import { compterLignes, compterSansNom, lignesCsv } from "./export/csv.ts";
+import { compterEcartes, compterLignes, lignesCsv } from "./export/csv.ts";
+import { reparerApresMiseAJour } from "./reparation.ts";
 import type { OptionsExport, ProfilExport } from "./export/csv.ts";
 import { demarrerServeur, ADRESSE_ECOUTE } from "./ui/serveur.ts";
 import { PiloteRun } from "./ui/pilote.ts";
@@ -221,13 +222,18 @@ export async function main(argv: readonly string[]): Promise<number> {
   }
 
   /**
-   * Ouvre l'application, **et purge**.
+   * Ouvre l'application, **purge, et repare**.
    *
    * §4.8 dit « execute au demarrage », pas « execute par les commandes qui y pensent ».
    * L'appel vivait dans cinq fonctions sur dix-neuf : `exporter` — la seule commande dont
    * la sortie quitte la machine — pouvait livrer un CSV portant des contacts de plus de
    * trois ans. Le mettre ici est ce qui rend l'invariant vrai par construction : il n'y a
    * plus de liste a tenir a jour. Sur une base propre l'operation ne coute rien.
+   *
+   * La reparation suit le meme raisonnement : une base ecrite par une version anterieure
+   * porte des noms qu'une heuristique corrigee refuserait, et le client qui installe la
+   * nouvelle version exporte souvent dans la foulee. Elle ne s'execute qu'une fois par
+   * version de l'heuristique (src/reparation.ts).
    */
   let dernierePurge: PurgeResult | undefined;
   const ouvrir = (): App => {
@@ -238,6 +244,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       console: !(values.json === true),
     });
     dernierePurge = startupPurge(app);
+    reparerApresMiseAJour(app);
     return app;
   };
 
@@ -950,8 +957,17 @@ function commandeCommunes(
   try {
     const lignes = app.db
       .prepare(
-        "SELECT code_insee, nom, url_mairie, statut_resolution, resolution_source_url " +
-          "FROM commune WHERE departement = ? ORDER BY code_insee LIMIT ?",
+        // `crawl_statut` et `crawl_erreur` existent depuis la migration 4 et n'etaient
+        // exposes nulle part : diagnostiquer « cette commune ne sort rien » demandait
+        // d'ouvrir le fichier SQLite a la main. Les pages visitees et les contacts ecrits
+        // completent la reponse — sans eux, l'etat dit que la visite a reussi, jamais ce
+        // qu'elle a rapporte.
+        "SELECT c.code_insee, c.nom, c.url_mairie, c.statut_resolution, c.resolution_source_url, " +
+          "c.crawl_statut, c.crawl_erreur, " +
+          "(SELECT count(*) FROM page p WHERE p.code_insee = c.code_insee AND p.statut = 'visitee') " +
+          "AS pages_visitees, " +
+          "(SELECT count(*) FROM contact ct WHERE ct.code_insee = c.code_insee) AS contacts " +
+          "FROM commune c WHERE c.departement = ? ORDER BY c.code_insee LIMIT ?",
       )
       .all(departement, lireLimite(limite));
 
@@ -980,7 +996,12 @@ function commandeCommunes(
 
     for (const ligne of lignes) {
       const url = ligne.url_mairie === null ? "—" : String(ligne.url_mairie);
-      process.stdout.write(`${String(ligne.code_insee).padEnd(6)} ${String(ligne.nom).padEnd(32)} ${url}\n`);
+      const etat = etatDeLaCommune(ligne);
+      process.stdout.write(
+        `${String(ligne.code_insee).padEnd(6)} ${String(ligne.nom).padEnd(28)} ` +
+          `${etat.padEnd(16)} ${String(ligne.pages_visitees).padStart(3)} pages ` +
+          `${String(ligne.contacts).padStart(4)} contacts  ${url}\n`,
+      );
     }
     const taux = total === 0 ? 0 : Math.round((resolues / total) * 100);
     process.stdout.write(`\n${resolues}/${total} communes avec une URL de mairie (${taux} %).\n`);
@@ -988,6 +1009,20 @@ function commandeCommunes(
   } finally {
     app.close();
   }
+}
+
+/**
+ * L'etat d'une commune en un mot, pour la colonne du tableau.
+ *
+ * Deux colonnes disent des choses differentes : `statut_resolution` dit si on a trouve un
+ * site, `crawl_statut` ce que la visite a donne. La seconde n'a de sens que si la premiere
+ * a abouti — d'ou l'ordre.
+ */
+function etatDeLaCommune(ligne: Record<string, unknown>): string {
+  const resolution = String(ligne["statut_resolution"] ?? "");
+  if (resolution !== "resolue") return resolution === "sans_site" ? "sans site" : resolution;
+  const crawl = String(ligne["crawl_statut"] ?? "");
+  return crawl === "interdit_robots" ? "robots.txt" : crawl.replace(/_/g, " ");
 }
 
 /** Les associations amorcees, rattachees a leur commune. */
@@ -1550,12 +1585,22 @@ async function commandeExporter(
  */
 function ecartes(db: App["db"], parametres: OptionsExport): string {
   if (parametres.profil !== "simple") return "";
-  const sansNom = compterSansNom(db, parametres);
-  if (sansNom === 0) return "";
-  return (
-    `\n${sansNom} contacts sans nom de structure en ont ete ecartes : ils restent dans ` +
-    `le profil complet.`
-  );
+  const { sansNom, horsSujet } = compterEcartes(db, parametres);
+  const phrases: string[] = [];
+  if (sansNom > 0) {
+    phrases.push(
+      `${sansNom} contacts sans nom de structure en ont ete ecartes : ils restent dans ` +
+        `le profil complet.`,
+    );
+  }
+  if (horsSujet > 0) {
+    phrases.push(
+      `${horsSujet} contacts nommes mais sans indice de vie associative en ont ete ` +
+        `ecartes : commerces, services municipaux, personnes. Ils restent dans le profil ` +
+        `complet.`,
+    );
+  }
+  return phrases.length === 0 ? "" : `\n${phrases.join("\n")}`;
 }
 
 /** `undefined` signifie « valeur invalide » ; l'absence d'option vaut « complet ». */

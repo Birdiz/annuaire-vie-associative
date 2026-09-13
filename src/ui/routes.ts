@@ -64,7 +64,7 @@ import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts"
 import { distributionNormalisation } from "../normalisation/rejeu.ts";
 import { mesurerCouverture } from "../metrics/couverture.ts";
 import { mesurerDormance } from "../metrics/dormance.ts";
-import { compterLignes, compterSansNom, lignesCsv } from "../export/csv.ts";
+import { compterEcartes, compterLignes, lignesCsv } from "../export/csv.ts";
 import type { ProfilExport } from "../export/csv.ts";
 
 export const NOM_COOKIE = "annuaire_jeton";
@@ -402,7 +402,7 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
           avecRejetes,
           profil,
           lignes: compterLignes(ctx.db, options),
-          sansNom: compterSansNom(ctx.db, options),
+          ...compterEcartes(ctx.db, options),
           rejetes: distributionRevue(ctx.db, departement).rejetes,
           collecte: etatCollecte(ctx),
         }),

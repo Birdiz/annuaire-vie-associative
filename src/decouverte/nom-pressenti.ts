@@ -18,6 +18,7 @@
  */
 
 import { MOTIFS_NOM } from "../normalisation/classification.ts";
+import { evoqueUnCommerce, evoqueUneStructure } from "../normalisation/plausibilite.ts";
 import { normaliserNom } from "../texte.ts";
 
 /**
@@ -25,7 +26,7 @@ import { normaliserNom } from "../texte.ts";
  * rend repondable « quels noms sont perimes », et qui sert de marqueur d'idempotence a la
  * passe de rattrapage.
  */
-export const VERSION_NOM = 2;
+export const VERSION_NOM = 3;
 
 export type NomPressenti = {
   nom: string;
@@ -63,7 +64,7 @@ const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/;
  * La suite de trois espaces compte parce que l'adaptateur DOM colle les cellules voisines
  * d'un tableau avec des espaces, et non avec une balise.
  */
-const SEPARATEURS = /[\n\r|•·–—:;,]|\s{3,}/;
+const SEPARATEURS = /[\n\r|•·–—:;,/]|\s{3,}/;
 
 /**
  * Marqueurs de prose. Un segment qui en porte un est une phrase adressee au lecteur, pas
@@ -89,6 +90,19 @@ const PROSE: readonly string[] = [
   "plan du site",
   "mentions legales",
   "tous droits",
+  // Releves sur la Loire, ou ils sortaient comme noms de structure : « Retrouvez toutes
+  // les informations ICI », « Entrez en contact avec l'association en ecrivant a »,
+  // « Toutes demandes doivent etre adressees par mail a la mairie », « Dans tous les
+  // cas », « Cette rubrique est au service des associations ».
+  "retrouvez",
+  "entrez",
+  "doivent",
+  "tous les cas",
+  "au service des",
+  "a partir du",
+  "est disponible",
+  "sont disponibles",
+  "n hesitez",
 ];
 
 /**
@@ -150,6 +164,14 @@ const MOBILIER: readonly string[] = [
   "mairie",
   "hotel de ville",
   "renseignements",
+  // Fonctions : le bloc nomme qui repond, la structure est ailleurs dans la page.
+  "directeur",
+  "directrice",
+  "vice president",
+  "vice presidente",
+  "tresoriere",
+  "referent",
+  "referente",
 ];
 
 /**
@@ -159,7 +181,40 @@ const MOBILIER: readonly string[] = [
  * periscolaire », « Accueil de jeunes » sont des noms de structure. Le tester en prefixe
  * comme les autres jetait la moitie des accueils de loisirs d'un departement.
  */
-const MOBILIER_EXACT: readonly string[] = ["accueil", "infos", "informations", "plan", "menu", "retour"];
+const MOBILIER_EXACT: readonly string[] = [
+  "accueil", "infos", "informations", "plan", "menu", "retour",
+  // Libelles de champ et de lien releves sur les Vosges et la Loire : « Site internet »
+  // nommait 47 contacts, « Facebook » 8, « Mobile » et « Telecopie » autant.
+  "site", "site internet", "site web", "website", "web",
+  "facebook", "page facebook", "instagram", "twitter", "linkedin", "youtube",
+  "mobile", "telecopie", "fax", "portable",
+  "page brouillon", "brouillon",
+  // Rubriques de menu. Elles arrivent seules depuis un fil d'Ariane — « Associations /
+  // Sports » se coupe desormais sur la barre — et ne nomment jamais une structure.
+  "association", "associations", "sport", "sports", "culture", "loisirs",
+  "vie associative", "vie locale", "annuaire", "annuaire des associations",
+  "solidarite", "jeunesse", "sante", "education", "ecoles", "commerces", "entreprises",
+  "diverses", "sportives", "culturelles", "patriotiques", "sportive", "culturelle",
+  "associations sportives", "associations culturelles", "associations diverses",
+  "associations patriotiques", "associations sociales", "associations de loisirs",
+  "services", "services administratifs", "services techniques",
+  // Une region n'est pas une structure. « France Grand Est », lu au bas de trente-sept
+  // fiches d'un meme annuaire, y reunissait trente-sept associations en une seule ligne.
+  "grand est", "france grand est", "auvergne rhone alpes", "bourgogne franche comte",
+  "centre val de loire", "hauts de france", "ile de france", "nouvelle aquitaine",
+  "pays de la loire", "provence alpes cote dazur", "bretagne", "normandie", "occitanie",
+  "corse",
+  "culture animation", "action sociale", "action sociale et solidarite",
+  "services a la personne", "astreinte communale",
+  // Rubriques de services municipaux. Elles sortaient comme structures des que le nom
+  // qui les precedait etait refuse : le segment suivant du bloc prend la place.
+  "elections", "assainissement", "logement", "urbanisme", "dechets",
+  "ordures menageres", "etat civil", "cimetiere", "recensement", "cantine",
+  "periscolaire", "transports", "travaux", "voirie", "auto moto",
+  // Un pays n'est pas une structure. Sans cette entree, le « France » qui termine une
+  // adresse postale reunissait dans une seule ligne les trente adresses d'une commune.
+  "france",
+];
 
 /**
  * Civilites. Un bloc de contact nomme souvent la **personne** avant son adresse — « Mr
@@ -252,12 +307,75 @@ function estUneUrl(segment: string): boolean {
  * « 1000 Sabords » commencent par un chiffre et sont pourtant des noms : c'est le code
  * postal (cinq chiffres) ou la conjonction numero + voie qui tranche.
  */
+/**
+ * Un horaire d'ouverture n'est pas un nom.
+ *
+ * « De 8h30 a 12h », « Lundi - jeudi - vendredi de 09h00 a 12h00 au » : la part de
+ * chiffres reste sous le plafond, et la casse ne trahit rien. C'est le « h » colle au
+ * nombre qui tranche, et aucun nom d'association du RNA ne l'ecrit ainsi.
+ */
+function porteUnHoraire(normalise: string): boolean {
+  return /\b\d{1,2} ?h(?:\d{2})?\b/.test(normalise);
+}
+
 function estUneAdresse(normalise: string): boolean {
   // Le code postal s'ecrit « 35130 » comme « 35 130 » : les deux ouvrent une adresse.
   if (/^\d{5}\b/.test(normalise) || /^\d{2} ?\d{3}\b/.test(normalise)) return true;
+  // Il ne l'ouvre pas toujours : « CS 10 032 - 42160 Andrezieux-Boutheon » est une
+  // adresse de service, et elle sortait comme nom de structure. Cinq chiffres colles
+  // n'apparaissent dans aucun nom d'association du RNA.
+  if (/\b\d{5}\b/.test(normalise)) return true;
   const borne = ` ${normalise} `;
   const voie = VOIE.some((mot) => borne.includes(` ${mot} `));
   return voie && (/^\d/.test(normalise) || VOIE.some((mot) => normalise.startsWith(`${mot} `)));
+}
+
+/**
+ * Une phrase en casse de phrase n'est pas un nom.
+ *
+ * Le signal : dans un nom de structure, plusieurs mots portent la majuscule — « Les Amis
+ * du Vieux Boutheon », « ANDREZIEUX BOUTHEON BADMINTON CLUB ». Dans une phrase, seul le
+ * premier la porte : « Organisation de bourses aux vetements », « Cette rubrique est au
+ * service des associations ». La regle ne s'applique qu'a partir de cinq mots, ou la
+ * difference devient franche, et jamais a un texte qui nomme un groupement — « Association
+ * pour la sauvegarde du patrimoine » n'a qu'une majuscule et reste un nom.
+ */
+function estUnePhrase(segment: string, normalise: string): boolean {
+  const mots = segment.split(/\s+/).filter((mot) => mot !== "");
+  if (mots.length < 5) return false;
+  if (evoqueUneStructure(normalise)) return false;
+  const majuscules = mots.filter((mot) => /^\p{Lu}/u.test(mot)).length;
+  return majuscules <= 1;
+}
+
+/**
+ * Le segment se reduit-il au nom de la commune ?
+ *
+ * « Deyvillers », « Fraize », « Andrezieux-Boutheon » nommaient des structures dans les
+ * fichiers livres : c'est le pied de page ou l'adresse postale qui les met la. La commune
+ * est connue des deux appelants — le crawl et la passe de rattrapage — donc le filtre est
+ * exact plutot qu'heuristique.
+ */
+function estLaCommune(normalise: string, commune: string | undefined): boolean {
+  if (commune === undefined || commune === "") return false;
+  const nom = normaliserNom(commune);
+  if (nom.length < LONGUEUR_MIN) return false;
+  // L'egalite ne suffit pas : « Plombieres » nommait cinq structures de
+  // Plombieres-les-Bains. Le pied de page ecrit le nom court, la base le nom complet.
+  return normalise === nom || nom.startsWith(`${normalise} `) || normalise.startsWith(`${nom} `);
+}
+
+/**
+ * Le texte serait-il accepte comme nom de structure par l'heuristique **courante** ?
+ *
+ * Exportee pour la reparation au demarrage. Un nom ecrit par une version anterieure ne se
+ * recalcule qu'en relisant la page, et le cache ne la detient pas toujours — mais la
+ * question « ce nom-la passerait-il aujourd'hui ? » ne demande que la chaine. C'est ce
+ * qui permet d'effacer les « Site internet » et les « France Grand Est » d'une base dont
+ * le cache a disparu, sans rien inventer a la place.
+ */
+export function nomEncoreAcceptable(nom: string, commune?: string | undefined): boolean {
+  return acceptable(nom, commune);
 }
 
 /**
@@ -270,15 +388,20 @@ function estUneAdresse(normalise: string): boolean {
 export function nomPressenti(
   contextes: readonly string[],
   empreinte: string,
+  commune?: string | undefined,
 ): NomPressenti | undefined {
   for (const contexte of contextes.slice(0, CONTEXTES_EXAMINES)) {
-    const trouve = depuisUnBloc(contexte, empreinte);
+    const trouve = depuisUnBloc(contexte, empreinte, commune);
     if (trouve !== undefined) return trouve;
   }
   return undefined;
 }
 
-function depuisUnBloc(contexte: string, empreinte: string): NomPressenti | undefined {
+function depuisUnBloc(
+  contexte: string,
+  empreinte: string,
+  commune: string | undefined,
+): NomPressenti | undefined {
   const { texte, coupure } = sansContacts(contexte, empreinte);
   if (coupure === -1) return undefined;
 
@@ -293,7 +416,9 @@ function depuisUnBloc(contexte: string, empreinte: string): NomPressenti | undef
   ];
 
   for (const { segment, source } of candidats) {
-    if (acceptable(segment)) return { nom: segment, normalise: normaliserNom(segment), source };
+    if (acceptable(segment, commune)) {
+      return { nom: segment, normalise: normaliserNom(segment), source };
+    }
   }
   return undefined;
 }
@@ -336,7 +461,7 @@ function decouper(morceau: string): string[] {
  * On **rejette** plutot que de tronquer, toujours : couper un segment trop long
  * fabriquerait un nom qui n'a jamais existe sur aucune page.
  */
-function acceptable(segment: string): boolean {
+function acceptable(segment: string, commune?: string | undefined): boolean {
   const normalise = normaliserNom(segment);
   if (normalise.length < LONGUEUR_MIN || normalise.length > LONGUEUR_MAX) return false;
   if (normalise.split(" ").length > MOTS_MAX) return false;
@@ -351,6 +476,12 @@ function acceptable(segment: string): boolean {
 
   if (PROSE.some((marqueur) => ` ${normalise} `.includes(` ${marqueur} `))) return false;
   if (MOBILIER_EXACT.includes(normalise)) return false;
+  if (estUnePhrase(segment, normalise)) return false;
+  if (porteUnHoraire(normalise)) return false;
+  if (estLaCommune(normalise, commune)) return false;
+  // Un commerce, une entreprise, une exploitation : le client de la Loire les a refuses
+  // en bloc, et il a raison — l'outil dresse un annuaire de la vie associative.
+  if (evoqueUnCommerce(normalise)) return false;
   if (CIVILITES.some((mot) => normalise.startsWith(`${mot} `))) return false;
   if (estUneAdresse(normalise)) return false;
   if (estUneUrl(segment)) return false;

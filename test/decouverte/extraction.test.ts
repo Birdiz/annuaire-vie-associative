@@ -315,3 +315,50 @@ test("le nettoyage est le meme pour une adresse lue et pour une adresse saisie e
     assert.equal(nettoyerEmail(saisie), "club@asso.example", `saisie non nettoyee : ${saisie}`);
   }
 });
+
+/**
+ * Un bloc qui porte vingt contacts ne nomme aucun des vingt.
+ *
+ * Le cas vient d'une page reelle : chaque cellule ne portait que « Mr Frederic SCHNEIDER »,
+ * et le bloc suivant — la section entiere — donnait au rattachement le premier nom du RNA
+ * venu, pour les vingt et un contacts de la page. Le fichier livre annoncait une
+ * association et fournissait les adresses de vingt autres.
+ */
+test("un bloc qui empile les contacts ne sert plus de contexte", () => {
+  const fiches = Array.from(
+    { length: 6 },
+    (_, i) => `<li>Mr Untel ${i} <a href="mailto:c${i}@x.example">ecrire</a></li>`,
+  ).join("");
+  const doc = analyser(
+    `<html><body><article><h2>Societe de chasse communale</h2><ul>${fiches}</ul></article></body></html>`,
+    "https://x.example/associations",
+  );
+  const { contacts } = extraireContacts(doc, { avecMobiles: false });
+  assert.equal(contacts.length, 6);
+
+  for (const contact of contacts) {
+    for (const contexte of contact.contextes) {
+      assert.ok(
+        !contexte.includes("Societe de chasse"),
+        "le conteneur porte le nom de la rubrique, pas celui de la structure du contact",
+      );
+    }
+  }
+});
+
+test("la fiche d'une structure garde son contexte, fixe et courriel compris", () => {
+  // Trois contacts dans un meme bloc restent la marque d'une fiche : un fixe, un mobile
+  // et une adresse. C'est la limite haute, et elle doit passer.
+  const doc = analyser(
+    "<html><body><ul><li>Tennis Club de Bruzou 02 99 00 00 01 06 12 34 56 78 " +
+      '<a href="mailto:contact@tennis.example">contact@tennis.example</a></li></ul></body></html>',
+    "https://x.example/associations",
+  );
+  const { contacts } = extraireContacts(doc, { avecMobiles: true });
+  const courriel = contacts.find((c) => c.kind === "email");
+  assert.ok(courriel !== undefined);
+  assert.ok(
+    courriel.contextes.some((contexte) => contexte.includes("Tennis Club de Bruzou")),
+    "sans ce contexte, plus aucune structure ne serait nommee",
+  );
+});

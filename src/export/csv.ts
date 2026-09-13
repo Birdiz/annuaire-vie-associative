@@ -24,6 +24,7 @@
 
 import {
   SQL_FOURNISSEURS_PUBLICS,
+  SQL_NON_INSTITUTIONNEL,
   domaineDuContact,
   estDomaineDeMairie,
   estDomaineSpecifique,
@@ -31,6 +32,8 @@ import {
   libelleDepuisDomaine,
 } from "./domaine.ts";
 import { classer } from "../normalisation/classification.ts";
+import { estStructurePlausible } from "../normalisation/plausibilite.ts";
+import { scorerLien } from "../decouverte/scoring.ts";
 import type { Database } from "../db/index.ts";
 
 export const SEPARATEUR = ";";
@@ -203,6 +206,7 @@ const DOMAINE_SPECIFIQUE = `
    AND instr(domaine, 'xn--') = 0
    AND NOT ${ADRESSE_MALFORMEE}
    AND domaine NOT IN (${SQL_FOURNISSEURS_PUBLICS})
+   AND ${SQL_NON_INSTITUTIONNEL}
    AND NOT ${DOMAINE_DE_MAIRIE})
 `;
 
@@ -293,6 +297,7 @@ const SQL_GROUPES = `
            CASE WHEN ct.kind = 'email' AND instr(ct.valeur_normalisee, '@') > 0
                 THEN substr(ct.valeur_normalisee, instr(ct.valeur_normalisee, '@') + 1)
            END AS domaine,
+           ct.source_url,
            ${URL_NUE} AS url_nue
       FROM contact ct
       JOIN commune c ON c.code_insee = ct.code_insee
@@ -331,6 +336,7 @@ type LigneGroupe = {
   nom_pressenti: string | null;
   domaine: string | null;
   hote_mairie: string;
+  source_url: string;
 };
 
 /** Un groupe en cours d'accumulation : une structure, ses numeros, ses adresses. */
@@ -340,6 +346,12 @@ type Groupe = {
   commune: string;
   nom: string;
   type: string;
+  /**
+   * L'indice s'accumule sur **toutes** les pages du groupe. Un club nomme sur l'annuaire
+   * des associations et repris sur la page d'accueil ne doit pas dependre de celle des
+   * deux que le tri place en tete.
+   */
+  pageAssociative: boolean;
   /** `Set` et non tableau : deux graphies d'une meme valeur ne sortent pas deux fois. */
   telephones: Set<string>;
   emails: Set<string>;
@@ -407,6 +419,21 @@ function* lignesSimples(db: Database, options: OptionsExport): Generator<string>
  * groupes deja agreges, c'est quelques millisecondes.
  */
 function* groupesSimples(db: Database, options: OptionsExport): Generator<Groupe> {
+  for (const juge of tousLesGroupes(db, options)) {
+    if (juge.retenu) yield juge.groupe;
+  }
+}
+
+/** Un groupe et son verdict. Le comptage a besoin des deux, le rendu du seul retenu. */
+type GroupeJuge = { groupe: Groupe; retenu: boolean };
+
+/**
+ * Tous les groupes que la cascade sait nommer, chacun avec son verdict de plausibilite.
+ *
+ * Un seul parcours, deux usages : `groupesSimples` n'en garde que les retenus,
+ * `compterEcartes` a besoin des autres pour dire ce qui manque au fichier.
+ */
+function* tousLesGroupes(db: Database, options: OptionsExport): Generator<GroupeJuge> {
   const lignes = db
     .prepare(SQL_SIMPLE)
     .iterate(...parametres(options)) as unknown as Iterable<LigneGroupe>;
@@ -414,7 +441,7 @@ function* groupesSimples(db: Database, options: OptionsExport): Generator<Groupe
   let courant: Groupe | undefined;
   for (const ligne of lignes) {
     if (courant !== undefined && courant.cle !== ligne.cle) {
-      yield courant;
+      yield { groupe: courant, retenu: plausible(courant) };
       courant = undefined;
     }
     if (courant === undefined) {
@@ -423,10 +450,52 @@ function* groupesSimples(db: Database, options: OptionsExport): Generator<Groupe
       if (ouvert === undefined) continue;
       courant = ouvert;
     }
+    // L'indice se cumule sur toutes les lignes du groupe, d'ou la lecture ici et non a
+    // l'ouverture : le groupe n'est juge qu'une fois complet.
+    if (vocabulaireAssociatif(ligne.source_url)) courant.pageAssociative = true;
     if (ligne.kind === "phone") courant.telephones.add(ligne.publiable);
     else courant.emails.add(ligne.publiable);
   }
-  if (courant !== undefined) yield courant;
+  if (courant !== undefined) yield { groupe: courant, retenu: plausible(courant) };
+}
+
+/**
+ * La page d'ou vient le contact parle-t-elle d'associations ?
+ *
+ * Un seul signal, deja en base, et ce n'est pas un jugement nouveau : le vocabulaire de
+ * l'URL, lu par la **meme** `scorerLien` qui a decide de la visiter. Donc les termes hors
+ * sujet ajoutes au crawl retirent aussi les garages d'une base **deja collectee**.
+ *
+ * Le verdict du pre-filtre a ete essaye a cote, et retire : sur les 881 contacts nommes du
+ * 88, il n'en sauvait **aucun** que le vocabulaire ne sauvait deja, et il coutait deux
+ * sous-requetes correlees par ligne — sept secondes sur l'ecran d'export. Un signal qui
+ * n'ajoute rien n'est pas un signal.
+ */
+function vocabulaireAssociatif(url: string): boolean {
+  try {
+    return scorerLien(new URL(url), "") > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Le groupe merite-t-il une ligne ? Le faisceau d'indices vit dans `plausibilite.ts` ; ce
+ * qui reste ici est la traduction des cles de groupe en indices.
+ */
+function plausible(groupe: Groupe): boolean {
+  const premiere = groupe.cle.charAt(0);
+  // La branche « mairie » sort toujours : « Mairie de Dogneville » ne se fait passer pour
+  // rien d'autre que ce qu'elle est, et c'est souvent le seul contact d'une commune dont
+  // le site ne publie pas d'annuaire. Ce que le faisceau protege, c'est la ligne qui
+  // **affirme** une association sans en etre une.
+  if (premiere === "M") return true;
+  return estStructurePlausible({
+    rattacheeAuRna: premiere === "A",
+    nom: groupe.nom,
+    nomInfere: premiere === "D",
+    pageAssociative: groupe.pageAssociative,
+  });
 }
 
 /**
@@ -444,6 +513,7 @@ function ouvrirGroupe(ligne: LigneGroupe): Groupe | undefined {
     commune: ligne.commune,
     nom,
     type: typeDuGroupe(ligne, nom),
+    pageAssociative: false,
     telephones: new Set<string>(),
     emails: new Set<string>(),
   };
@@ -523,17 +593,26 @@ export function compterLignes(db: Database, options: OptionsExport): number {
   return Number(ligne?.n ?? 0);
 }
 
+/** Ce que le profil simple laisse de cote, par motif. */
+export type Ecartes = {
+  /** Aucune branche de la cascade ne les nomme, ou le libelle n'etait pas presentable. */
+  sansNom: number;
+  /** Nommes, mais rien n'indique une structure de la vie associative. */
+  horsSujet: number;
+};
+
 /**
- * Contacts que le profil simple ecarte faute de nom.
+ * Contacts que le profil simple ecarte, et pourquoi.
  *
  * Ce n'est pas un ornement : sans ce compte, l'exclusion est silencieuse et la personne
  * qui compare les deux fichiers conclut a une perte de donnees. Il alimente le message
  * de la CLI et l'ecran d'export.
  *
- * Il compte les contacts **absents du fichier** : ceux qu'aucune branche de la cascade
- * n'a retenus, et ceux dont le groupe a ete abandonne faute de libelle presentable.
+ * Les deux motifs se disent separement parce qu'ils appellent des gestes differents : un
+ * contact sans nom se rattrape (`annuaire noms`, une correction en revue), un contact hors
+ * sujet est une decision de l'outil, et c'est le profil complet qui le porte.
  */
-export function compterSansNom(db: Database, options: OptionsExport): number {
+export function compterEcartes(db: Database, options: OptionsExport): Ecartes {
   const retenus = db
     .prepare(`${SQL_GROUPES} SELECT count(*) AS n FROM groupes WHERE cle IS NOT NULL`)
     .get(...parametres(options)) as { n?: number } | undefined;
@@ -541,11 +620,17 @@ export function compterSansNom(db: Database, options: OptionsExport): number {
     .prepare(`${SQL_GROUPES} SELECT count(*) AS n FROM groupes WHERE cle IS NULL`)
     .get(...parametres(options)) as { n?: number } | undefined;
 
-  let rendus = 0;
-  for (const groupe of groupesSimples(db, options)) {
-    rendus += groupe.telephones.size + groupe.emails.size;
+  let nommes = 0;
+  let horsSujet = 0;
+  for (const { groupe, retenu } of tousLesGroupes(db, options)) {
+    const contacts = groupe.telephones.size + groupe.emails.size;
+    nommes += contacts;
+    if (!retenu) horsSujet += contacts;
   }
-  return Number(sansCle?.n ?? 0) + Math.max(0, Number(retenus?.n ?? 0) - rendus);
+  return {
+    sansNom: Number(sansCle?.n ?? 0) + Math.max(0, Number(retenus?.n ?? 0) - nommes),
+    horsSujet,
+  };
 }
 
 /** Les quatre parametres lies, dans l'ordre attendu par toutes les requetes de ce module. */

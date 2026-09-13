@@ -133,12 +133,48 @@ acceptait — ce qui livrait des lignes nommees « ffr.fr ». Un chiffre annonce
 fichier ne tient pas est pire qu'un ecran muet ; deux chemins qui doivent s'accorder
 finissent toujours par diverger.
 
+**Une ligne du profil simple affirme une association**, puisqu'elle ne porte ni provenance
+ni regime. Elle doit donc reposer sur un indice (ADR-034) : le RNA, du vocabulaire de
+structure dans le nom, ou une page a vocabulaire associatif. Le vocabulaire commercial
+l'emporte sur les trois. Le filtre est en trois couches — ne pas visiter, ne pas nommer, ne
+pas livrer — parce qu'elles ne protegent pas les memes bases : la premiere ne vaut que pour
+les collectes a venir, la deuxieme repare une base par `annuaire noms` en relisant le cache,
+la troisieme ne lit que la base et rattrape donc un poste dont le cache a ete purge.
+`scorerLien` sert au crawl **et** d'indice a l'export : c'est ce qui retire les garages d'un
+departement deja collecte, sans recollecte.
+
 Le nom des structures que le RNA ignore vient d'une cascade (ADR-033) : nom RNA, puis nom
 lu dans le bloc DOM, puis deduction depuis le domaine, puis « Mairie de ». Un groupe que
 rien ne nomme est **ecarte**, et le compte des ecartes est annonce — sans lui, l'exclusion
 se lit comme une perte de donnees. `annuaire noms` rattrape une base deja collectee sans
 reseau, en relisant le cache ; `nom_pressenti_version` y sert de marqueur, et c'est lui —
 jamais la presence d'un nom — qui decide de ce qui est refait.
+
+## Reparer une base ecrite par une version anterieure
+
+Corriger une heuristique ne suffit pas : le client a deja une base, et il exporte souvent
+juste apres avoir installe la nouvelle version. Deux mecanismes, et la frontiere entre eux
+est ce dont ils ont besoin (ADR-035).
+
+- **Ce qui se repare en SQL vit dans une migration.** Elle s'applique a l'ouverture, sans
+  commande, et sans le cache — lequel se purge. C'est la que vit le detachement des
+  rattachements de conteneur (migration 12).
+- **Ce qui demande de relire la page vit dans `src/reparation.ts`**, appelee par le
+  `ouvrir()` commun de `cli.ts`, comme la purge. Elle rejoue le nommage depuis le cache, et
+  **efface** — sans rien mettre a la place — les noms que le filtre courant refuse et
+  qu'aucune page ne permet plus de recalculer.
+
+Un marqueur `metric(reparation, nom_pressenti_version)` la limite a **une execution par
+version d'heuristique**. Sans lui, une base dont le cache a disparu repasserait sur tous ses
+contacts a chaque commande.
+
+## Un bloc qui porte tous les contacts n'en nomme aucun
+
+`extraction.ts` retire des `contextes` les blocs qui portent plus de
+`CONTACTS_MAX_PAR_BLOC` contacts. Le rattachement et le nommage en heritent sans le savoir.
+Sans ce plafond, la section entiere d'une page d'annuaire servait de contexte a chacun de
+ses vingt contacts, et le premier nom du RNA qui s'y trouvait leur etait donne a tous : 90
+adresses livrees sous un seul club. Une ligne fausse est pire qu'une ligne hors sujet.
 
 ## Une seule porte d'entree DOM
 
