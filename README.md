@@ -41,9 +41,9 @@ Docker et injecté dans l'exécutable Windows
 
 | Cible | Poids | Ce qu'elle demande |
 |---|---|---|
-| [Exécutable Windows](../../releases) | 88,5 Mo | rien |
-| Paquet npm (`npx`) | 132 Ko | Node 24+ |
-| Image Docker | 163 Mo | Docker |
+| [Exécutable Windows](../../releases) | 89,6 Mo | rien |
+| Paquet npm (`npx`) | 158 Ko | Node 24+ |
+| Image Docker | 164 Mo | Docker |
 
 **Exécutable Windows.** `annuaire.exe` se télécharge depuis la page
 [Releases](../../releases) : double-clic, l'interface s'ouvre dans le navigateur. Le binaire n'est
@@ -80,14 +80,14 @@ nominatif et payant — que ce dépôt ne prend pas à la place de la collectivi
 **npx.** Le paquet n'est pas publié à ce jour : il s'installe depuis un tarball construit sur place.
 
 ```bash
-npm pack && npm install ./annuaire-vie-associative-0.1.0.tgz && npx annuaire ui
+npm install "$(npm pack | tail -1)" && npx annuaire ui
 ```
 
 **Docker.** L'image sert le pipeline, avec `/data` en volume : la base, le cache HTTP et les dumps
 survivent au conteneur.
 
 ```bash
-docker build -t annuaire:0.1.0 . && docker run --rm -v annuaire:/data annuaire:0.1.0 run --departement 35
+docker build -t annuaire . && docker run --rm -v annuaire:/data annuaire run --departement 35
 ```
 
 L'interface, elle, ne se publie pas par `-p` : elle n'écoute que sur `127.0.0.1`, qui dans un
