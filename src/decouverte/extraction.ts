@@ -33,6 +33,9 @@ export type ContactExtrait = {
    * Textes des blocs qui portent le contact, du plus etroit au plus large. Le
    * rattachement les parcourt dans cet ordre : la cellule d'un tableau ne contient
    * que l'adresse, c'est la ligne qui porte aussi le nom de l'association.
+   *
+   * **Les blocs qui portent plusieurs contacts en sont exclus** — voir
+   * `CONTACTS_MAX_PAR_BLOC`. Un bloc qui en porte vingt ne nomme aucun des vingt.
    */
   contextes: readonly string[];
   /**
@@ -134,6 +137,28 @@ export function reparerArobaseMasquee(brut: string): string | undefined {
 const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/g;
 
 /**
+ * Au-dela, un bloc n'est plus la fiche d'une structure : c'est le conteneur qui les
+ * empile, et il ne nomme aucune d'entre elles.
+ *
+ * Sans ce plafond, un contact dont la cellule ne porte que « Mr Frederic SCHNEIDER »
+ * retombait sur le bloc suivant — la section entiere, 4 582 caracteres et vingt et un
+ * contacts — ou `rattacher` trouvait le premier nom du RNA venu et le lui donnait. Sur un
+ * departement reel : 90 adresses livrees sous « BADMINTON CLUB SAINT-DIE-DES-VOSGES »,
+ * 53 sous « BIBLIOTHEQUE PATRIMONIALE DU DIOCESE », 21 sous « SOCIETE DE CHASSE
+ * COMMUNALE ARCHETTES-VOSGES ». Une ligne qui nomme une association et livre les adresses
+ * de vingt autres est plus trompeuse qu'une ligne « Garage Pupier » : elle est fausse au
+ * lieu d'etre hors sujet.
+ *
+ * **Trois, mesure sur les Vosges.** La fiche d'une structure porte souvent un fixe, un
+ * mobile et une adresse ; au-dela, on n'a jamais trouve de fiche. Le balayage des 1 184
+ * pages visitees donne, selon le plafond : 1 → 40 rattachements, 2 → 179, 3 → 236,
+ * 4 → 270 mais sept conteneurs reviennent, sans plafond → 906 dont un groupe de 147.
+ * Le plafond ecarte 382 des 506 rattachements de la base ; verifies un par un sur un
+ * echantillon, ils etaient faux.
+ */
+export const CONTACTS_MAX_PAR_BLOC = 3;
+
+/**
  * Parties locales qui designent une fonction et non une personne.
  *
  * La liste est comparee aux **jetons** de la partie locale — les segments separes par
@@ -160,6 +185,10 @@ export function extraireContacts(
   const trouves: ContactExtrait[] = [];
   let mobilesExclus = 0;
 
+  // Compte une fois par page, et non une fois par contact : les blocs sont imbriques, et
+  // un `article` se relirait autant de fois qu'il porte d'adresses.
+  const porteurs = compterContactsParBloc(doc.blocs);
+
   const ajouterEmail = (brut: string, methode: string, confiance: number, empreinte: string): void => {
     const valeur = nettoyerEmail(brut);
     if (valeur === undefined) return;
@@ -170,7 +199,7 @@ export function extraireContacts(
       isGenerique: classerEmail(valeur),
       methode,
       confiance,
-      contextes: contextesDe(doc.blocs, empreinte),
+      contextes: contextesDe(doc.blocs, empreinte, porteurs),
       empreinte,
     });
   };
@@ -189,7 +218,7 @@ export function extraireContacts(
       isGenerique: null,
       methode,
       confiance,
-      contextes: contextesDe(doc.blocs, empreinte),
+      contextes: contextesDe(doc.blocs, empreinte, porteurs),
       empreinte,
     });
   };
@@ -260,19 +289,50 @@ function contexteUtile(candidat: ContactExtrait, connu: ContactExtrait): boolean
 }
 
 /**
- * Tous les blocs qui portent l'empreinte, du plus etroit au plus large. On ne peut
- * pas trancher ici : le bon niveau est celui qui contiendra un nom d'association, et
- * seul le rattachement le sait.
+ * Tous les blocs qui portent l'empreinte **et ne portent qu'elle, ou presque**, du plus
+ * etroit au plus large.
+ *
+ * On ne tranche toujours pas entre les niveaux retenus — le bon est celui qui contiendra
+ * un nom d'association, et seul le rattachement le sait. Mais on sait dire, ici et sans
+ * rien deviner, lesquels ne peuvent designer personne : ceux qui empilent plus de
+ * `CONTACTS_MAX_PAR_BLOC` contacts.
  */
-function contextesDe(blocs: readonly Bloc[], empreinte: string): readonly string[] {
+function contextesDe(
+  blocs: readonly Bloc[],
+  empreinte: string,
+  porteurs: readonly number[],
+): readonly string[] {
   if (empreinte === "") return [];
   const portants: string[] = [];
-  for (const bloc of blocs) {
+  blocs.forEach((bloc, rang) => {
+    if ((porteurs[rang] ?? 1) > CONTACTS_MAX_PAR_BLOC) return;
     if (bloc.texte.includes(empreinte) || bloc.liens.some((lien) => lien.href === empreinte)) {
       portants.push(bloc.texte);
     }
-  }
+  });
   return portants.sort((a, b) => a.length - b.length);
+}
+
+/**
+ * Combien de contacts distincts chaque bloc porte.
+ *
+ * Les memes motifs que l'extraction, plus les `mailto:`/`tel:` du bloc : compter autrement
+ * ferait diverger le plafond de ce qu'il est cense compter. Les valeurs sont reduites a
+ * leur forme comparable — minuscules pour une adresse, chiffres seuls pour un numero —
+ * pour qu'un `mailto:` et le texte du lien qui le repete ne comptent qu'une fois.
+ */
+function compterContactsParBloc(blocs: readonly Bloc[]): number[] {
+  return blocs.map((bloc) => {
+    const vus = new Set<string>();
+    for (const trouve of bloc.texte.matchAll(EMAIL)) vus.add(trouve[0].toLowerCase());
+    for (const trouve of bloc.texte.matchAll(TELEPHONE)) vus.add(trouve[0].replace(/\D/g, ""));
+    for (const lien of bloc.liens) {
+      const bas = lien.href.toLowerCase();
+      if (bas.startsWith("mailto:")) vus.add((bas.slice("mailto:".length).split("?")[0] ?? "").trim());
+      else if (bas.startsWith("tel:")) vus.add(bas.slice("tel:".length).replace(/\D/g, ""));
+    }
+    return vus.size;
+  });
 }
 
 function decoderSansEchec(valeur: string): string {

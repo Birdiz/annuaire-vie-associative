@@ -735,4 +735,97 @@ CREATE INDEX idx_contact_a_nommer ON contact (code_insee)
   WHERE association_id IS NULL AND nom_pressenti_version IS NULL;
 `,
   },
+  {
+    version: 12,
+    name: "detacher-les-rattachements-de-conteneur",
+    sql: `
+--------------------------------------------------------------------------------
+-- Reparer les contacts rattaches a une association par un bloc qui les portait tous
+--------------------------------------------------------------------------------
+
+-- Le rattachement lit le nom d'une association dans les blocs DOM qui portent le contact,
+-- du plus etroit au plus large. Quand la cellule etroite ne porte que « Mr Frederic
+-- SCHNEIDER », il passait au bloc suivant — la section entiere, vingt et un contacts — et
+-- y prenait le premier nom du RNA venu, pour chacun des vingt et un.
+--
+-- Le fichier livre affichait donc une association et, sur la meme ligne, les adresses de
+-- vingt autres : 90 sous « BADMINTON CLUB SAINT-DIE-DES-VOSGES », 53 sous « BIBLIOTHEQUE
+-- PATRIMONIALE DU DIOCESE », 21 sous « SOCIETE DE CHASSE COMMUNALE ARCHETTES-VOSGES ».
+-- C'est pire qu'une ligne hors sujet : c'est une ligne fausse.
+--
+-- 'extraction.ts' l'empeche desormais (CONTACTS_MAX_PAR_BLOC) — mais seulement pour ce
+-- qui sera collecte ensuite. Cette migration repare ce qui est **deja en base**, sans
+-- reseau et sans relire le cache, lequel a pu etre purge : elle detache les rattachements
+-- dont le groupe (commune, association, page) porte quatre contacts ou plus.
+--
+-- **Quatre, et le chiffre se justifie.** Avec le nouveau plafond, aucun groupe du
+-- departement temoin ne depasse trois contacts. Confronte page par page a ce que le code
+-- corrige aurait decide, ce seuil retire 364 des 382 rattachements devenus faux, et n'en
+-- emporte que 3 qui auraient ete gardes. Voir docs/adr/035-un-bloc-qui-porte-tout-ne-nomme-rien.md.
+--
+-- Detacher ne perd rien : le contact reste, avec sa provenance ; il retombe sur le nom lu
+-- dans son bloc, puis sur son domaine (ADR-033), et le faisceau d'indices de l'ADR-034
+-- decide s'il merite une ligne du profil simple.
+
+-- 1. Les doublons que le detachement ferait apparaitre.
+--
+-- Les deux index uniques partiels ne se voient pas l'un l'autre : la meme adresse peut
+-- exister une fois rattachee et une fois orpheline. Detacher la premiere violerait
+-- l'index des orphelins. On la supprime donc, ce qui rend exactement ce qu'une collecte
+-- avec le code corrige aurait ecrit : une seule ligne orpheline. Meme regle que
+-- 'normalisation/dedup.ts', appliquee ici par necessite plutot que par hygiene.
+DELETE FROM contact WHERE id IN (
+  WITH conteneurs AS (
+    SELECT code_insee, association_id, source_url
+      FROM contact
+     WHERE association_id IS NOT NULL
+     GROUP BY code_insee, association_id, source_url
+    HAVING count(*) >= 4
+  ), a_detacher AS (
+    SELECT ct.id, ct.code_insee, ct.kind, ct.valeur_normalisee
+      FROM contact ct
+      JOIN conteneurs c
+        ON c.code_insee = ct.code_insee
+       AND c.association_id = ct.association_id
+       AND c.source_url = ct.source_url
+  )
+  SELECT d.id FROM a_detacher d
+   WHERE EXISTS (
+           SELECT 1 FROM contact o
+            WHERE o.association_id IS NULL
+              AND o.code_insee = d.code_insee
+              AND o.kind = d.kind
+              AND o.valeur_normalisee = d.valeur_normalisee)
+      -- Ou bien deux lignes du lot a detacher portent la meme valeur : elles se
+      -- heurteraient entre elles. La plus ancienne reste.
+      OR d.id <> (SELECT min(d2.id) FROM a_detacher d2
+                   WHERE d2.code_insee = d.code_insee
+                     AND d2.kind = d.kind
+                     AND d2.valeur_normalisee = d.valeur_normalisee)
+);
+
+-- 2. Le detachement lui-meme.
+UPDATE contact SET association_id = NULL
+ WHERE id IN (
+   WITH conteneurs AS (
+     SELECT code_insee, association_id, source_url
+       FROM contact
+      WHERE association_id IS NOT NULL
+      GROUP BY code_insee, association_id, source_url
+     HAVING count(*) >= 4
+   )
+   SELECT ct.id FROM contact ct
+     JOIN conteneurs c
+       ON c.code_insee = ct.code_insee
+      AND c.association_id = ct.association_id
+      AND c.source_url = ct.source_url
+ );
+
+-- 3. De quoi retrouver, sans balayer la table, les contacts dont le nom date d'une
+-- heuristique perimee. La reparation au demarrage (src/reparation.ts) pose cette question
+-- a chaque ouverture : elle doit couter le prix d'un index, pas celui d'un scan.
+CREATE INDEX idx_contact_version_du_nom ON contact (nom_pressenti_version)
+  WHERE association_id IS NULL;
+`,
+  },
 ];

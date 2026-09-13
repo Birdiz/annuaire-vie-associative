@@ -247,6 +247,26 @@ test("l'ecran dit combien de contacts le fichier simple laisse de cote", (t) => 
   assert.match(ecran, /sans nom de structure/);
 });
 
+test("l'ecran dit aussi ce qu'il ecarte faute d'indice associatif", (t) => {
+  const ctx = contexte(t);
+  // Un garage lu sur une page d'associations : nomme, donc invisible au compteur « sans
+  // nom », et pourtant absent du fichier. Le taire ferait conclure a une perte de donnees.
+  ctx.db
+    .prepare(
+      "INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, source_url, " +
+        "methode_extraction, confiance, collected_at, nom_pressenti, nom_pressenti_normalise, " +
+        "nom_pressenti_version) " +
+        "VALUES (?, 'email', 'contact@garage-pupier.example', 'contact@garage-pupier.example', " +
+        "'https://bruzou.example/associations', 'dom:mailto', 0.8, 't', 'Garage Pupier', " +
+        "'garage pupier', 3)",
+    )
+    .run(CODE_INSEE);
+
+  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /structure de la vie associative/);
+  assert.doesNotMatch(ecran, /Garage Pupier/, "l'ecran compte les ecartes, il ne les nomme pas");
+});
+
 test("l'ecran d'export leve le malentendu sur les telephones", (t) => {
   const ctx = contexte(t);
   const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);

@@ -120,6 +120,34 @@ const HEBERGEURS: readonly string[] = [
   "webnode",
 ];
 
+/**
+ * Domaines d'institutions publiques. Ils nomment une structure — une academie, une
+ * agglomeration, un ministere — mais jamais une association, et l'outil dresse un annuaire
+ * de la vie associative.
+ *
+ * Releves sur les Vosges et la Loire : `ac-nancy-metz.fr` sortait cinq adresses d'ecoles
+ * sous « Ac Nancy Metz », `agglo-epinal.fr` trois services sous « Agglo Epinal ».
+ * Prefixes et suffixes plutot que noms : ces domaines se declinent par territoire, les
+ * lister un par un reviendrait a tenir la carte administrative du pays.
+ */
+const PREFIXES_INSTITUTIONNELS: readonly string[] = ["ac-", "agglo-", "cc-", "ca-", "cu-"];
+const SUFFIXES_INSTITUTIONNELS: readonly string[] = [".gouv.fr"];
+
+/**
+ * Le miroir SQL des deux listes, inline dans la requete d'export comme
+ * `SQL_FOURNISSEURS_PUBLICS`. Meme precaution : un test verifie qu'aucune entree ne porte
+ * d'apostrophe, ce qui rend l'interpolation sure par construction.
+ */
+export const SQL_NON_INSTITUTIONNEL: string = [
+  ...PREFIXES_INSTITUTIONNELS.map((p) => `substr(domaine, 1, ${p.length}) <> '${p}'`),
+  ...SUFFIXES_INSTITUTIONNELS.map((s) => `substr(domaine, -${s.length}) <> '${s}'`),
+].join("\n   AND ");
+
+function estInstitutionnel(domaine: string): boolean {
+  if (SUFFIXES_INSTITUTIONNELS.some((suffixe) => domaine.endsWith(suffixe))) return true;
+  return PREFIXES_INSTITUTIONNELS.some((prefixe) => domaine.startsWith(prefixe));
+}
+
 /** Etiquettes qui nomment un service de messagerie, pas une structure. */
 const ETIQUETTES_TECHNIQUES: readonly string[] = [
   "mail",
@@ -194,6 +222,7 @@ export function estDomaineSpecifique(domaine: string, hoteMairie: string): boole
   if (!bienForme(domaine)) return false;
   if (domaine.startsWith("xn--") || domaine.includes(".xn--")) return false;
   if (FOURNISSEURS_PUBLICS.includes(domaine)) return false;
+  if (estInstitutionnel(domaine)) return false;
   return !estDomaineDeMairie(domaine, hoteMairie);
 }
 

@@ -85,6 +85,15 @@ const SQL_MAJ_PREFILTRE = `
    WHERE url_hash = ?
 `;
 
+/**
+ * Le nom de la commune, pour que le nommage puisse le refuser.
+ *
+ * Une requete par page — negligeable devant l'analyse DOM — plutot qu'un champ de plus
+ * dans le payload : la charge utile d'un job est persistee et sert de cle de reprise,
+ * on ne la change pas pour une commodite.
+ */
+const SQL_NOM_COMMUNE = "SELECT nom FROM commune WHERE code_insee = ?";
+
 const SQL_ASSOCIATIONS = `
   SELECT id, nom_normalise
     FROM association
@@ -203,6 +212,10 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     const doc = analyser(decoder(resultat.body, resultat.meta.contentType), resultat.meta.finalUrl);
     const extraction = extraireContacts(doc, { avecMobiles: payload.avecMobiles });
 
+    const nomCommune = (
+      ctx.db.prepare(SQL_NOM_COMMUNE).get(payload.codeInsee) as { nom?: string } | undefined
+    )?.nom;
+
     const index = indexerAssociations(
       (ctx.db.prepare(SQL_ASSOCIATIONS).all(payload.codeInsee) as unknown as {
         id: number;
@@ -216,7 +229,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     const contacts: ContactRattache[] = extraction.contacts.map((contact) => ({
       contact,
       nomAssociation: rattacher(index, contact.contextes)?.nomNormalise,
-      pressenti: nomPressenti(contact.contextes, contact.empreinte),
+      pressenti: nomPressenti(contact.contextes, contact.empreinte, nomCommune),
     }));
 
     // Etape [4]. Elle vient apres [5] dans le code et avant elle dans l'entonnoir :

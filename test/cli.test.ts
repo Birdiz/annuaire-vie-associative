@@ -174,6 +174,30 @@ test("les commandes du jalon guident vers le run quand la base est vide", async 
   assert.match(dumps.stdout, /Aucun dump/);
 });
 
+test("« communes » dit, pour chacune, ce que la visite a donne", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const db = openDatabase(join(dir, "annuaire.sqlite"));
+  db.prepare(
+    "INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution, " +
+      "crawl_statut, source_resolution, resolution_source_url, resolution_collected_at, " +
+      "resolution_confiance, " +
+      "created_at, updated_at) VALUES " +
+      "('35001', 'Sans site', '35', NULL, 'sans_site', 'non_tente', NULL, NULL, NULL, NULL, 't', 't'), " +
+      "('35002', 'Interdite', '35', 'https://x.example', 'resolue', 'interdit_robots', " +
+      "'annuaire', 'https://annuaire.example/fiche', 't', 0.9, 't', 't')",
+  ).run();
+  db.close();
+
+  const { stdout } = await annuaire(["communes", "--departement", "35", "--data-dir", dir]);
+  // Les deux colonnes qui portent le diagnostic existaient depuis la migration 4 sans
+  // etre lisibles nulle part : il fallait ouvrir le fichier SQLite pour savoir pourquoi
+  // une commune ne remonte rien.
+  assert.match(stdout, /Sans site\s+sans site/);
+  assert.match(stdout, /Interdite\s+robots\.txt/);
+  assert.match(stdout, /0 pages\s+0 contacts/);
+});
+
 test("les commandes du jalon exigent un departement", async (t) => {
   const dir = dataDir(t);
   await annuaire(["init", "--data-dir", dir]);
