@@ -19,67 +19,11 @@
  * annoncerait un nombre de lignes que le fichier ne tient pas.
  */
 
+import { estMessagerie } from "../normalisation/messageries.ts";
+
 /** En deca, le libelle n'apprend rien ; au dela, ce n'est plus un nom. */
 export const LONGUEUR_MIN_LIBELLE = 4;
 export const LONGUEUR_MAX_LIBELLE = 60;
-
-/**
- * Messageries grand public. Une adresse qui s'y trouve dit ou son titulaire releve son
- * courrier, jamais qui il est.
- *
- * Liste en dur plutot que table : elle change au rythme du marche francais des FAI,
- * c'est-a-dire jamais, et un reglage de plus n'aurait fait que deplacer la question.
- */
-export const FOURNISSEURS_PUBLICS: readonly string[] = [
-  "gmail.com",
-  "googlemail.com",
-  "orange.fr",
-  "wanadoo.fr",
-  "pagesperso-orange.fr",
-  "free.fr",
-  "sfr.fr",
-  "neuf.fr",
-  "bbox.fr",
-  "numericable.fr",
-  "laposte.net",
-  "hotmail.com",
-  "hotmail.fr",
-  "outlook.com",
-  "outlook.fr",
-  "live.fr",
-  "live.com",
-  "msn.com",
-  "yahoo.com",
-  "yahoo.fr",
-  "aol.com",
-  "gmx.fr",
-  "gmx.com",
-  "icloud.com",
-  "me.com",
-  "protonmail.com",
-  "proton.me",
-  // Trouves sur le departement 88 : ils sortaient nommes « Mailo », « Ik », « Mac ».
-  "mailo.com",
-  "ik.me",
-  "mac.com",
-  "sfr.net",
-  "orange.com",
-  "aliceadsl.fr",
-  "club-internet.fr",
-  "voila.fr",
-  "cegetel.net",
-  "9online.fr",
-  "dbmail.com",
-];
-
-/**
- * Les entrees inlinees dans le SQL de l'export. L'absence d'apostrophe dans la liste est
- * verifiee par un test : c'est ce qui rend l'interpolation sure **par construction**, et
- * non par relecture de la personne qui ajoutera la trente-quatrieme entree.
- */
-export const SQL_FOURNISSEURS_PUBLICS: string = FOURNISSEURS_PUBLICS.map(
-  (domaine) => `'${domaine}'`,
-).join(", ");
 
 /**
  * Suffixes de deux etiquettes. Liste courte et volontairement incomplete : on ne
@@ -135,7 +79,7 @@ const SUFFIXES_INSTITUTIONNELS: readonly string[] = [".gouv.fr"];
 
 /**
  * Le miroir SQL des deux listes, inline dans la requete d'export comme
- * `SQL_FOURNISSEURS_PUBLICS`. Meme precaution : un test verifie qu'aucune entree ne porte
+ * `SQL_NON_MESSAGERIE`. Meme precaution : un test verifie qu'aucune entree ne porte
  * d'apostrophe, ce qui rend l'interpolation sure par construction.
  */
 export const SQL_NON_INSTITUTIONNEL: string = [
@@ -200,7 +144,7 @@ export function estDomaineDeMairie(domaine: string, hoteMairie: string): boolean
  *
  * Ce n'est pas une precaution theorique. Un CMS qui masque l'arobase produit des valeurs
  * comme `club[^@]gmail.com`, dont le domaine devient `]gmail.com` : il **echappe a la
- * liste des fournisseurs publics**, qui compare des chaines exactes, et sortait donc
+ * liste des messageries**, qui compare des debuts de chaine, et sortait donc
  * nomme « ]gmail » dans le fichier livre. Une adresse cassee ne doit pas se presenter
  * comme une structure.
  *
@@ -221,7 +165,7 @@ function bienForme(domaine: string): boolean {
 export function estDomaineSpecifique(domaine: string, hoteMairie: string): boolean {
   if (!bienForme(domaine)) return false;
   if (domaine.startsWith("xn--") || domaine.includes(".xn--")) return false;
-  if (FOURNISSEURS_PUBLICS.includes(domaine)) return false;
+  if (estMessagerie(domaine)) return false;
   if (estInstitutionnel(domaine)) return false;
   return !estDomaineDeMairie(domaine, hoteMairie);
 }

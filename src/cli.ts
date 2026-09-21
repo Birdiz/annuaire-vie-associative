@@ -108,10 +108,11 @@ Options d'export
   --avec-rejetes          Sort aussi les contacts qu'un humain a rejetes en revue,
                           exclus par defaut
   --profil <p>            « complet » (defaut) : les colonnes de provenance, une ligne
-                          par contact. C'est le fichier auditable. « simple » : cinq
-                          colonnes — departement, commune, nom, telephone, email — et
-                          une ligne par structure, les valeurs multiples reunies dans
-                          la cellule. Les contacts sans nom en sont ecartes
+                          par contact. C'est le fichier auditable. « simple » : six
+                          colonnes — departement, commune, nom, type, telephone, email —
+                          et une ligne par structure, les valeurs multiples reunies dans
+                          la cellule. Les contacts sans nom de structure en sont ecartes,
+                          ceux qu'une page ne nommait que par une personne aussi
 
 Options de reinitialisation
   --simulation            Montre ce qui serait efface, sans rien ecrire
@@ -1506,7 +1507,7 @@ function commandeNoms(
 /**
  * L'artefact que l'outil produit. En profil `complet` — le defaut de la ligne de
  * commande — chaque ligne porte sa provenance ; en profil `simple`, le fichier est un
- * extrait a cinq colonnes, une ligne par structure (ADR-032).
+ * extrait a six colonnes, une ligne par structure (ADR-032).
  *
  * La CLI est stricte la ou l'interface est tolerante : qui tape une option la tape
  * expres, et un profil inconnu est une erreur d'usage, pas une preference a deviner.

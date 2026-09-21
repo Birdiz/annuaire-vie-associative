@@ -16,8 +16,10 @@
  */
 
 import { MOBILE_PREFIXES } from "../invariants.ts";
+import { SOURCE_EMAIL, SOURCE_TELEPHONE } from "./motifs.ts";
+import { estEtiquetteDeMessagerie } from "../normalisation/messageries.ts";
 import { normaliserNom } from "../texte.ts";
-import type { Bloc, DocumentAnalyse } from "../parse/html.ts";
+import type { Bloc, DocumentAnalyse, Fiche } from "../parse/html.ts";
 
 export type KindContact = "email" | "phone";
 
@@ -47,6 +49,12 @@ export type ContactExtrait = {
    * c'est se tromper sur les blocs qui portent deux adresses.
    */
   empreinte: string;
+  /**
+   * Le titre de la plus etroite fiche qui porte le contact, quand elle ne depasse pas
+   * `CONTACTS_MAX_PAR_BLOC` contacts : le nom de la structure, le plus souvent, quand le
+   * bloc du contact ne nomme que son president (ADR-036). Absent sinon.
+   */
+  titre?: string | undefined;
 };
 
 export type ResultatExtraction = {
@@ -74,22 +82,8 @@ const CONFIANCE_OBFUSQUE = 0.45;
  */
 const CONFIANCE_DOM_REPARE = 0.75;
 
-/**
- * **Les quantificateurs sont bornes, et ce n'est pas de la coquetterie.**
- *
- * Un `+` gourmand sur une classe large, ancre par un caractere qui n'arrive jamais dans
- * du texte ordinaire, coute O(reste) a chaque position de depart : le balayage devient
- * quadratique. Mesure sur du texte sans aucune adresse, avant bornage — 20 000
- * caracteres : 1,5 s ; 40 000 : 6 s ; 160 000 : 97 s. Or `MAX_RESPONSE_BYTES` vaut 5 Mo
- * et `estHtml(null)` rend `true` : une page de mairie verbeuse suffisait a bloquer
- * l'event loop plusieurs minutes, une page hostile plusieurs heures — et depuis
- * l'ADR-024 le worker tourne dans le process de l'interface, qui gele avec lui.
- *
- * Les bornes ne sont pas arbitraires : RFC 5321 §4.5.3.1 fixe la partie locale a 64
- * octets et chaque label de domaine a 63. Apres bornage, un million de caracteres se
- * balaient en 227 ms.
- */
-const EMAIL = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}/g;
+/** Voir `motifs.ts` : le bornage des quantificateurs et la fin du suffixe y sont expliques. */
+const EMAIL = new RegExp(SOURCE_EMAIL, "g");
 
 /**
  * Formes obfusquees courantes sur les sites de mairie : « nom [at] domaine [dot] fr ».
@@ -133,8 +127,8 @@ export function reparerArobaseMasquee(brut: string): string | undefined {
   return repare.split("@").length === 2 ? repare : undefined;
 }
 
-/** Fixe francais ou mobile, avec les separateurs usuels, ou forme internationale. */
-const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/g;
+/** Fixe francais ou mobile. Voir `motifs.ts` : ses bornes sont des chiffres, pas des mots. */
+const TELEPHONE = new RegExp(SOURCE_TELEPHONE, "g");
 
 /**
  * Au-dela, un bloc n'est plus la fiche d'une structure : c'est le conteneur qui les
@@ -188,6 +182,9 @@ export function extraireContacts(
   // Compte une fois par page, et non une fois par contact : les blocs sont imbriques, et
   // un `article` se relirait autant de fois qu'il porte d'adresses.
   const porteurs = compterContactsParBloc(doc.blocs);
+  const porteursDeFiche = compterContactsParBloc(doc.fiches);
+  // Un titre n'est un en-tete que si sa branche ne porte aucun contact.
+  const titresSeuls = compterContactsParBloc(doc.fiches.map((fiche) => fiche.branche)).map((n) => n === 0);
 
   const ajouterEmail = (brut: string, methode: string, confiance: number, empreinte: string): void => {
     const valeur = nettoyerEmail(brut);
@@ -201,6 +198,7 @@ export function extraireContacts(
       confiance,
       contextes: contextesDe(doc.blocs, empreinte, porteurs),
       empreinte,
+      titre: titreDe(doc.fiches, empreinte, porteursDeFiche, titresSeuls),
     });
   };
 
@@ -220,6 +218,7 @@ export function extraireContacts(
       confiance,
       contextes: contextesDe(doc.blocs, empreinte, porteurs),
       empreinte,
+      titre: titreDe(doc.fiches, empreinte, porteursDeFiche, titresSeuls),
     });
   };
 
@@ -314,6 +313,28 @@ function contextesDe(
 }
 
 /**
+ * Le titre de la plus etroite fiche qui porte l'empreinte, sous le meme plafond que les
+ * blocs : une fiche qui porte plus de `CONTACTS_MAX_PAR_BLOC` contacts est une rubrique, et
+ * son titre — « Aines », « Sport » — ne nomme aucune des structures qu'elle range.
+ */
+function titreDe(
+  fiches: readonly Fiche[],
+  empreinte: string,
+  porteurs: readonly number[],
+  titresSeuls: readonly boolean[],
+): string | undefined {
+  if (empreinte === "") return undefined;
+  let retenue: Fiche | undefined;
+  fiches.forEach((fiche, rang) => {
+    if ((porteurs[rang] ?? 1) > CONTACTS_MAX_PAR_BLOC) return;
+    if (titresSeuls[rang] !== true) return;
+    if (!fiche.texte.includes(empreinte) && !fiche.liens.some((lien) => lien.href === empreinte)) return;
+    if (retenue === undefined || fiche.texte.length < retenue.texte.length) retenue = fiche;
+  });
+  return retenue?.titre;
+}
+
+/**
  * Combien de contacts distincts chaque bloc porte.
  *
  * Les memes motifs que l'extraction, plus les `mailto:`/`tel:` du bloc : compter autrement
@@ -321,10 +342,10 @@ function contextesDe(
  * leur forme comparable — minuscules pour une adresse, chiffres seuls pour un numero —
  * pour qu'un `mailto:` et le texte du lien qui le repete ne comptent qu'une fois.
  */
-function compterContactsParBloc(blocs: readonly Bloc[]): number[] {
+function compterContactsParBloc(blocs: readonly (Bloc | Fiche)[]): number[] {
   return blocs.map((bloc) => {
     const vus = new Set<string>();
-    for (const trouve of bloc.texte.matchAll(EMAIL)) vus.add(trouve[0].toLowerCase());
+    for (const trouve of bloc.texte.matchAll(EMAIL)) vus.add(decollerEmail(trouve[0]).toLowerCase());
     for (const trouve of bloc.texte.matchAll(TELEPHONE)) vus.add(trouve[0].replace(/\D/g, ""));
     for (const lien of bloc.liens) {
       const bas = lien.href.toLowerCase();
@@ -364,7 +385,89 @@ export function nettoyerEmail(brut: string): string | undefined {
   if (!/^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$/.test(valeur)) return undefined;
   if (EXTENSIONS_IMAGE.test(valeur)) return undefined;
   if (valeur.length > 254) return undefined;
-  return valeur;
+  return decollerEmail(valeur);
+}
+
+/**
+ * Suffixes au-dela desquels une colle se reconnait. Liste courte et volontairement
+ * incomplete : elle ne sert qu'a **decoller**, jamais a valider. Une adresse dont le
+ * suffixe n'y figure pas passe intacte.
+ */
+const SUFFIXES_COURANTS: readonly string[] = [
+  "info", "com", "net", "org", "biz", "bzh", "fr", "eu", "be", "ch", "lu", "de", "es", "it", "uk", "io", "re",
+];
+
+/** Ce qu'un CMS colle a une adresse, sans espace, quand le lien suivant est une URL. */
+const COLLES: readonly string[] = ["http", "www"];
+
+/**
+ * L'adresse, debarrassee du texte que le CMS lui a soude.
+ *
+ * `analyser` ne coupe le texte qu'aux frontieres de bloc — c'est ce qui garde entier
+ * `contact<span>@</span>mairie.fr` — et deux elements en ligne voisins s'y collent donc
+ * sans espace. Sur la Haute-Loire, 69 adresses du fichier livre en portaient la trace :
+ * `…@cidff43.frhttps`, `…@hotmail.comwww.aappma-….e-monsite.com`, `…@laposte.netJudo`.
+ * Chacune doublait l'adresse vraie, et l'export la nommait d'apres son domaine casse —
+ * « Hotmail », « Gmail », « Orange ».
+ *
+ * Trois regles, et pas une de plus, parce qu'une coupe fausse fabriquerait une adresse :
+ *
+ * 1. une **messagerie** suivie d'autre chose que son suffixe — `gmail.comhbcbrioude…` :
+ *    une messagerie n'a pas de sous-domaine au nom d'un club ;
+ * 2. un suffixe courant suivi de `http`, `https` ou `www` ;
+ * 3. un suffixe courant **en minuscules** suivi d'une capitale, en fin d'adresse — la
+ *    casse d'origine le trahit, « netJudo ».
+ *
+ * Elle ne coupe jamais « suffixe courant + minuscules » : `.co` precede `.coop`, `.in`
+ * precede `.info`, et `.com` precede `.community`.
+ *
+ * Exportee pour la reparation au demarrage : les bases ecrites avant ce decollage portent
+ * ces adresses, et elles se reparent avec **cette** fonction — une seconde implementation
+ * en SQL finirait par ne plus rendre ce que l'extraction rend.
+ */
+export function decollerEmail(adresse: string): string {
+  const arobase = adresse.lastIndexOf("@");
+  if (arobase <= 0) return adresse;
+  const domaine = adresse.slice(arobase + 1);
+  const decolle = domaineDecolle(domaine);
+  return decolle === domaine ? adresse : `${adresse.slice(0, arobase)}@${decolle}`;
+}
+
+function domaineDecolle(domaine: string): string {
+  const etiquettes = domaine.split(".");
+  if (etiquettes.length < 2) return domaine;
+
+  const premiere = etiquettes[0] ?? "";
+  const seconde = etiquettes[1] ?? "";
+  const enTete = suffixeEnTete(seconde.toLowerCase());
+  if (enTete !== undefined && seconde.length > enTete.length && estEtiquetteDeMessagerie(premiere)) {
+    return `${premiere}.${seconde.slice(0, enTete.length)}`;
+  }
+
+  for (let rang = 1; rang < etiquettes.length; rang += 1) {
+    const etiquette = etiquettes[rang] ?? "";
+    const bas = etiquette.toLowerCase();
+    const suffixe = suffixeEnTete(bas);
+    if (suffixe !== undefined && COLLES.some((colle) => bas.startsWith(`${suffixe}${colle}`))) {
+      return [...etiquettes.slice(0, rang), etiquette.slice(0, suffixe.length)].join(".");
+    }
+  }
+
+  const derniere = etiquettes[etiquettes.length - 1] ?? "";
+  const suffixe = suffixeEnTete(derniere);
+  if (suffixe !== undefined && /^[A-Z]/.test(derniere.slice(suffixe.length))) {
+    return [...etiquettes.slice(0, -1), suffixe].join(".");
+  }
+  return domaine;
+}
+
+/** Le plus long suffixe courant qui ouvre l'etiquette, compare tel quel. */
+function suffixeEnTete(etiquette: string): string | undefined {
+  let trouve: string | undefined;
+  for (const suffixe of SUFFIXES_COURANTS) {
+    if (etiquette.startsWith(suffixe) && (trouve === undefined || suffixe.length > trouve.length)) trouve = suffixe;
+  }
+  return trouve;
 }
 
 /**

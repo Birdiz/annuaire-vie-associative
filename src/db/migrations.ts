@@ -828,4 +828,26 @@ CREATE INDEX idx_contact_version_du_nom ON contact (nom_pressenti_version)
   WHERE association_id IS NULL;
 `,
   },
+  {
+    version: 13,
+    name: "retirer-le-cedex-des-noms-de-commune",
+    sql: `
+--------------------------------------------------------------------------------
+-- Une commune ne s'appelle pas « Brioude Cedex »
+--------------------------------------------------------------------------------
+
+-- Le seed prenait le nom de la commune dans la premiere adresse de la fiche de mairie, et
+-- c'etait parfois l'adresse postale : « Brioude Cedex » s'imprimait dans la colonne
+-- « commune » de 82 lignes du fichier de la Haute-Loire. Il ne le fait plus
+-- (seed/annuaire.ts, sansCedex) ; cette migration repare les bases deja amorcees, a
+-- l'ouverture et sans rien demander. Elle retire la mention et ce qui la suit —
+-- « Cedex 9 » compris —, et rien d'autre.
+--
+-- Le nom de la commune nourrit aussi le filtre de nommage et le libelle « Mairie de … » :
+-- ils retrouvent « Brioude » sans autre geste.
+UPDATE commune
+   SET nom = rtrim(substr(nom, 1, instr(upper(nom), ' CEDEX') - 1))
+ WHERE instr(upper(nom), ' CEDEX') > 1;
+`,
+  },
 ];

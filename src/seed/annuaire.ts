@@ -86,9 +86,23 @@ function premierNomCommune(valeur: unknown): string | undefined {
   for (const entree of tableau(valeur)) {
     if (typeof entree !== "object" || entree === null) continue;
     const nom = (entree as { nom_commune?: unknown }).nom_commune;
-    if (typeof nom === "string" && nom.trim().length > 0) return nom.trim();
+    if (typeof nom === "string" && nom.trim().length > 0) return sansCedex(nom.trim());
   }
   return undefined;
+}
+
+/**
+ * Le nom de la commune, sans la mention de distribution postale. Une fiche de mairie porte
+ * parfois son adresse postale en premier, « Brioude Cedex » : le nom partait tel quel en
+ * base, s'imprimait dans la colonne « commune » de 82 lignes de la Haute-Loire, et le filtre
+ * de nommage ne reconnaissait plus « Brioude ».
+ *
+ * On ne retire que cela. Preferer l'adresse physique changerait d'autres noms : celle d'une
+ * commune nouvelle porte souvent le nom de la commune deleguee qui l'abrite. La migration 13
+ * fait la meme chose aux bases deja amorcees.
+ */
+export function sansCedex(nom: string): string {
+  return nom.replace(/\s+cedex(?:\s+\d+)?$/i, "").trim();
 }
 
 /** Repli quand l'adresse ne porte pas de commune : « Mairie - Bruz » donne « Bruz ». */

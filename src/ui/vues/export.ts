@@ -167,9 +167,11 @@ function avertissement(simple: boolean): string {
   const regime = simple
     ? `Ce fichier <strong>ne distingue pas</strong> les adresses de fonction de celles qui
 désignent une personne, et peut réunir les deux dans une même cellule. Le fichier complet
-porte cette distinction en colonne <code>regime</code>. <strong>La colonne « nom » peut
-elle aussi désigner une personne physique</strong> — président, gérant, correspondant —
-quand c'est ce que la page nommait à côté du contact.`
+porte cette distinction en colonne <code>regime</code>. <strong>La colonne « nom » nomme
+une structure, jamais une personne</strong> : quand la page ne citait que le président à
+côté d'une adresse, l'outil cherche le nom de la structure dans sa fiche, et s'il ne le
+trouve pas, le contact est écarté — compté ci-dessus — et reste dans le fichier complet. Le
+repérage s'appuie sur une liste de prénoms : un prénom rare peut encore passer.`
     : `La colonne <code>regime</code> distingue les adresses de fonction
 (<code>generique</code>) de celles qui désignent une personne (<code>nominatif</code>) ;
 <code>indetermine</code> signale un cas que l'outil refuse de trancher.`;

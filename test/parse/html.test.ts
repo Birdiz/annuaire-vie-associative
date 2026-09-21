@@ -140,3 +140,55 @@ test("un demi-surrogate isole n'entre pas dans le texte", () => {
   assert.ok(!/[\uD800-\uDFFF]/.test(doc.texte), `texte mal forme : ${JSON.stringify(doc.texte)}`);
   assert.match(doc.texte, /&#xD800;/);
 });
+
+/**
+ * Lot 12 — le titre de la fiche. Le nom d'une structure est tres souvent le titre de sa
+ * carte, hors du paragraphe qui porte le contact : c'est la que le fichier de la
+ * Haute-Loire trouvait, a la place, le nom du president.
+ */
+
+test("une fiche en carte porte son titre, meme quand le contact est dans un paragraphe voisin", () => {
+  const doc = analyser(
+    `<div class="liste"><div class="panel">
+       <div class="panel-heading"><h4>CLUB DU MOULIN - DURANDEL Paulette</h4></div>
+       <div class="panel-body"><p>Paulette DURANDEL préside cette association<br>club@moulin.example</p></div>
+     </div></div>`,
+    "https://bruz.example/associations",
+  );
+  const fiche = doc.fiches.find((f) => f.texte.includes("club@moulin.example"));
+  assert.equal(fiche?.titre, "CLUB DU MOULIN - DURANDEL Paulette");
+});
+
+test("un titre de classe vaut un titre de balise, un nom de classe proche non", () => {
+  const doc = analyser(
+    `<div class="fiche"><div class="un-lien-bloc-titre">AMICALE DU RU</div><div class="pied">amicale@ru.example</div></div>
+     <div class="autre"><div class="nombre">12</div><div>autre@ru.example</div></div>`,
+    "https://bruz.example/associations",
+  );
+  const fiches = doc.fiches.filter((f) => f.texte.includes("amicale@ru.example"));
+  assert.equal(fiches[0]?.titre, "AMICALE DU RU");
+  assert.ok(
+    doc.fiches.every((f) => f.titre === "AMICALE DU RU"),
+    "« nombre » n'est pas « nom » : la comparaison se fait par segment de classe",
+  );
+  // La fiche commune aux deux cartes porte le titre de la premiere, mais sa branche porte
+  // aussi un contact : ce n'est pas un en-tete, l'extraction l'ecartera.
+  const commune = doc.fiches.find((f) => f.texte.includes("autre@ru.example"));
+  assert.ok(commune?.branche.texte.includes("amicale@ru.example"));
+});
+
+test("deux liens voisins ne se soudent plus, un span au milieu d'une adresse si", () => {
+  const doc = analyser(
+    `<p><a href="mailto:club@asso.example">club@asso.example</a><a href="/site">le site</a></p>
+     <p>amicale<span>@</span>bruz.example</p><p>l'<a href="/amicale">Amicale</a> du Ru</p>`,
+    "https://bruz.example/accueil",
+  );
+  assert.ok(doc.texte.includes("club@asso.example le site"), doc.texte);
+  assert.ok(doc.texte.includes("amicale@bruz.example"), doc.texte);
+  assert.ok(doc.texte.includes("l'Amicale du Ru"), "pas d'espace apres une apostrophe");
+});
+
+test("les entites courantes sont decodees, et leur point-virgule ne coupe plus un nom", () => {
+  const doc = analyser(`<p>Association des Parents d&rsquo;&Eacute;l&egrave;ves &laquo; Le Ru &raquo;</p>`, "https://bruz.example/");
+  assert.equal(doc.texte, "Association des Parents d’Élèves « Le Ru »");
+});

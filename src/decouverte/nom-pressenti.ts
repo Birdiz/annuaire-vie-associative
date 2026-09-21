@@ -19,20 +19,46 @@
 
 import { MOTIFS_NOM } from "../normalisation/classification.ts";
 import { evoqueUnCommerce, evoqueUneStructure } from "../normalisation/plausibilite.ts";
+import { designeUnePersonne, estUnNomDePersonne, porteUnePersonne } from "../normalisation/personne.ts";
+import type { ContactExtrait } from "./extraction.ts";
 import { normaliserNom } from "../texte.ts";
+import { SOURCE_EMAIL, SOURCE_TELEPHONE, porteUnNumero } from "./motifs.ts";
 
 /**
  * Constante du code, incrementee des que l'heuristique ci-dessous change. C'est elle qui
  * rend repondable « quels noms sont perimes », et qui sert de marqueur d'idempotence a la
  * passe de rattrapage.
  */
-export const VERSION_NOM = 3;
+export const VERSION_NOM = 4;
+
+/**
+ * Ce que le nommage sait des communes : celle du contact, et toutes celles du departement.
+ *
+ * Le nom d'une commune voisine lu sur une page — « Coubon » sur le site du Puy, « Malrevers »
+ * dans le tableau d'un service intercommunal — passait pour une structure : le filtre ne
+ * connaissait que la commune du contact (ADR-035). Une chaine seule reste acceptee, pour les
+ * appelants qui n'ont que celle-la.
+ */
+export type ContexteCommune = {
+  nom: string;
+  /** Noms normalises (`normaliserNom`) des communes du departement. */
+  voisines: ReadonlySet<string>;
+};
+
+type Commune = string | ContexteCommune | undefined;
+
+function nomDeLaCommune(commune: Commune): string | undefined {
+  return typeof commune === "string" || commune === undefined ? commune : commune.nom;
+}
 
 export type NomPressenti = {
   nom: string;
   normalise: string;
-  /** De quel cote du contact le segment a ete pris. */
-  source: "bloc:avant" | "bloc:apres";
+  /**
+   * D'ou le segment a ete pris : de part et d'autre du contact dans son bloc, ou du titre de
+   * sa fiche (ADR-036).
+   */
+  source: "bloc:avant" | "bloc:apres" | "bloc:titre";
 };
 
 /**
@@ -51,11 +77,10 @@ const MOTS_MAX = 10;
 const PART_CHIFFRES_MAX = 0.4;
 
 /**
- * Les motifs d'`extraction.ts`, repris sans le drapeau `g` : on ne s'en sert ici que par
- * leur `source`, pour construire l'expression d'effacement.
+ * Les motifs de l'extraction, et non une copie : un numero que l'extraction voit et que
+ * l'effacement ne voit pas reste dans le bloc, et devient un candidat au nom.
  */
-const EMAIL = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}/;
-const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/;
+const CONTACTS = new RegExp(`${SOURCE_EMAIL}|${SOURCE_TELEPHONE}`, "g");
 
 /**
  * Ce qui separe deux informations dans un bloc. Le point n'y est pas : « J.-P. Martin »
@@ -65,6 +90,34 @@ const TELEPHONE = /(?:\+33[\s.-]?|\b0)[1-9](?:[\s.-]?\d{2}){4}\b/;
  * d'un tableau avec des espaces, et non avec une balise.
  */
 const SEPARATEURS = /[\n\r|•·–—:;,/]|\s{3,}/;
+
+/**
+ * Libelles de champ qui separent deux informations aussi surement qu'un deux-points :
+ * « SOCIETE de CHASSE President », « DURANDEL Nadine Tresoriere », « Julien Martinot Tel. ».
+ * Une fiche d'annuaire les pose entre le nom de la structure et celui de la personne ; sans
+ * eux, les deux faisaient un seul segment, et c'est la personne qu'on livrait. Couper la ou
+ * la page change de champ n'est pas tronquer : aucun texte n'est fabrique.
+ *
+ * Au singulier seulement : « Amicale des secretaires », « Association des presidents » sont
+ * des noms. Aucun nom du RNA ne porte l'une de ces formes (mesure sur les 49 118 noms de la
+ * base de developpement). « Tel » sans accent ni point, « mail », « contact » n'y sont pas :
+ * le RNA en porte — « Association du Mail », « Full Contact ».
+ */
+const LIBELLES = new RegExp(
+  [
+    String.raw`(?:\b(?:vice|co)[-\s]?)?\bpr[ée]sidente?\b(?:\s*\(e\))?`,
+    String.raw`\bpr[ée]sidence\b`,
+    String.raw`\btr[ée]sori(?:er|[èe]re)\b`,
+    String.raw`\bsecr[ée]taire\b`,
+    String.raw`\bcoordonn[ée]es\b`,
+    String.raw`\bcourriel\b`,
+    String.raw`\bt[ée]l[ée]phone\b`,
+    String.raw`\be-?mail\b`,
+    String.raw`\bt[ée]l\.`,
+    String.raw`\btél\b`,
+  ].join("|"),
+  "i",
+);
 
 /**
  * Marqueurs de prose. Un segment qui en porte un est une phrase adressee au lecteur, pas
@@ -103,6 +156,30 @@ const PROSE: readonly string[] = [
   "est disponible",
   "sont disponibles",
   "n hesitez",
+];
+
+/**
+ * Debuts de phrase et libelles de champ, testes **en tete** de segment.
+ *
+ * Releves sur l'Ain et la Haute-Loire, livres comme noms de structure : « Pour plus
+ * d'informations », « Nombre d'adherents », « Nom du President(e) », « Par contact
+ * telephonique », « Reservation obligatoire au ». En tete, et pas ailleurs : « Sport pour
+ * tous », « Maison pour tous », « Culture pour tous » sont des noms du RNA par dizaines.
+ * Chaque entree est verifiee contre les 49 118 noms du RNA de la base de developpement :
+ * aucun ne commence ainsi.
+ */
+const PROSE_EN_TETE: readonly string[] = [
+  "pour plus", "pour tout", "pour toute", "pour tous", "pour toutes", "pour obtenir",
+  "pour en", "pour s", "pour reserver", "pour joindre", "pour la correspondance",
+  "par mail", "par e mail", "par email", "par courriel", "par telephone", "par tel",
+  "par contact", "par sms", "nombre d", "nombre de", "nom du president",
+  "nom de la presidente", "son president", "sa presidente", "n de telephone",
+  "numero de telephone", "nouveau tel", "position gps", "heures d ouverture",
+  "reservation obligatoire", "sur reservation", "gratuit sur", "hors saison",
+  "hors vacances", "durant cette", "consulter le", "consulter la", "situe au",
+  "reservation", "ouverture au", "ouverture du", "ouverture de", "ouverture des",
+  "inscription", "inscriptions", "plus de", "gratuit", "n d urgence", "horaire",
+  "adhesion", "adhesions", "a ce jour",
 ];
 
 /**
@@ -163,7 +240,9 @@ const MOBILIER: readonly string[] = [
   "en savoir plus",
   "mairie",
   "hotel de ville",
-  "renseignements",
+  // Au singulier : la regle admet le pluriel, pas l'inverse. « Renseignement » seul
+  // nommait une structure du fichier de la Haute-Loire.
+  "renseignement",
   // Fonctions : le bloc nomme qui repond, la structure est ailleurs dans la page.
   "directeur",
   "directrice",
@@ -214,6 +293,23 @@ const MOBILIER_EXACT: readonly string[] = [
   // Un pays n'est pas une structure. Sans cette entree, le « France » qui termine une
   // adresse postale reunissait dans une seule ligne les trente adresses d'une commune.
   "france",
+  // Libelles de champ et intertitres de fiche, releves sur l'Ain et la Haute-Loire.
+  "important", "presentation", "modalites", "duree", "divers", "bureau",
+  "envoi", "repas", "danser", "page instagram", "tel fixe", "tel portable", "telephone fixe",
+  "telephone portable", "plus d informations", "informations pratiques",
+  // Le lieu-dit du centre de la commune : l'adresse de la moitie des associations rurales.
+  "bourg", "le bourg", "centre bourg",
+  // Intertitres d'une fiche, que la boucle atteignait une fois le president refuse.
+  "membres", "membres du bureau", "le bureau", "composition du bureau",
+  "personnes a contacter", "personne a contacter", "adjoint", "adjointe",
+  "domaine de l association", "objet du message", "chargement du formulaire",
+  "site officiel de la mairie", "direction", "vice", "siege social", "personne referente",
+  "personnes referentes", "representant", "representante", "representants",
+  "representantes", "co presidents", "copresidents", "bienfaiteur", "bienfaiteurs",
+  "artisans et commercants", "le maire", "maire", "delegue", "deleguee", "delegues",
+  "deleguees", "chef de section", "animateur", "animatrice", "animateurs", "intervenant",
+  "intervenante", "intervenants", "intervenantes", "autre contact", "autres contacts",
+  "public", "site web ou facebook", "facebook ou site web",
 ];
 
 /**
@@ -240,6 +336,10 @@ const CIVILITES: readonly string[] = [
 const VOIE: readonly string[] = [
   "rue", "place", "avenue", "boulevard", "bd", "av", "impasse", "chemin", "route",
   "allee", "allees", "square", "quai", "cours", "lieu dit", "residence", "zone",
+  // Aucun nom du RNA ne commence par ceux-la ; « Hameau du Jardin Public » nommait une
+  // structure du fichier de la Haute-Loire. « Lotissement » n'y est pas : une association
+  // syndicale de lotissement en porte le nom.
+  "hameau", "esplanade", "parvis", "za", "zi", "zac", "z a", "z i",
 ];
 
 /**
@@ -349,6 +449,52 @@ function estUnePhrase(segment: string, normalise: string): boolean {
 }
 
 /**
+ * Un texte casse par un encodage ou une URL n'est pas un nom.
+ *
+ * « TÃ©l. Fixe » est un « Tel. Fixe » decode de travers, « Comit%C3%A9-Secours-… » un
+ * lien que la page affichait en clair. Aucun nom du RNA ne porte l'un ou l'autre.
+ *
+ * Une parenthese fermante sans ouvrante — « Eleves) », « Baby Gym) » — trahit la fin d'une
+ * enumeration coupee par la virgule, et un segment qui s'ouvre sur une parenthese n'est
+ * qu'une incise. L'inverse n'est pas vrai : dans « Culture bretonne (danse », la virgule a
+ * coupe l'incise mais le nom est entier, et le rejeter perdrait une structure.
+ */
+function estUnTexteCasse(segment: string): boolean {
+  // « Ã » ou « Â » suivis d'autre chose qu'une lettre : « TÃ©l », « DURANDÃ‰ ». « JOÃO » reste
+  // un nom.
+  if (/Ã[^\sA-Za-z]|Â[^\sA-Za-z]|â€/.test(segment)) return true;
+  if (/%[0-9a-f]{2}/i.test(segment)) return true;
+  if (segment.trimStart().startsWith("(")) return true;
+  let profondeur = 0;
+  for (const caractere of segment) {
+    if (caractere === "(") profondeur += 1;
+    else if (caractere === ")" && --profondeur < 0) return true;
+  }
+  return false;
+}
+
+/** Jours, mois, et les mots qui les accompagnent dans un agenda — rien d'autre. */
+const AGENDA: ReadonlySet<string> = new Set([
+  "lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche",
+  "lundis", "mardis", "mercredis", "jeudis", "vendredis", "samedis", "dimanches",
+  "janvier", "fevrier", "mars", "avril", "mai", "juin", "juillet", "aout", "septembre",
+  "octobre", "novembre", "decembre",
+]);
+const OUTILS_D_AGENDA: ReadonlySet<string> = new Set(["le", "les", "tous", "toutes", "chaque", "et", "a", "au", "du", "de", "rdv"]);
+
+/**
+ * Le segment n'est-il fait que de jours et de mois ? « Samedi », « Tous les lundis »,
+ * « Samedi-Dimanche-Lundi », « Mardi rdv a ».
+ *
+ * Tout le segment, et non son premier mot : « Mardi matin », « Les Jeudis de Rennes » et
+ * « Vendredi 13 » sont des noms du RNA.
+ */
+function estUnAgenda(normalise: string): boolean {
+  const mots = normalise.split(" ");
+  return mots.some((mot) => AGENDA.has(mot)) && mots.every((mot) => AGENDA.has(mot) || OUTILS_D_AGENDA.has(mot));
+}
+
+/**
  * Le segment se reduit-il au nom de la commune ?
  *
  * « Deyvillers », « Fraize », « Andrezieux-Boutheon » nommaient des structures dans les
@@ -356,14 +502,31 @@ function estUnePhrase(segment: string, normalise: string): boolean {
  * est connue des deux appelants — le crawl et la passe de rattrapage — donc le filtre est
  * exact plutot qu'heuristique.
  */
-function estLaCommune(normalise: string, commune: string | undefined): boolean {
-  if (commune === undefined || commune === "") return false;
-  const nom = normaliserNom(commune);
-  if (nom.length < LONGUEUR_MIN) return false;
-  // L'egalite ne suffit pas : « Plombieres » nommait cinq structures de
-  // Plombieres-les-Bains. Le pied de page ecrit le nom court, la base le nom complet.
-  return normalise === nom || nom.startsWith(`${normalise} `) || normalise.startsWith(`${nom} `);
+function estLaCommune(normalise: string, commune: Commune): boolean {
+  const nomCommune = nomDeLaCommune(commune);
+  if (nomCommune !== undefined && nomCommune !== "") {
+    const nom = normaliserNom(nomCommune);
+    // L'egalite ne suffit pas : « Plombieres » nommait cinq structures de
+    // Plombieres-les-Bains. Le pied de page ecrit le nom court, la base le nom complet.
+    if (nom.length >= LONGUEUR_MIN && (normalise === nom || nom.startsWith(`${normalise} `) || normalise.startsWith(`${nom} `))) {
+      return true;
+    }
+  }
+  // Une commune voisine : le nom entier, ou sa forme courte — « Le Puy » pour
+  // « Le Puy-en-Velay ». Jamais un nom qui ne fait que commencer comme elle : « Coubon
+  // Tennis Club » est un club.
+  if (typeof commune !== "object") return false;
+  if (commune.voisines.has(normalise)) return true;
+  for (const voisine of commune.voisines) {
+    if (voisine.startsWith(`${normalise} `)) return true;
+    // Sa forme longue, aussi : « Vorey sur Arzon » pour « Vorey ».
+    if (normalise.startsWith(`${voisine} `) && COMPLEMENT_DE_LIEU.test(normalise.slice(voisine.length + 1))) return true;
+  }
+  return false;
 }
+
+/** Ce qui prolonge un nom de commune sans en faire autre chose : « sur Arzon », « en Velay ». */
+const COMPLEMENT_DE_LIEU = /^(?:sur|sous|en|les|lez|le|la|de|du|des|d)\s\S+$/;
 
 /**
  * Le texte serait-il accepte comme nom de structure par l'heuristique **courante** ?
@@ -374,7 +537,11 @@ function estLaCommune(normalise: string, commune: string | undefined): boolean {
  * qui permet d'effacer les « Site internet » et les « France Grand Est » d'une base dont
  * le cache a disparu, sans rien inventer a la place.
  */
-export function nomEncoreAcceptable(nom: string, commune?: string | undefined): boolean {
+export function nomEncoreAcceptable(nom: string, commune?: Commune): boolean {
+  // Le decoupage compte aussi : un nom qui porte un libelle de champ — « SOCIETE de CHASSE
+  // President » — ne serait plus lu tel quel. La page le recoupera si le cache la detient ;
+  // sinon on l'efface, comme tout nom que le filtre courant refuse.
+  if (LIBELLES.test(nom)) return false;
   return acceptable(nom, commune);
 }
 
@@ -388,39 +555,112 @@ export function nomEncoreAcceptable(nom: string, commune?: string | undefined): 
 export function nomPressenti(
   contextes: readonly string[],
   empreinte: string,
-  commune?: string | undefined,
+  commune?: Commune,
+  titre?: string | undefined,
 ): NomPressenti | undefined {
   for (const contexte of contextes.slice(0, CONTEXTES_EXAMINES)) {
-    const trouve = depuisUnBloc(contexte, empreinte, commune);
+    const trouve = depuisUnBloc(contexte, empreinte, commune, titre);
     if (trouve !== undefined) return trouve;
   }
   return undefined;
 }
 
+/**
+ * Le nom d'un contact extrait, blocs puis titre de fiche. **La** porte d'entree du crawl et
+ * de la reparation : passer le contact entier, c'est ne pas pouvoir oublier son titre.
+ */
+export function nomPressentiDuContact(contact: ContactExtrait, commune?: Commune): NomPressenti | undefined {
+  return nomPressenti(contact.contextes, contact.empreinte, commune, contact.titre);
+}
+
+/**
+ * Le titre de la fiche, quand les blocs du contact n'ont rien nomme — le plus souvent parce
+ * qu'ils ne portaient que le president. Il passe par le meme filtre : « Contact »,
+ * « Informations », « Aines » ne nomment rien, titre ou pas. « CLUB DU MONT - DURAND
+ * Paulette » se coupe au tiret, et c'est la structure qui reste.
+ */
+function depuisLeTitre(titre: string, commune: Commune): NomPressenti | undefined {
+  for (const segment of decouper(titre)) {
+    if (acceptable(segment, commune)) return { nom: segment, normalise: normaliserNom(segment), source: "bloc:titre" };
+  }
+  return undefined;
+}
+
+/**
+ * Le nom lu dans un bloc — ou dans le titre de la fiche, des que le bloc nomme une personne.
+ *
+ * Le titre ne se lit que dans ce cas-la : c'est celui pour lequel il a ete mesure. Lu
+ * partout, il nommait surtout des rubriques — « Nature », « Musique », « Sports divers » —
+ * sur le 43 : des lignes fausses la ou il n'y avait qu'une ligne en moins.
+ *
+ * Et il se lit **des** la personne rencontree, avant les segments suivants du bloc et
+ * avant le bloc plus large : sur deux echantillons de trente fiches du 43, les erreurs
+ * venaient toutes de ce qui suivait la personne — l'activite (« Jeu de boules »), le
+ * hameau de l'ecole, un second membre du bureau au prenom rare.
+ */
 function depuisUnBloc(
   contexte: string,
   empreinte: string,
-  commune: string | undefined,
+  commune: Commune,
+  titre: string | undefined,
 ): NomPressenti | undefined {
-  const { texte, coupure } = sansContacts(contexte, empreinte);
+  const { texte, coupure } = sansContacts(sansCategorie(contexte), empreinte);
   if (coupure === -1) return undefined;
 
   // Le plus proche d'abord, en remontant vers la gauche, puis ce qui suit le contact.
   // « Associations sportives — Tennis Club de Bruzou — contact@... » doit rendre le club
   // et non la rubrique, et un contact en tete de bloc doit pouvoir regarder devant lui.
-  const candidats: { segment: string; source: NomPressenti["source"] }[] = [
-    ...decouper(texte.slice(0, coupure))
-      .reverse()
-      .map((segment) => ({ segment, source: "bloc:avant" as const })),
-    ...decouper(texte.slice(coupure)).map((segment) => ({ segment, source: "bloc:apres" as const })),
+  const avant = decouper(texte.slice(0, coupure));
+  const apres = decouper(texte.slice(coupure));
+  const candidats: { segment: string; source: NomPressenti["source"]; voisins: readonly string[] }[] = [
+    ...avant
+      .map((segment, rang) => ({ segment, source: "bloc:avant" as const, voisins: voisinsDe(avant, rang) }))
+      .reverse(),
+    ...apres.map((segment, rang) => ({ segment, source: "bloc:apres" as const, voisins: voisinsDe(apres, rang) })),
   ];
 
-  for (const { segment, source } of candidats) {
-    if (acceptable(segment, commune)) {
+  let titreLu = false;
+  for (const { segment, source, voisins } of candidats) {
+    const personne = estUnePersonneCoupee(segment, voisins) || designeUnePersonne(segment);
+    if (personne && titre !== undefined && !titreLu) {
+      titreLu = true;
+      const parLeTitre = depuisLeTitre(titre, commune);
+      if (parLeTitre !== undefined) return parLeTitre;
+    }
+    if (!personne && acceptable(segment, commune)) {
       return { nom: segment, normalise: normaliserNom(segment), source };
     }
   }
   return undefined;
+}
+
+function voisinsDe(segments: readonly string[], rang: number): string[] {
+  return [segments[rang - 1], segments[rang + 1]].filter((voisin): voisin is string => voisin !== undefined);
+}
+
+/**
+ * Un nom de famille seul, dont le prenom est la cellule d'a cote : « ROCHE | Sylvie ». Les
+ * fiches en formulaire — « Nom : … Prenom : … » — coupent la personne en deux segments, et
+ * le nom de famille en capitales passait pour un sigle de structure.
+ */
+function estUnePersonneCoupee(segment: string, voisins: readonly string[]): boolean {
+  if (/\s/.test(segment)) return false;
+  return voisins.some(
+    (voisin) => !/\s/.test(voisin) && (estUnNomDePersonne(`${segment} ${voisin}`) || estUnNomDePersonne(`${voisin} ${segment}`)),
+  );
+}
+
+/**
+ * La valeur d'un champ de categorie n'est pas un nom : dans « Domaine de l'association :
+ * Aines — Paulette X preside cette association », c'est « Aines » que la boucle aurait
+ * retenu une fois la presidente refusee. Remplacee par des espaces, a longueur egale, pour
+ * que les positions du texte ne bougent pas.
+ */
+const CHAMP_DE_CATEGORIE =
+  /\b(?:domaine(?:\s+d['’]activit[ée]s?|\s+de\s+l['’]association)?|activit[ée]s?|cat[ée]gorie|th[èe]me|discipline|secteur(?:\s+d['’]activit[ée])?)\s*:[^\n|;:]*/giu;
+
+function sansCategorie(contexte: string): string {
+  return contexte.replace(CHAMP_DE_CATEGORIE, (champ) => `\n${" ".repeat(champ.length - 1)}`);
 }
 
 /**
@@ -434,7 +674,7 @@ function sansContacts(contexte: string, empreinte: string): { texte: string; cou
   const direct = empreinte === "" ? -1 : contexte.indexOf(empreinte);
 
   let coupure = -1;
-  const texte = contexte.replace(new RegExp(`${EMAIL.source}|${TELEPHONE.source}`, "g"), (trouve, decalage: number) => {
+  const texte = contexte.replace(CONTACTS, (trouve, decalage: number) => {
     // Le premier contact efface fait office de repere quand l'empreinte est un `href`,
     // absent du texte rendu.
     if (coupure === -1) coupure = decalage;
@@ -444,14 +684,30 @@ function sansContacts(contexte: string, empreinte: string): { texte: string; cou
   return { texte, coupure: direct === -1 ? coupure : direct };
 }
 
+const FIN_DE_TOURNURE = /(?:^|\s)(?:du|de|des|la|le|les|d'|l'|d’|l’|au|aux|à|a|par|pour|son|sa|ses|votre|notre)\s*$/i;
+
 function decouper(morceau: string): string[] {
   return morceau
     .split(SEPARATEURS)
+    .flatMap((segment) => {
+      // Un tiret espace ne coupe que s'il separe une personne d'autre chose : « CLUB DU
+      // MONT - DURAND Paulette ». Ailleurs il appartient au nom — le RNA en porte 2 150.
+      const parties = segment.split(/\s+-\s+/);
+      return parties.length > 1 && parties.some((partie) => designeUnePersonne(partie)) ? parties : [segment];
+    })
+    .flatMap((segment) => {
+      const morceaux = segment.split(LIBELLES);
+      // Ce qui precede un libelle et finit sur un mot-outil n'est qu'un debut de phrase :
+      // « Nom du President(e) », « Mot de la Presidente », « Son President ».
+      return morceaux.length === 1 ? morceaux : morceaux.filter((morceau) => !FIN_DE_TOURNURE.test(morceau));
+    })
     .map((segment) => segment.replace(/\s+/g, " ").trim())
     // Puces et chevrons de navigation : « >> Ecole Elementaire » est un nom precede d'un
     // ornement, pas un nom qui commence par « > ».
-    .map((segment) => segment.replace(/^[>»«*+.\-–—\u2022\u00b7\s]+/, "").trim())
-    .map((segment) => segment.replace(/[>«»*+\-–—\u2022\u00b7\s.,;:/]+$/, "").trim())
+    // Tout ce qui n'est ni lettre, ni chiffre, ni guillemet, ni parenthese — les puces
+    // emoji comprises, « 🔹 Veuves ».
+    .map((segment) => segment.replace(/^[^\p{L}\p{N}"'(]+/u, "").trim())
+    .map((segment) => segment.replace(/[>«»*+\-–—\u2022\u00b7\s.,;:/(]+$/, "").trim())
     .filter((segment) => segment !== "");
 }
 
@@ -461,7 +717,7 @@ function decouper(morceau: string): string[] {
  * On **rejette** plutot que de tronquer, toujours : couper un segment trop long
  * fabriquerait un nom qui n'a jamais existe sur aucune page.
  */
-function acceptable(segment: string, commune?: string | undefined): boolean {
+function acceptable(segment: string, commune?: Commune): boolean {
   const normalise = normaliserNom(segment);
   if (normalise.length < LONGUEUR_MIN || normalise.length > LONGUEUR_MAX) return false;
   if (normalise.split(" ").length > MOTS_MAX) return false;
@@ -470,12 +726,21 @@ function acceptable(segment: string, commune?: string | undefined): boolean {
   const chiffres = (normalise.match(/\d/g) ?? []).length;
   if (chiffres / normalise.length > PART_CHIFFRES_MAX) return false;
 
-  // Le laissez-passer passe avant les deux filtres : un motif de structure l'emporte sur
+  // Ce qui disqualifie un nom meme quand il nomme aussi une structure, donc avant le
+  // laissez-passer : un numero — un 06 livre dans la colonne « nom » viole l'invariant 6 —,
+  // une personne (ADR-036), un texte casse.
+  if (porteUnNumero(segment)) return false;
+  if (porteUnePersonne(segment)) return false;
+  if (estUnTexteCasse(segment)) return false;
+
+  // Le laissez-passer passe avant les autres filtres : un motif de structure l'emporte sur
   // le mot de mobilier qui le commence.
   if (nommeUneStructure(normalise)) return true;
 
   if (PROSE.some((marqueur) => ` ${normalise} `.includes(` ${marqueur} `))) return false;
+  if (PROSE_EN_TETE.some((debut) => normalise === debut || normalise.startsWith(`${debut} `))) return false;
   if (MOBILIER_EXACT.includes(normalise)) return false;
+  if (estUnAgenda(normalise)) return false;
   if (estUnePhrase(segment, normalise)) return false;
   if (porteUnHoraire(normalise)) return false;
   if (estLaCommune(normalise, commune)) return false;
@@ -489,6 +754,9 @@ function acceptable(segment: string, commune?: string | undefined): boolean {
   if (porteUneEntiteHtml(segment)) return false;
   if (segment.includes("@")) return false;
   if (!commenceParUneMajuscule(segment)) return false;
+  // La forme d'un nom de personne, jugee apres le laissez-passer : « Comite des fetes -
+  // President » reste un nom, « DURANDEL Nadine Tresoriere » n'en est plus un.
+  if (estUnNomDePersonne(segment)) return false;
   // Le pluriel compte : « Contacts » est le titre d'une rubrique aussi surement que
   // « Contact ».
   return !MOBILIER.some(

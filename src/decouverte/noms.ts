@@ -33,11 +33,12 @@ import { toIso } from "../clock.ts";
 import { transaction } from "../db/index.ts";
 import { analyser, decoder, estHtml } from "../parse/html.ts";
 import { extraireContacts } from "./extraction.ts";
-import { VERSION_NOM, nomPressenti } from "./nom-pressenti.ts";
+import { VERSION_NOM, nomPressentiDuContact } from "./nom-pressenti.ts";
+import { normaliserNom } from "../texte.ts";
 import type { Clock } from "../clock.ts";
 import type { Database } from "../db/index.ts";
 import type { HttpCache } from "../http/cache.ts";
-import type { NomPressenti } from "./nom-pressenti.ts";
+import type { ContexteCommune, NomPressenti } from "./nom-pressenti.ts";
 
 /** Meme raison qu'au rejeu du pre-filtre : une page relue coute une lecture et un DOM. */
 const TAILLE_TRANCHE = 200;
@@ -124,6 +125,29 @@ type LigneANommer = {
 
 type Ecriture = readonly [string | null, string | null, string | null, string, number, number];
 
+const SQL_COMMUNES = "SELECT code_insee, nom, departement FROM commune";
+
+/**
+ * La commune d'un contact et les noms de toutes celles de son departement, pour que le
+ * nommage refuse aussi le nom d'une commune voisine (ADR-036). Lu une fois : quelques
+ * centaines de lignes par departement.
+ */
+export function lecteurDeCommunes(db: Database): (codeInsee: string) => ContexteCommune | undefined {
+  const lignes = db.prepare(SQL_COMMUNES).all() as { code_insee: string; nom: string; departement: string }[];
+  const parDepartement = new Map<string, Set<string>>();
+  for (const ligne of lignes) {
+    const voisines = parDepartement.get(ligne.departement) ?? new Set<string>();
+    voisines.add(normaliserNom(ligne.nom));
+    parDepartement.set(ligne.departement, voisines);
+  }
+  const parCode = new Map(lignes.map((ligne) => [ligne.code_insee, ligne]));
+  return (codeInsee) => {
+    const ligne = parCode.get(codeInsee);
+    if (ligne === undefined) return undefined;
+    return { nom: ligne.nom, voisines: parDepartement.get(ligne.departement) ?? new Set<string>() };
+  };
+}
+
 export function remplirNoms(
   db: Database,
   cache: HttpCache,
@@ -136,6 +160,7 @@ export function remplirNoms(
     .prepare(SQL_A_NOMMER)
     .all(departement, departement, tout ? 1 : 0, VERSION_NOM) as unknown as LigneANommer[];
   const aJour = tout ? 0 : compterAJour(db, departement);
+  const communes = lecteurDeCommunes(db);
 
   let examines = 0;
   let nommes = 0;
@@ -164,7 +189,7 @@ export function remplirNoms(
 
     if (ligne.url_hash !== pageCourante) {
       pageCourante = ligne.url_hash;
-      noms = nomsDeLaPage(cache, ligne.url, ligne.commune);
+      noms = nomsDeLaPage(cache, ligne.url, communes(ligne.code_insee) ?? ligne.commune);
     }
 
     // Un cache froid n'est pas un verdict : la ligne n'est **pas** marquee, elle
@@ -231,7 +256,7 @@ function compterAJour(db: Database, departement: string | null): number {
 function nomsDeLaPage(
   cache: HttpCache,
   url: string,
-  commune: string,
+  commune: ContexteCommune | string,
 ): Map<string, NomPressenti> | undefined {
   const entree = cache.get(url);
   if (entree === undefined) return undefined;
@@ -242,7 +267,7 @@ function nomsDeLaPage(
 
   const noms = new Map<string, NomPressenti>();
   for (const contact of extraction.contacts) {
-    const trouve = nomPressenti(contact.contextes, contact.empreinte, commune);
+    const trouve = nomPressentiDuContact(contact, commune);
     if (trouve !== undefined) noms.set(`${contact.kind} ${contact.valeurNormalisee}`, trouve);
   }
   return noms;

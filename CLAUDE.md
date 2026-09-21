@@ -95,9 +95,16 @@ dependance**, et par defaut s'en passer. Le projet a **une seule** dependance ru
 `node-html-parser`, entree au lot 3 apres mesure de son cout (ADR-011). C'est un seuil
 qui ne se franchit qu'une fois : tout ajout ulterieur se justifie de la meme facon.
 
-Un seul fichier tiers est embarque hors npm : `src/ui/assets/htmx.min.js`, vendorise au
-lot 6 (ADR-020). Sa version et son SHA-256 sont des constantes de `src/ui/assets.ts`,
-verifiees par un test — un fichier minifie ne se relit pas en revue de diff.
+Deux fichiers tiers sont embarques hors npm, avec la meme discipline : une constante dit
+d'ou ils viennent, un test verifie leur empreinte — ni un fichier minifie ni une liste de
+deux mille mots ne se relisent en revue de diff.
+
+- `src/ui/assets/htmx.min.js`, vendorise au lot 6 (ADR-020) ; version et SHA-256 dans
+  `src/ui/assets.ts`.
+- `src/normalisation/prenoms.ts`, la liste de prenoms du lot 12 (ADR-036), **generee** par
+  `scripts/prenoms.ts` depuis le fichier des prenoms de l'INSEE (Licence Ouverte), qu'on
+  range a la main sous `data/prenoms/` — le script ne telecharge rien. Source, seuil et
+  empreintes sont des constantes du module. Elle se regenere, elle ne s'edite pas.
 
 ## Conventions
 
@@ -134,7 +141,9 @@ fichier ne tient pas est pire qu'un ecran muet ; deux chemins qui doivent s'acco
 finissent toujours par diverger.
 
 **Une ligne du profil simple affirme une association**, puisqu'elle ne porte ni provenance
-ni regime. Elle doit donc reposer sur un indice (ADR-034) : le RNA, du vocabulaire de
+ni regime — et **elle ne nomme jamais une personne** (ADR-036), ce que l'ADR-032 avait
+accepte et que le client a refuse. `normalisation/personne.ts` en juge au nommage et a
+l'export ; quand le bloc ne nommait que le president, le nommage lit le titre de la fiche. Elle doit donc reposer sur un indice (ADR-034) : le RNA, du vocabulaire de
 structure dans le nom, ou une page a vocabulaire associatif. Le vocabulaire commercial
 l'emporte sur les trois. Le filtre est en trois couches — ne pas visiter, ne pas nommer, ne
 pas livrer — parce qu'elles ne protegent pas les memes bases : la premiere ne vaut que pour
@@ -150,15 +159,27 @@ se lit comme une perte de donnees. `annuaire noms` rattrape une base deja collec
 reseau, en relisant le cache ; `nom_pressenti_version` y sert de marqueur, et c'est lui —
 jamais la presence d'un nom — qui decide de ce qui est refait.
 
+La cle de groupe porte la **commune canonique** — le plus petit des codes INSEE qui
+partagent le nom et l'hote du site de mairie —, et non le code : une commune nouvelle garde
+les codes de ses communes deleguees, et chacun sa copie des contacts (ADR-036). Aucun nom
+qui porte un numero ne sort, dans aucun profil : c'est l'export qui tient l'invariant 6 pour
+les colonnes de nom, independamment de la reparation, et un test le verifie seul.
+
 ## Reparer une base ecrite par une version anterieure
 
 Corriger une heuristique ne suffit pas : le client a deja une base, et il exporte souvent
-juste apres avoir installe la nouvelle version. Deux mecanismes, et la frontiere entre eux
-est ce dont ils ont besoin (ADR-035).
+juste apres avoir installe la nouvelle version. Trois cas, et la frontiere entre eux est ce
+dont ils ont besoin (ADR-035, ADR-036).
 
 - **Ce qui se repare en SQL vit dans une migration.** Elle s'applique a l'ouverture, sans
-  commande, et sans le cache — lequel se purge. C'est la que vit le detachement des
-  rattachements de conteneur (migration 12).
+  commande, et sans le cache — lequel se purge. C'est la que vivent le detachement des
+  rattachements de conteneur (migration 12) et le « Cedex » retire des noms de commune
+  (migration 13).
+- **Ce qui se repare sans la page mais par une regle du code vit dans
+  `src/reparation.ts`, et appelle cette regle** — jamais une seconde implementation en SQL.
+  C'est le decollage des adresses soudees au mot suivant, par `decollerEmail`, sous son
+  propre marqueur `metric(reparation, adresses_version)`, **avant** le rejeu des noms, qui
+  retrouve chaque contact dans sa page par sa valeur.
 - **Ce qui demande de relire la page vit dans `src/reparation.ts`**, appelee par le
   `ouvrir()` commun de `cli.ts`, comme la purge. Elle rejoue le nommage depuis le cache, et
   **efface** — sans rien mettre a la place — les noms que le filtre courant refuse et

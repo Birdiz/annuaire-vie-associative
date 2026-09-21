@@ -29,9 +29,11 @@ npm install
 ```
 
 Une seule dépendance runtime, `node-html-parser`
-([ADR-011](docs/adr/011-premiere-dependance-runtime.md)). Un seul fichier tiers hors npm : une copie
-de htmx 2.0.7 (50 Ko, 0BSD), servie depuis la machine, dont l'empreinte SHA-256 est vérifiée par un
-test ([ADR-020](docs/adr/020-porte-d-entree-locale.md)).
+([ADR-011](docs/adr/011-premiere-dependance-runtime.md)). Deux fichiers tiers hors npm, dont
+l'empreinte SHA-256 est vérifiée par un test : une copie de htmx 2.0.7 (50 Ko, 0BSD), servie depuis
+la machine ([ADR-020](docs/adr/020-porte-d-entree-locale.md)), et une liste de 2 159 prénoms
+(15 Ko) tirée du fichier des prénoms de l'INSEE, qui sert à reconnaître une personne là où
+l'outil attend le nom d'une structure ([ADR-036](docs/adr/036-une-personne-n-est-pas-une-structure.md)).
 
 ## Installer
 
@@ -271,12 +273,13 @@ sont tenues par le schéma de la base ou par un test qui échoue si on s'en éca
 - [`docs/brief.md`](docs/brief.md) — le brief d'origine, qui fait foi
 - [`docs/adr/`](docs/adr/) — les décisions d'architecture, avec leurs conséquences assumées
 - [`CLAUDE.md`](CLAUDE.md) — ce qui contraint le code au quotidien
-- [`src/ui/assets/htmx.LICENSE.txt`](src/ui/assets/htmx.LICENSE.txt) — licence du seul fichier
-  tiers embarqué hors npm
+- [`src/ui/assets/htmx.LICENSE.txt`](src/ui/assets/htmx.LICENSE.txt) — licence de htmx, embarqué
+  hors npm
 
 ## Licence et données
 
 Les données du RNA et de l'Annuaire de l'administration sont publiées sous **Licence Ouverte
-Etalab 2.0**. Le RNA **ne couvre ni la Moselle (57), ni le Bas-Rhin (67), ni le Haut-Rhin (68)**,
+Etalab 2.0**, comme le fichier des prénoms de l'INSEE (édition 2025) dont la liste de
+`src/normalisation/prenoms.ts` est tirée. Le RNA **ne couvre ni la Moselle (57), ni le Bas-Rhin (67), ni le Haut-Rhin (68)**,
 qui relèvent du droit local des associations : `run` les refuse explicitement plutôt que de rendre
 un annuaire silencieusement vide.

@@ -65,6 +65,16 @@ l'écran, et un second bouton l'arrête** sans rien perdre. Le worker tourne dan
 l'interface, ce qui est le seul moyen d'obtenir un arrêt propre sous Windows, où il n'existe pas
 de `SIGTERM` ([ADR-024](docs/adr/024-lancer-un-run-depuis-l-interface.md)).
 
+Lot 12 : **une ligne du fichier simple nomme une structure, jamais une personne**. Sur la
+Haute-Loire, collectée à neuf, puis réparée sans une commande à l'ouverture par la nouvelle
+version : les personnes en colonne « nom » passent de **145 à 1**. Des 341 contacts qu'une personne
+nommait, 257 retrouvent leur structure — dans leur bloc ou dans le titre de leur fiche — et
+84 sortent du fichier simple, comptés. Les adresses soudées au mot suivant (69), les communes
+« Cedex » (82), les lignes nommées d'après une messagerie (17) et le 06 livré dans un nom
+tombent à zéro. Sur l'Ille-et-Vilaine et les Vosges, les lignes identiques des communes
+nouvelles passent de 61 et 20 à zéro. Coût : 32 Ko de bundle, dont 15 Ko de prénoms
+([ADR-036](docs/adr/036-une-personne-n-est-pas-une-structure.md)).
+
 
 ## Ce que coûte un département, et ce qu'il rapporte
 

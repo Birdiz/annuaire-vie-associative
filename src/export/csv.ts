@@ -7,7 +7,7 @@
  * profil `complet` est le porteur de cette provenance dans le fichier : c'est lui,
  * l'artefact auditable, et c'est le defaut de la ligne de commande.
  *
- * Le profil `simple` est un **extrait explicitement derive** : cinq colonnes, une ligne
+ * Le profil `simple` est un **extrait explicitement derive** : six colonnes, une ligne
  * par structure, pour la personne qui doit passer des appels et non auditer une
  * collecte. Il abandonne la provenance et le regime juridique, et l'ecran d'export le
  * dit au moment ou le fichier quitte l'outil (ADR-032). Ce qui serait fautif, ce n'est
@@ -23,7 +23,6 @@
  */
 
 import {
-  SQL_FOURNISSEURS_PUBLICS,
   SQL_NON_INSTITUTIONNEL,
   domaineDuContact,
   estDomaineDeMairie,
@@ -32,7 +31,10 @@ import {
   libelleDepuisDomaine,
 } from "./domaine.ts";
 import { classer } from "../normalisation/classification.ts";
+import { SQL_NON_MESSAGERIE } from "../normalisation/messageries.ts";
 import { estStructurePlausible } from "../normalisation/plausibilite.ts";
+import { designeUnePersonne } from "../normalisation/personne.ts";
+import { porteUnNumero } from "../decouverte/motifs.ts";
 import { scorerLien } from "../decouverte/scoring.ts";
 import type { Database } from "../db/index.ts";
 
@@ -105,7 +107,7 @@ export const COLONNES_COMPLET: readonly Colonne<LigneComplet>[] = [
   { nom: "source_url", cellule: (l) => l.source_url },
   { nom: "collected_at", cellule: (l) => l.collected_at },
   { nom: "review_statut", cellule: (l) => l.review_statut },
-  { nom: "nom_pressenti", cellule: (l) => l.nom_pressenti ?? "" },
+  { nom: "nom_pressenti", cellule: (l) => (nomLivrable(l.nom_pressenti) ? (l.nom_pressenti ?? "") : "") },
   { nom: "nom_source", cellule: sourceDuNomComplet },
 ];
 
@@ -194,7 +196,7 @@ const DOMAINE_DE_MAIRIE = `
  *
  * Le miroir SQL de `bienForme`. Il n'est pas theorique : un CMS qui masque l'arobase
  * laisse en base des valeurs comme `club[^@]gmail.com`, dont le domaine `]gmail.com`
- * echappe a la liste des fournisseurs publics — elle compare des chaines exactes — et
+ * echappe a la liste des messageries — `]gmail` n'est l'etiquette de personne — et
  * sortait nomme « ]gmail ». `GLOB` et non `LIKE` : lui seul a des classes de caracteres.
  */
 const ADRESSE_MALFORMEE = "domaine GLOB '*[^abcdefghijklmnopqrstuvwxyz0-9.-]*'";
@@ -205,7 +207,7 @@ const DOMAINE_SPECIFIQUE = `
    AND instr(domaine, '.') > 0
    AND instr(domaine, 'xn--') = 0
    AND NOT ${ADRESSE_MALFORMEE}
-   AND domaine NOT IN (${SQL_FOURNISSEURS_PUBLICS})
+   AND ${SQL_NON_MESSAGERIE}
    AND ${SQL_NON_INSTITUTIONNEL}
    AND NOT ${DOMAINE_DE_MAIRIE})
 `;
@@ -234,14 +236,45 @@ const DOMAINE_SPECIFIQUE = `
 const CLE_GROUPE = `
   CASE
     WHEN association_id IS NOT NULL
-      THEN 'A:' || code_insee || ':' || association_id
+      THEN 'A:' || code_groupe || ':' || association_id
     WHEN nom_pressenti_normalise IS NOT NULL AND nom_pressenti_normalise <> ''
-      THEN 'P:' || code_insee || ':' || nom_pressenti_normalise
+      THEN 'P:' || code_groupe || ':' || nom_pressenti_normalise
     WHEN ${DOMAINE_SPECIFIQUE}
-      THEN 'D:' || code_insee || ':' || domaine
+      THEN 'D:' || code_groupe || ':' || domaine
     WHEN domaine IS NOT NULL AND NOT ${ADRESSE_MALFORMEE} AND ${DOMAINE_DE_MAIRIE}
-      THEN 'M:' || code_insee || ':' || valeur_normalisee
+      THEN 'M:' || code_groupe || ':' || valeur_normalisee
   END
+`;
+
+/**
+ * Une commune nouvelle garde les codes INSEE de ses communes deleguees, et le seed leur
+ * donne a toutes le meme nom et le meme site (ADR-009, ADR-010) : le crawl traite ce site
+ * une fois par code, et chaque code garde sa copie des contacts. Grouper par code faisait
+ * donc N lignes **identiques** — 26 de trop sur l'Ain, « Valromey-sur-Seran ; Belmont »
+ * quatre fois.
+ *
+ * Le code du groupe est le plus petit des codes qui partagent **le nom et l'hote** du
+ * site de mairie : l'hote, et non l'URL, parce que deux codes freres different parfois d'un
+ * `/` final ou d'un chemin. Deux homonymes sans site commun restent deux communes — et une
+ * commune sans site reste seule, son code tenant lieu d'hote.
+ */
+const SQL_COMMUNES_GROUPEES = `
+  communes_nues AS (
+    SELECT code_insee, departement, nom,
+           replace(replace(lower(coalesce(url_mairie, '')), 'https://', ''), 'http://', '') AS url_nue
+      FROM commune
+  ),
+  communes_hotes AS (
+    SELECT communes_nues.*, ${HOTE_BRUT} AS hote_brut FROM communes_nues
+  ),
+  communes_groupees AS (
+    SELECT code_insee,
+           min(code_insee) OVER (
+             PARTITION BY departement, nom,
+                          CASE WHEN (${HOTE_MAIRIE}) = '' THEN code_insee ELSE (${HOTE_MAIRIE}) END
+           ) AS code_groupe
+      FROM communes_hotes
+  )
 `;
 
 /**
@@ -279,16 +312,18 @@ const SANS_DOUBLON_DE_COMMUNE = `
   (ct.association_id IS NOT NULL
    OR NOT EXISTS (
      SELECT 1 FROM contact rattache
+       JOIN communes_groupees groupe_rattache ON groupe_rattache.code_insee = rattache.code_insee
       WHERE rattache.association_id IS NOT NULL
-        AND rattache.code_insee = ct.code_insee
+        AND groupe_rattache.code_groupe = cg.code_groupe
         AND rattache.kind = ct.kind
         AND rattache.valeur_normalisee = ct.valeur_normalisee
    ))
 `;
 
 const SQL_GROUPES = `
-  WITH base AS (
-    SELECT ct.association_id, ct.code_insee, ct.kind,
+  WITH ${SQL_COMMUNES_GROUPEES},
+  base AS (
+    SELECT ct.association_id, ct.code_insee, cg.code_groupe, ct.kind,
            c.departement, c.nom AS commune,
            a.nom AS nom_association, a.nom_normalise, a.type_classifie,
            ct.nom_pressenti, ct.nom_pressenti_normalise,
@@ -301,6 +336,7 @@ const SQL_GROUPES = `
            ${URL_NUE} AS url_nue
       FROM contact ct
       JOIN commune c ON c.code_insee = ct.code_insee
+      JOIN communes_groupees cg ON cg.code_insee = ct.code_insee
       LEFT JOIN association a ON a.id = ct.association_id
     ${FILTRES}
      AND ${SANS_DOUBLON_DE_COMMUNE}
@@ -355,6 +391,12 @@ type Groupe = {
   /** `Set` et non tableau : deux graphies d'une meme valeur ne sortent pas deux fois. */
   telephones: Set<string>;
   emails: Set<string>;
+  /**
+   * Lignes SQL consommees. Distinct de la taille des `Set` : les copies d'un meme contact
+   * sous les codes d'une commune nouvelle se fondent dans le groupe, et le compte des
+   * ecartes doit les retrouver toutes.
+   */
+  lignes: number;
 };
 
 export type OptionsExport = {
@@ -453,6 +495,7 @@ function* tousLesGroupes(db: Database, options: OptionsExport): Generator<Groupe
     // L'indice se cumule sur toutes les lignes du groupe, d'ou la lecture ici et non a
     // l'ouverture : le groupe n'est juge qu'une fois complet.
     if (vocabulaireAssociatif(ligne.source_url)) courant.pageAssociative = true;
+    courant.lignes += 1;
     if (ligne.kind === "phone") courant.telephones.add(ligne.publiable);
     else courant.emails.add(ligne.publiable);
   }
@@ -495,6 +538,10 @@ function plausible(groupe: Groupe): boolean {
     nom: groupe.nom,
     nomInfere: premiere === "D",
     pageAssociative: groupe.pageAssociative,
+    // Le libelle d'un domaine — `jean-dupont.fr` rend « Jean Dupont » — n'est jamais passe
+    // par le filtre de nommage, ni un nom de bloc ecrit avant lui : la personne se juge ici
+    // aussi (ADR-036).
+    personne: premiere !== "A" && designeUnePersonne(groupe.nom),
   });
 }
 
@@ -506,7 +553,7 @@ function plausible(groupe: Groupe): boolean {
  */
 function ouvrirGroupe(ligne: LigneGroupe): Groupe | undefined {
   const nom = nomDuGroupe(ligne);
-  if (nom === undefined) return undefined;
+  if (nom === undefined || !nomLivrable(nom)) return undefined;
   return {
     cle: ligne.cle,
     departement: ligne.departement,
@@ -516,6 +563,7 @@ function ouvrirGroupe(ligne: LigneGroupe): Groupe | undefined {
     pageAssociative: false,
     telephones: new Set<string>(),
     emails: new Set<string>(),
+    lignes: 0,
   };
 }
 
@@ -623,9 +671,8 @@ export function compterEcartes(db: Database, options: OptionsExport): Ecartes {
   let nommes = 0;
   let horsSujet = 0;
   for (const { groupe, retenu } of tousLesGroupes(db, options)) {
-    const contacts = groupe.telephones.size + groupe.emails.size;
-    nommes += contacts;
-    if (!retenu) horsSujet += contacts;
+    nommes += groupe.lignes;
+    if (!retenu) horsSujet += groupe.telephones.size + groupe.emails.size;
   }
   return {
     sansNom: Number(sansCle?.n ?? 0) + Math.max(0, Number(retenus?.n ?? 0) - nommes),
@@ -673,7 +720,7 @@ function regime(ligne: LigneComplet): string {
  */
 function sourceDuNomComplet(ligne: LigneComplet): string {
   if (ligne.association !== null) return "rna";
-  if (ligne.nom_pressenti !== null && ligne.nom_pressenti !== "") return "bloc";
+  if (ligne.nom_pressenti !== null && ligne.nom_pressenti !== "") return nomLivrable(ligne.nom_pressenti) ? "bloc" : "aucun";
   if (ligne.kind !== "email") return "aucun";
 
   const domaine = domaineDuContact(ligne.valeur_normalisee);
@@ -682,6 +729,16 @@ function sourceDuNomComplet(ligne: LigneComplet): string {
   const hote = hoteDeLUrl(ligne.url_mairie);
   if (estDomaineSpecifique(domaine, hote)) return "domaine";
   return estDomaineDeMairie(domaine, hote) ? "mairie" : "aucun";
+}
+
+/**
+ * INVARIANT §4.6, tenu par l'export lui-meme : aucun nom qui porte un numero ne sort, dans
+ * aucun profil. Un nom de bloc ecrit par une version anterieure — « … - 06 … Albert » —
+ * est efface a l'ouverture par la reparation ; cette garde ne depend pas d'elle, et un test
+ * la verifie seule.
+ */
+function nomLivrable(nom: string | null): boolean {
+  return nom === null || !porteUnNumero(nom);
 }
 
 /**

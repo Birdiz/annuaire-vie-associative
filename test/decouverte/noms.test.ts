@@ -221,3 +221,47 @@ test("la version accompagne toujours le nom, trouve ou non", (t) => {
     4,
   );
 });
+
+test("la passe de rattrapage lit le titre de la fiche quand le bloc ne nomme qu'une personne", (t) => {
+  // Lot 12 : la carte d'un CMS repandu en Haute-Loire. Le paragraphe du contact ne porte
+  // que la presidente ; le nom de la structure est le titre de la carte, hors du paragraphe.
+  // C'est ce chemin — la reparation depuis le cache — qui corrige la base du client.
+  const racine = makeTempDir(t);
+  const cache = new HttpCache(join(racine, "cache"));
+  const db = openDatabase(join(racine, "titre.sqlite"));
+  t.after(() => db.close());
+  const url = "https://bruz.example/vie-locale/associations";
+  const page = `<html><body><div class="liste"><div class="panel">
+      <div class="panel-heading"><h4>CLUB DU MOULIN - DURANDEL Paulette</h4></div>
+      <div class="panel-body"><p>Domaine de l'association: Aînés<br>Paulette DURANDEL préside cette association<br>
+      <a href="mailto:club@moulin.example">club@moulin.example</a></p></div>
+    </div></div></body></html>`;
+
+  db.prepare("INSERT INTO commune (code_insee, nom, departement, created_at, updated_at) VALUES (?, 'Bruz', '35', 't', 't')").run(INSEE);
+  db.prepare(
+    "INSERT INTO page (url_hash, campagne, url, domaine, code_insee, statut, fetched_at, profondeur) " +
+      "VALUES (?, ?, ?, 'bruz.example', ?, 'visitee', 't', 1)",
+  ).run(hashPage(CAMPAGNE, INSEE, url), CAMPAGNE, url, INSEE);
+  cache.set(
+    url,
+    { finalUrl: url, status: 200, etag: null, lastModified: null, contentType: "text/html; charset=utf-8", fetchedAt: T },
+    Buffer.from(page, "utf8"),
+  );
+  db.prepare(
+    "INSERT INTO contact (code_insee, kind, valeur, valeur_normalisee, is_generique, source_url, methode_extraction, " +
+      "confiance, collected_at, nom_pressenti, nom_pressenti_normalise, nom_pressenti_version) " +
+      "VALUES (?, 'email', 'club@moulin.example', 'club@moulin.example', 1, ?, 'dom:mailto', 0.9, ?, " +
+      "'Paulette DURANDEL préside cette association', 'paulette durandel preside cette association', 3)",
+  ).run(INSEE, url, T);
+
+  remplirNoms(db, cache, systemClock, { departement: "35" });
+
+  const ligne = db.prepare("SELECT nom_pressenti AS n, nom_pressenti_source AS s, nom_pressenti_version AS v FROM contact").get() as {
+    n: string;
+    s: string;
+    v: number;
+  };
+  assert.equal(ligne.n, "CLUB DU MOULIN");
+  assert.equal(ligne.s, "bloc:titre");
+  assert.equal(Number(ligne.v), VERSION_NOM);
+});

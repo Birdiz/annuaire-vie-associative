@@ -30,8 +30,9 @@ import { extraireContacts } from "./extraction.ts";
 import { evaluerPage } from "./prefiltre.ts";
 import type { VerdictPrefiltre } from "./prefiltre.ts";
 import { indexerAssociations, rattacher } from "./rattachement.ts";
-import { VERSION_NOM, nomPressenti } from "./nom-pressenti.ts";
-import type { NomPressenti } from "./nom-pressenti.ts";
+import { VERSION_NOM, nomPressentiDuContact } from "./nom-pressenti.ts";
+import { normaliserNom } from "../texte.ts";
+import type { ContexteCommune, NomPressenti } from "./nom-pressenti.ts";
 import { PROFONDEUR_MAX, estReseauSocial, selectionner } from "./scoring.ts";
 import type { LienScore } from "./scoring.ts";
 
@@ -93,6 +94,12 @@ const SQL_MAJ_PREFILTRE = `
  * on ne la change pas pour une commodite.
  */
 const SQL_NOM_COMMUNE = "SELECT nom FROM commune WHERE code_insee = ?";
+
+/** Les communes du departement : le nom d'une voisine ne nomme pas une structure (ADR-036). */
+const SQL_COMMUNES_VOISINES = `
+  SELECT nom FROM commune
+   WHERE departement = (SELECT departement FROM commune WHERE code_insee = ?)
+`;
 
 const SQL_ASSOCIATIONS = `
   SELECT id, nom_normalise
@@ -215,6 +222,17 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     const nomCommune = (
       ctx.db.prepare(SQL_NOM_COMMUNE).get(payload.codeInsee) as { nom?: string } | undefined
     )?.nom;
+    const commune: ContexteCommune | undefined =
+      nomCommune === undefined
+        ? undefined
+        : {
+            nom: nomCommune,
+            voisines: new Set(
+              (ctx.db.prepare(SQL_COMMUNES_VOISINES).all(payload.codeInsee) as { nom: string }[]).map((ligne) =>
+                normaliserNom(ligne.nom),
+              ),
+            ),
+          };
 
     const index = indexerAssociations(
       (ctx.db.prepare(SQL_ASSOCIATIONS).all(payload.codeInsee) as unknown as {
@@ -229,7 +247,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     const contacts: ContactRattache[] = extraction.contacts.map((contact) => ({
       contact,
       nomAssociation: rattacher(index, contact.contextes)?.nomNormalise,
-      pressenti: nomPressenti(contact.contextes, contact.empreinte, nomCommune),
+      pressenti: nomPressentiDuContact(contact, commune),
     }));
 
     // Etape [4]. Elle vient apres [5] dans le code et avant elle dans l'entonnoir :
