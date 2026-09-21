@@ -86,12 +86,13 @@ transmettre quoi que ce soit à l'éditeur de l'outil.</p>
     <p>Écran <a href="/export?departement=${dept}">Export</a>. Vous obtenez un fichier CSV, qui
     s'ouvre dans un tableur. Le « score minimum » filtre sur la confiance : <code>0.6</code> est un
     point de départ raisonnable, un champ vide sort tout, y compris ce dont l'outil doute.</p>
-    <p class="discret">Deux fichiers possibles. Le <strong>fichier simple</strong> tient en cinq
-    colonnes — département, commune, nom, téléphone, e-mail — avec une ligne par structure : c'est
+    <p class="discret">Deux fichiers possibles. Le <strong>fichier simple</strong> tient en six
+    colonnes — département, commune, nom, type, téléphone, e-mail — avec une ligne par structure : c'est
     celui qu'on travaille. Le <strong>fichier complet</strong> ajoute, pour chaque contact, la page
     d'où il vient, la date de lecture, la méthode et le score : c'est celui qu'on garde pour
     pouvoir répondre « d'où sort cette adresse ? ». Le fichier simple écarte les contacts que
-    l'outil n'a pas su nommer ; l'écran vous dit combien.</p>
+    l'outil n'a pas su nommer, et ceux que la page ne nommait que par une personne : une ligne y
+    nomme toujours une structure. L'écran vous dit combien.</p>
   </li>
 </ol>
 

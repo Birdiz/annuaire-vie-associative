@@ -125,12 +125,13 @@ test("le nom d'une personne n'est pas le nom d'une structure", () => {
   // Trouve sur un departement reel : 43 lignes portaient « Mr X » et une adresse
   // personnelle. Le profil simple n'a pas de colonne `regime` — une telle ligne y
   // presenterait une personne physique comme une structure.
+  // Noms inventes : aucune donnee collectee n'entre dans le depot.
   for (const bloc of [
-    "Mr Michel GAUTHIER | gauthier.m6@free.example",
-    "Mme POLLIN Nathalie | n.pollin@free.example",
-    "M. Balluais | balluais@free.example",
+    "Mr Michel DURANDEL | durandel.m6@free.example",
+    "Mme MARTINOT Nathalie | n.martinot@free.example",
+    "M. Durandel | durandel@free.example",
   ]) {
-    assert.equal(nomPressenti([bloc], "gauthier.m6@free.example"), undefined, bloc);
+    assert.equal(nomPressenti([bloc], "durandel.m6@free.example"), undefined, bloc);
   }
   // Mais « Amicale des Meuniers » n'est pas une civilite deguisee.
   assert.equal(
@@ -337,4 +338,152 @@ test("une region, une rubrique, le nom de la commune : rien de tout cela n'est u
   ] as const) {
     assert.equal(nomPressenti([bloc], "", commune), undefined, bloc);
   }
+});
+
+/**
+ * Lot 12 — « il y a toujours des noms ». Le client a refuse les personnes en colonne « nom »,
+ * que l'ADR-032 avait choisi de garder : un quart des lignes de ses fichiers de l'Ain et de
+ * la Haute-Loire. Les formes ci-dessous sont les leurs, les noms sont inventes.
+ */
+
+test("une personne ecartee, c'est la structure de la fiche qui nomme le contact", () => {
+  // Le titre de la fiche est dans le meme bloc que le president : quand la personne est
+  // refusee, la boucle passe au segment suivant. C'est tout le « chercher la structure ».
+  for (const [bloc, attendu] of [
+    ["Tennis Club de Bruzou\nAgnès DURANDEL préside cette association\ncontact@x.example", "Tennis Club de Bruzou"],
+    ["Judo Club du Ru | Annie DURANDEL | contact@x.example", "Judo Club du Ru"],
+    ["Les Amis du Moulin | DURANDEL Gerard | contact@x.example", "Les Amis du Moulin"],
+  ] as const) {
+    assert.equal(nomPressenti([bloc], "contact@x.example")?.nom, attendu, bloc);
+  }
+  // Sans structure dans le bloc, rien : une personne n'est pas un nom par defaut.
+  assert.equal(nomPressenti(["Annie DURANDEL | contact@x.example"], "contact@x.example"), undefined);
+});
+
+test("un libelle de champ separe la structure de la personne", () => {
+  for (const [bloc, attendu] of [
+    ["SOCIETE de CHASSE Président MARTINOT Paul contact@x.example", "SOCIETE de CHASSE"],
+    ["Amicale Laïque Trésorière : contact@x.example", "Amicale Laïque"],
+    ["Comité des fêtes - Président contact@x.example", "Comité des fêtes"],
+    ["Travaux manuels Président(e) contact@x.example", "Travaux manuels"],
+  ] as const) {
+    assert.equal(nomPressenti([bloc], "contact@x.example")?.nom, attendu, bloc);
+  }
+  // Au singulier seulement : le pluriel nomme une structure.
+  assert.equal(
+    nomPressenti(["Amicale des secrétaires de mairie contact@x.example"], "contact@x.example")?.nom,
+    "Amicale des secrétaires de mairie",
+  );
+});
+
+test("un numero dans un nom ne sort jamais, colle ou non", () => {
+  // INVARIANT §4.6 : un 06 colle a la cellule suivante echappait a l'extraction, et
+  // finissait dans la colonne « nom ». Numeros de la tranche reservee a la fiction.
+  for (const bloc of [
+    "Paul DURANDEL - 06 39 98 00 01Albert MARTINOT | contact@x.example",
+    "Tennis Club 04 71 00 00 00Bureau | contact@x.example",
+    "Orchestre-dHarmonie-de-Bruzou-100083325431850 | contact@x.example",
+  ]) {
+    const trouve = nomPressenti([bloc], "contact@x.example");
+    assert.doesNotMatch(trouve?.nom ?? "", /\d{2}[\s.]?\d{2}/, bloc);
+  }
+});
+
+test("un jour, un libelle, un lieu-dit, un texte casse ne nomment rien", () => {
+  for (const c of [
+    "Samedi",
+    "Tous les lundis",
+    "Samedi-Dimanche-Lundi",
+    "Mardi rdv à",
+    "Nombre d'adhérents",
+    "Pour plus d'informations",
+    "Pour tous renseignements",
+    "Nom du Président(e)",
+    "Son Président",
+    "N° de téléphone",
+    "Par contact téléphonique",
+    "Position GPS",
+    "Page Instagram",
+    "Renseignement",
+    "Réservation par téléphone au",
+    "Le Bourg",
+    "Hameau du Jardin Public",
+    "Z.A. La clé des champs",
+    "TÃ©l. Fixe",
+    "Comit%C3%A9-Secours-Populaire",
+    "Élèves)",
+  ]) {
+    assert.equal(nomPressenti([`${c} | contact@x.example`], "contact@x.example"), undefined, c);
+  }
+});
+
+test("les noms du RNA voisins de ces rejets passent toujours", () => {
+  // Chacune de ces regles a ete mesuree contre les 49 118 noms du RNA de la base de
+  // developpement : ce sont les formes qu'une regle trop large aurait emportees.
+  for (const nom of [
+    "Sport pour tous",
+    "Maison pour tous",
+    "Mardi matin",
+    "Les Jeudis de Bruzou",
+    "Vendredi 13",
+    "Le Bourg en fête",
+    "Lotissement du Moulin",
+    "Culture bretonne (danse",
+  ]) {
+    assert.equal(nomPressenti([`${nom} | contact@x.example`], "contact@x.example")?.nom, nom, nom);
+  }
+});
+
+test("quand le bloc ne nomme qu'une personne, c'est le titre de la fiche qui nomme", () => {
+  // La carte d'un CMS repandu en Haute-Loire : le titre porte la structure et la
+  // presidente, le paragraphe « Domaine : Aines » et « X preside cette association ».
+  const bloc = "Domaine de l'association: Aînés\nPaulette DURANDEL préside cette association\nclub@moulin.example";
+  const trouve = nomPressenti([bloc], "club@moulin.example", undefined, "CLUB DU MOULIN - DURANDEL Paulette");
+  assert.equal(trouve?.nom, "CLUB DU MOULIN");
+  assert.equal(trouve?.source, "bloc:titre");
+  // Sans titre, la categorie n'est pas un nom de repli.
+  assert.equal(nomPressenti([bloc], "club@moulin.example"), undefined);
+});
+
+test("le titre ne se lit que si le bloc nommait une personne", () => {
+  // Lu partout, il nommait surtout des rubriques — « Nature », « Musique » — sur le 43.
+  assert.equal(nomPressenti(["club@x.example"], "club@x.example", undefined, "Musique"), undefined);
+  assert.equal(
+    nomPressenti(["Annie DURANDEL | club@x.example"], "club@x.example", undefined, "Harmonie du Ru")?.nom,
+    "Harmonie du Ru",
+  );
+  // Un titre qui n'est qu'un libelle ne nomme rien, meme apres une personne.
+  assert.equal(nomPressenti(["Annie DURANDEL | club@x.example"], "club@x.example", undefined, "Contact"), undefined);
+});
+
+test("une personne coupee en deux cellules reste une personne", () => {
+  // « Nom : ROCHE | Prenom : Sylvie » : le nom de famille seul passait pour un sigle.
+  assert.equal(
+    nomPressenti(["Amicale des Sapeurs-Pompiers\nDURANDEL\nSylvie\n02 99 00 00 00\nclub@x.example"], "club@x.example")?.nom,
+    "Amicale des Sapeurs-Pompiers",
+  );
+});
+
+test("le nom d'une commune voisine ne nomme pas une structure", () => {
+  const commune = { nom: "Bruzou", voisines: new Set(["bruzou", "le ru en velay", "vorey"]) };
+  for (const c of ["Le Ru", "Le Ru-en-Velay", "Vorey sur Arzon", "Vorey"]) {
+    assert.equal(nomPressenti([`${c} | contact@x.example`], "contact@x.example", commune), undefined, c);
+  }
+  // Un club qui porte le nom d'une commune voisine reste un club.
+  assert.equal(
+    nomPressenti(["Vorey Tennis Club | contact@x.example"], "contact@x.example", commune)?.nom,
+    "Vorey Tennis Club",
+  );
+});
+
+test("un debut de numero coupe par la cellule suivante ne sort pas non plus dans un nom", () => {
+  // INVARIANT §4.6 : « Veronique X au 06 98 » — le reste du numero etait dans la cellule
+  // suivante. Separateurs exiges : « La Parole 0702 » est un nom du RNA.
+  assert.equal(nomPressenti(["Club du Ru au 06 39 | contact@x.example"], "contact@x.example"), undefined);
+  assert.equal(nomPressenti(["La Parole 0702 | contact@x.example"], "contact@x.example")?.nom, "La Parole 0702");
+});
+
+test("un texte mal decode ne nomme rien, un nom portugais si", () => {
+  assert.equal(nomPressenti(["Annie DURANDÃ‰ | contact@x.example"], "contact@x.example"), undefined);
+  assert.equal(nomPressenti(["Amigos de São João | contact@x.example"], "contact@x.example")?.nom, "Amigos de São João");
 });

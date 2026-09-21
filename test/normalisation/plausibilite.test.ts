@@ -67,3 +67,12 @@ test("un nom lu se defend par son vocabulaire ou par sa page ; un nom deduit, pa
   assert.ok(!estStructurePlausible({ ...deduit, nom: "Judo Club Bruzou" }));
   assert.ok(estStructurePlausible({ ...deduit, nom: "Judo Club Bruzou", pageAssociative: true }));
 });
+
+test("une personne n'est pas une structure, meme sur une page d'annuaire ; le RNA passe toujours", () => {
+  // Lot 12 (ADR-036). L'indice de page ne rachete pas un nom de personne.
+  const base = { rattacheeAuRna: false, nomInfere: false, pageAssociative: true };
+  assert.equal(estStructurePlausible({ ...base, nom: "Annie DURANDEL", personne: true }), false);
+  assert.equal(estStructurePlausible({ ...base, nom: "Jean Durandel", nomInfere: true, personne: true }), false);
+  assert.equal(estStructurePlausible({ ...base, rattacheeAuRna: true, nom: "ASSOCIATION JEAN MOULIN", personne: true }), true);
+  assert.equal(estStructurePlausible({ ...base, nom: "Amicale du Moulin", personne: false }), true);
+});

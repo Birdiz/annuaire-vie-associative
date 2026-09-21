@@ -318,3 +318,75 @@ test("les ecartes se comptent par motif, et le total annonce reste celui du fich
   const complet = [...lignesCsv(db, { departement: DEPARTEMENT, profil: "complet" })].join("");
   assert.match(complet, /garage-pupier/, "ce que le simple ecarte, le complet le garde");
 });
+
+/**
+ * Lot 12 — « il y a toujours des noms ». Une ligne du profil simple nomme une structure,
+ * jamais une personne (ADR-036), et aucune cellule hors des colonnes de contact ne porte un
+ * numero de telephone (invariant 6). Noms inventes, numeros de la tranche de fiction.
+ */
+
+test("une personne ne sort pas, ni lue dans un bloc ni deduite d'un domaine", (t) => {
+  const db = ouvrir(t);
+  const page = "https://bruzou.example/vie-associative/annuaire";
+  insererOrphelin(db, "annie.durandel@exemple.example", "Annie DURANDEL", page);
+  insererOrphelin(db, "contact@jean-durandel.example", null, page);
+  insererOrphelin(db, "contact@amicale-meuniers.example", "Amicale des Meuniers", page);
+
+  const noms = new Set(lireSimple(db).map((ligne) => ligne.nom));
+  assert.ok(!noms.has("Annie DURANDEL"), "un nom ecrit par une version anterieure n'est pas livre");
+  assert.ok(!noms.has("Jean Durandel"), "le libelle d'un domaine n'est pas passe par le filtre de nommage");
+  assert.ok(noms.has("Amicale des Meuniers"));
+  assert.equal(compterEcartes(db, { departement: DEPARTEMENT, profil: "simple" }).horsSujet, 2, "et c'est compte");
+});
+
+test("INVARIANT §4.6 : un numero ecrit dans un nom ne sort dans aucun profil", (t) => {
+  // La garde est celle de l'export, independamment de la reparation : le nom est inscrit
+  // comme s'il avait echappe a tout le reste. Retirer la garde fait rougir ce test.
+  const db = ouvrir(t);
+  insererOrphelin(db, "tennis@club-ru.example", "Tennis Club 06 39 98 00 01", "https://bruzou.example/vie-associative");
+  const numero = /0[67](?:[\s.-]?\d{2}){4}/;
+
+  for (const ligne of lireSimple(db)) {
+    assert.doesNotMatch(`${ligne.commune};${ligne.nom};${ligne.type}`, numero, ligne.nom);
+  }
+  const complet = [...lignesCsv(db, { departement: DEPARTEMENT, profil: "complet" })].slice(1);
+  for (const ligne of complet) {
+    const cellules = ligne.trimEnd().split(SEPARATEUR);
+    // valeur, valeur_corrigee et valeur_publiable sont les colonnes de contact (6 a 8).
+    const horsContact = cellules.filter((_, rang) => rang < 6 || rang > 8);
+    assert.doesNotMatch(horsContact.join(";"), numero, ligne);
+  }
+});
+
+test("la source du nom dans le fichier complet est la branche que le profil simple a suivie", (t) => {
+  // Le miroir que le commentaire de `sourceDuNomComplet` promettait : la cascade vit en SQL
+  // dans la cle de groupe, et en TypeScript dans cette colonne. Cinq cas.
+  const db = ouvrir(t);
+  const page = "https://bruzou.example/vie-associative/annuaire";
+  insererOrphelin(db, "club@moulin-du-ru.example", "Amicale du Moulin", page);
+  insererOrphelin(db, "contact@tennis-club-du-ru.example", null, page);
+  insererOrphelin(db, "periscolaire@bruzou.example", null, page);
+  insererOrphelin(db, "quelquun@gmail.com", null, page);
+
+  const simple = lireSimple(db);
+  const complet = [...lignesCsv(db, { departement: DEPARTEMENT, profil: "complet" })].slice(1).map((l) => l.trimEnd().split(SEPARATEUR));
+  const vues = new Set<string>();
+  for (const cellules of complet) {
+    const [kind, valeur, source] = [cellules[5] ?? "", cellules[6] ?? "", cellules[17] ?? ""];
+    if (kind !== "email") continue;
+    const ligne = simple.find((l) => l.email.split(" / ").includes(valeur));
+    const branche =
+      ligne === undefined
+        ? "aucun"
+        : ligne.nom.startsWith("Mairie ")
+          ? "mairie"
+          : (cellules[3] ?? "") !== ""
+            ? "rna"
+            : ligne.nom === "Amicale du Moulin"
+              ? "bloc"
+              : "domaine";
+    assert.equal(source, branche, valeur);
+    vues.add(source);
+  }
+  for (const attendue of ["rna", "bloc", "domaine", "mairie", "aucun"]) assert.ok(vues.has(attendue), attendue);
+});

@@ -1,6 +1,8 @@
 # ADR-032 — Deux profils d'export, et ce que le profil simple abandonne
 
-Statut : acceptée — 2026-09-01
+Statut : acceptée — 2026-09-01. Amendée par l'[ADR-036](036-une-personne-n-est-pas-une-structure.md) :
+le profil simple ne nomme plus jamais une personne, et sa clé de groupe porte la commune
+canonique.
 
 ## Contexte
 
@@ -87,6 +89,8 @@ pas une.
   conserver** : le président d'une association est souvent le bon interlocuteur, et un
   fichier qui les écarte perd près d'un quart de sa matière. La contrepartie est que
   l'avertissement de l'écran doit le dire en toutes lettres, ce qu'il fait.
+  *Décision renversée par l'[ADR-036](036-une-personne-n-est-pas-une-structure.md) : le
+  client l'a refusée, et l'outil cherche désormais la structure dans la fiche.*
 - **La certitude sur le nom.** Un nom peut avoir été déduit d'un domaine
   ([ADR-033](033-nommer-une-structure-sans-le-rna.md)). Le profil complet le signale par
   `nom_source` ; le profil simple ne le peut pas, l'écran le dit donc en toutes lettres.

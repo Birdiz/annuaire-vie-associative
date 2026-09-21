@@ -106,6 +106,11 @@ export type IndicesStructure = {
   nomInfere: boolean;
   /** L'URL de la page porte le vocabulaire associatif (`scorerLien` > 0). */
   pageAssociative: boolean;
+  /**
+   * Le nom designe une personne (`personne.ts`). Calcule par l'appelant, qui connait la
+   * branche du nom : un nom du RNA n'est jamais juge ainsi.
+   */
+  personne?: boolean | undefined;
 };
 
 /**
@@ -124,6 +129,8 @@ export type IndicesStructure = {
  */
 export function estStructurePlausible(indices: IndicesStructure): boolean {
   if (indices.rattacheeAuRna) return true;
+  // Une personne n'est pas une structure (ADR-036), quelle que soit la page qui la cite.
+  if (indices.personne === true) return false;
   if (evoqueUnCommerce(indices.nom)) return false;
   if (indices.nomInfere) return indices.pageAssociative;
   return evoqueUneStructure(indices.nom) || indices.pageAssociative;

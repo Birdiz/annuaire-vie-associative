@@ -4,6 +4,7 @@ import assert from "node:assert/strict";
 import { analyser } from "../../src/parse/html.ts";
 import {
   classerEmail,
+  decollerEmail,
   estMobile,
   extraireContacts,
   nettoyerEmail,
@@ -177,7 +178,7 @@ test("une page volumineuse sans adresse se balaie en temps borne", () => {
   // dessein — il attrape un retour au quadratique, pas une machine lente.
   const texte = "z".repeat(200_000);
   const debut = process.hrtime.bigint();
-  const { contacts } = extraireContacts({ texte, liens: [], blocs: [] }, { avecMobiles: false });
+  const { contacts } = extraireContacts({ texte, liens: [], blocs: [], fiches: [] }, { avecMobiles: false });
   const millisecondes = Number(process.hrtime.bigint() - debut) / 1e6;
 
   assert.equal(contacts.length, 0);
@@ -361,4 +362,97 @@ test("la fiche d'une structure garde son contexte, fixe et courriel compris", ()
     courriel.contextes.some((contexte) => contexte.includes("Tennis Club de Bruzou")),
     "sans ce contexte, plus aucune structure ne serait nommee",
   );
+});
+
+/**
+ * Deux cellules que le CMS colle sans espace.
+ *
+ * `analyser` ne coupe le texte qu'aux frontieres de bloc, et c'est voulu : c'est ce qui
+ * garde entier `contact<span>@</span>mairie.fr`. Mais deux elements en ligne voisins s'y
+ * soudent, et les motifs de contact en payaient le prix. Les numeros ci-dessous sont dans
+ * la tranche que l'ARCEP reserve a la fiction.
+ */
+
+test("INVARIANT §4.6 : un mobile colle a la cellule suivante est extrait, donc exclu et compte", () => {
+  // Avec `\b` pour borne, « …01Paul » n'etait pas un numero : ni extrait, ni exclu, ni
+  // efface du bloc — il finissait dans le nom de la structure, livre au client.
+  const colle = extraire(`<p><span>Jean DUPONT - 06 39 98 00 01</span><span>Paul DURAND</span></p>`);
+  assert.equal(colle.contacts.length, 0);
+  assert.equal(colle.mobilesExclus, 1);
+
+  const devant = extraire(`<p>DUPONT06 39 98 00 02</p>`);
+  assert.equal(devant.mobilesExclus, 1, "une lettre avant le numero ne le cache pas davantage");
+
+  const fixe = extraire(`<p><span>Tennis Club - 02 99 00 00 01</span><span>Bureau</span></p>`);
+  assert.deepEqual(fixe.contacts.map((contact) => contact.valeurNormalisee), ["+33299000001"]);
+});
+
+test("une date suivie d'une heure n'est pas un numero", () => {
+  // Borner par des chiffres seulement aurait lu « 01.02.2023 14 » comme un fixe.
+  assert.deepEqual(extraire(`<p>Assemblee le 01.02.2023 14h30</p>`).contacts, []);
+});
+
+test("une adresse soudee au mot suivant en est decollee", () => {
+  for (const [html, attendue] of [
+    [`<p><span>club@asso.example.com</span><span>https://asso.example.com</span></p>`, "club@asso.example.com"],
+    [`<p><span>club@asso.example.com</span><span>www.asso.example.com</span></p>`, "club@asso.example.com"],
+    [`<p><span>jeu.bruzou@laposte.net</span><span>Judo Club</span></p>`, "jeu.bruzou@laposte.net"],
+    [`<p><span>jeu.bruzou@gmail.com</span><span>tennisbruzou.clubeo.com</span></p>`, "jeu.bruzou@gmail.com"],
+  ] as const) {
+    const valeurs = extraire(html).contacts.map((contact) => contact.valeurNormalisee);
+    assert.deepEqual(valeurs, [attendue], html);
+  }
+});
+
+test("une adresse decollee et sa jumelle du mailto ne font qu'un contact", () => {
+  // La copie soudee doublait l'adresse vraie en base, et gonflait le compte du bloc au
+  // point de lui retirer son statut de fiche.
+  const { contacts } = extraire(
+    `<p><a href="mailto:club@asso.example.com">club@asso.example.com</a>` +
+      `<a href="https://asso.example.com">https://asso.example.com</a></p>`,
+  );
+  assert.equal(contacts.length, 1);
+  assert.equal(contacts[0]?.methode, "dom:mailto");
+});
+
+test("le decollage ne coupe que ce qu'il sait etre une colle", () => {
+  for (const [brute, attendue] of [
+    ["club@asso.example.comhttps", "club@asso.example.com"],
+    ["club@asso.example.frhttp", "club@asso.example.fr"],
+    ["club@asso.example.comwww.autre.example.com", "club@asso.example.com"],
+    ["club@laposte.netJudo", "club@laposte.net"],
+    ["club@gmail.comInstagram", "club@gmail.com"],
+    ["club@orange.frT", "club@orange.fr"],
+    ["club@gmail.comtennisbruzou.clubeo.com", "club@gmail.com"],
+  ] as const) {
+    assert.equal(decollerEmail(brute), attendue, brute);
+    assert.equal(decollerEmail(attendue), attendue, `le decollage n'est pas idempotent : ${attendue}`);
+  }
+  // Rien de tout cela n'est une colle : un suffixe long, un suffixe compose, des capitales.
+  for (const intacte of [
+    "club@asso.example.academy",
+    "club@asso.example.coop",
+    "club@asso.example.info",
+    "club@asso.example.community",
+    "club@yahoo.com.br",
+    "club@orange.FR",
+    "club@Mairie-Bruzou.Fr",
+    "club@asso.infodoc.example.fr",
+  ]) {
+    assert.equal(decollerEmail(intacte), intacte, intacte);
+  }
+});
+
+test("le titre de sa carte accompagne le contact, jamais celui de la carte voisine", () => {
+  // Lot 12 : le nom de la structure est souvent le titre de sa carte, hors du paragraphe du
+  // contact. Une petite page reunit deux cartes sous un ancetre commun : le titre de la
+  // premiere ne doit pas nommer le contact de la seconde.
+  const { contacts } = extraire(
+    `<div class="fiche"><div class="un-lien-bloc-titre">AMICALE DU RU</div><p>Présidente : Annie DURANDEL</p>` +
+      `<p><a href="mailto:amicale@ru.example">écrire</a></p></div>` +
+      `<div class="autre"><p>Paul MARTINOT</p><p><a href="mailto:autre@ru.example">écrire</a></p></div>`,
+  );
+  const titre = (valeur: string) => contacts.find((c) => c.valeurNormalisee === valeur)?.titre;
+  assert.equal(titre("amicale@ru.example"), "AMICALE DU RU");
+  assert.equal(titre("autre@ru.example"), undefined);
 });

@@ -37,10 +37,33 @@ export type Lien = { href: string; ancre: string };
  */
 export type Bloc = { texte: string; liens: readonly Lien[] };
 
+/**
+ * La fiche d'une structure : le plus petit element qui porte un titre et ce qui le suit.
+ *
+ * Le nom d'une structure est tres souvent le **titre** de sa fiche — un `<h4>`, un
+ * `<div class="…-titre">` — et ce titre vit hors des `BLOCS` : une carte en `<div>`, dont le
+ * contact est dans un paragraphe voisin, ne produit aucun contexte qui le contienne. C'est la
+ * ou se trouvait le nom de la moitie des structures que le fichier de la Haute-Loire nommait
+ * d'apres leur president (ADR-036).
+ */
+export type Fiche = {
+  titre: string;
+  texte: string;
+  liens: readonly Lien[];
+  /**
+   * La branche de la fiche qui porte le titre — l'enfant direct qui le contient. Un titre
+   * ne vaut pour les contacts de la fiche que si sa branche n'en porte aucun : c'est un
+   * en-tete. Sur une petite page, deux cartes voisines ont un ancetre commun, et le titre
+   * de la premiere nommait sinon le contact de la seconde.
+   */
+  branche: Bloc;
+};
+
 export type DocumentAnalyse = {
   texte: string;
   liens: readonly Lien[];
   blocs: readonly Bloc[];
+  fiches: readonly Fiche[];
 };
 
 /** Elements dont le contenu textuel n'est pas du texte de page. */
@@ -56,6 +79,36 @@ const COUPURES = new Set([
 
 /** Elements retenus comme blocs de contexte, du plus fin au plus grossier. */
 const BLOCS = new Set(["td", "tr", "li", "dd", "p", "article"]);
+
+/**
+ * Elements en ligne dont le texte ne se soude pas a celui de ses voisins.
+ *
+ * Deux liens voisins — une adresse, puis l'URL du site ecrite en toutes lettres — donnaient
+ * « club@asso.frhttps », une adresse qui n'existe pas. Le `<span>` n'y est pas, et c'est
+ * voulu : `contact<span>@</span>mairie.fr` doit rester une adresse.
+ */
+const BORNES = new Set(["a", "button", "label"]);
+
+/** Titres de section ; `dt` intitule le `dd` qui le suit. */
+const TITRES = new Set(["h1", "h2", "h3", "h4", "h5", "h6", "dt"]);
+
+/**
+ * Classe d'un element qui fait office de titre de fiche, sur les CMS qui n'emploient pas
+ * les balises de titre : `un-lien-bloc-titre`, `panel-heading`, `entry-title`, `nom-asso`.
+ * Comparee aux segments du nom de classe, jamais en sous-chaine : « nombre » n'est pas
+ * « nom ».
+ */
+const CLASSE_DE_TITRE = /(?:^|[-_])(?:titre|title|heading|intitule|nom|name)(?:$|[-_])/i;
+
+/** Au-dela, un titre de classe n'est plus un titre : c'est un conteneur mal nomme. */
+const LONGUEUR_MAX_TITRE = 150;
+
+/**
+ * Au-dela, un element n'est plus la fiche d'une structure. La borne tient aussi le cout :
+ * chaque ancetre d'un titre est une fiche candidate, et son texte n'est construit qu'en
+ * deca.
+ */
+const LONGUEUR_MAX_FICHE = 2_000;
 
 const NOEUD_ELEMENT = 1;
 const NOEUD_TEXTE = 3;
@@ -163,8 +216,16 @@ export function analyser(html: string, base: string): DocumentAnalyse {
   const morceaux: string[] = [];
   const liens: { lien: Lien; position: number }[] = [];
   const blocs: Bloc[] = [];
+  const fiches: Fiche[] = [];
+  let caracteres = 0;
 
-  const parcourir = (noeud: unknown, profondeur: number): void => {
+  const pousser = (morceau: string): void => {
+    morceaux.push(morceau);
+    caracteres += morceau.length;
+  };
+
+  /** Rend le premier titre du sous-arbre, ou `undefined`. */
+  const parcourir = (noeud: unknown, profondeur: number): string | undefined => {
     // La descente est recursive, et un HTML profondement imbrique la faisait deborder la
     // pile : un `RangeError` de V8, ni typé ni attendu, rejoue cinq fois avant que le job
     // ne meure. Le plafond transforme cela en un refus net et diagnosticable. Il est pose
@@ -178,18 +239,23 @@ export function analyser(html: string, base: string): DocumentAnalyse {
 
     if (n.nodeType === NOEUD_TEXTE) {
       const brut = n.rawText ?? "";
-      if (brut !== "") morceaux.push(decoderEntites(brut));
-      return;
+      if (brut !== "") pousser(decoderEntites(brut));
+      return undefined;
     }
-    if (n.nodeType !== NOEUD_ELEMENT) return;
+    if (n.nodeType !== NOEUD_ELEMENT) return undefined;
 
     const balise = (n.rawTagName ?? "").toLowerCase();
-    if (IGNORES.has(balise)) return;
+    if (IGNORES.has(balise)) return undefined;
 
     const coupure = COUPURES.has(balise);
-    if (coupure) morceaux.push("\n");
+    if (coupure) pousser("\n");
+    // Une espace avant le lien, sauf apres une apostrophe : « l'<a>Amicale</a> » reste
+    // « l'Amicale ».
+    const borne = BORNES.has(balise);
+    if (borne && !/[\s'’]$/.test(morceaux[morceaux.length - 1] ?? " ")) pousser(" ");
 
     const debutTexte = morceaux.length;
+    const debutCaracteres = caracteres;
     const debutLiens = liens.length;
 
     if (balise === "a") {
@@ -201,14 +267,25 @@ export function analyser(html: string, base: string): DocumentAnalyse {
       }
     }
 
-    for (const enfant of n.childNodes ?? []) parcourir(enfant, profondeur + 1);
+    let titre: string | undefined;
+    let branche = { debutTexte: 0, finTexte: 0, debutLiens: 0, finLiens: 0 };
+    for (const enfant of n.childNodes ?? []) {
+      const avantTexte = morceaux.length;
+      const avantLiens = liens.length;
+      const trouve = parcourir(enfant, profondeur + 1);
+      if (titre === undefined && trouve !== undefined) {
+        titre = trouve;
+        branche = { debutTexte: avantTexte, finTexte: morceaux.length, debutLiens: avantLiens, finLiens: liens.length };
+      }
+    }
 
     if (balise === "a" && liens.length > debutLiens) {
       const entree = liens[debutLiens];
       if (entree !== undefined) entree.lien = { href: entree.lien.href, ancre: normaliser(morceaux.slice(debutTexte).join("")) };
     }
 
-    if (coupure) morceaux.push("\n");
+    if (coupure) pousser("\n");
+    if (borne) pousser(" ");
 
     if (BLOCS.has(balise)) {
       const texte = normaliser(morceaux.slice(debutTexte).join(""));
@@ -216,6 +293,27 @@ export function analyser(html: string, base: string): DocumentAnalyse {
         blocs.push({ texte, liens: liens.slice(debutLiens).map((e) => e.lien) });
       }
     }
+
+    const longueur = caracteres - debutCaracteres;
+    if (TITRES.has(balise) || (longueur <= LONGUEUR_MAX_TITRE && CLASSE_DE_TITRE.test(classes(n)))) {
+      const propre = normaliser(morceaux.slice(debutTexte).join("")).replace(/\s+/g, " ");
+      if (propre !== "") return propre;
+    }
+    if (titre !== undefined && longueur <= LONGUEUR_MAX_FICHE) {
+      const texte = normaliser(morceaux.slice(debutTexte).join(""));
+      if (texte.length > titre.length) {
+        fiches.push({
+          titre,
+          texte,
+          liens: liens.slice(debutLiens).map((e) => e.lien),
+          branche: {
+            texte: normaliser(morceaux.slice(branche.debutTexte, branche.finTexte).join("")),
+            liens: liens.slice(branche.debutLiens, branche.finLiens).map((e) => e.lien),
+          },
+        });
+      }
+    }
+    return titre;
   };
 
   parcourir(racine, 0);
@@ -224,7 +322,14 @@ export function analyser(html: string, base: string): DocumentAnalyse {
     texte: normaliser(morceaux.join("")),
     liens: liens.map((e) => e.lien),
     blocs,
+    fiches,
   };
+}
+
+/** Les noms de classe, un par un : `CLASSE_DE_TITRE` les compare separement. */
+function classes(noeud: unknown): string {
+  const valeur = attribut(noeud, "class");
+  return valeur === undefined ? "" : valeur.split(/\s+/).find((classe) => CLASSE_DE_TITRE.test(classe)) ?? "";
 }
 
 function attribut(noeud: unknown, nom: string): string | undefined {
@@ -254,6 +359,19 @@ const ENTITES: Record<string, string> = {
   amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " ",
   eacute: "é", egrave: "è", ecirc: "ê", agrave: "à", ccedil: "ç",
   ocirc: "ô", ugrave: "ù", icirc: "î", euml: "ë", iuml: "ï", acirc: "â",
+  // Lot 12. Une entite non decodee n'est pas qu'une coquille : son `;` coupe le texte en
+  // deux segments, et « Association des Parents d&rsquo;Eleves » nommait une structure
+  // « Eleves » dans le fichier de la Haute-Loire.
+  ucirc: "û", uuml: "ü", ouml: "ö", auml: "ä", oelig: "œ", aelig: "æ",
+  rsquo: "’", lsquo: "‘", rdquo: "”", ldquo: "“", laquo: "«", raquo: "»",
+  hellip: "…", ndash: "–", mdash: "—", middot: "·", bull: "•", deg: "°", euro: "€",
+  copy: "©", reg: "®", trade: "™", shy: "",
+};
+
+/** Les capitales accentuees, que la table ci-dessus ecrit en minuscules. */
+const ENTITES_CAPITALES: Record<string, string> = {
+  Eacute: "É", Egrave: "È", Ecirc: "Ê", Agrave: "À", Ccedil: "Ç", Ocirc: "Ô", Ucirc: "Û",
+  Icirc: "Î", Acirc: "Â", OElig: "Œ", AElig: "Æ",
 };
 
 function decoderEntites(texte: string): string {
@@ -268,6 +386,6 @@ function decoderEntites(texte: string): string {
         Number.isFinite(code) && code > 0 && code <= 0x10ffff && !(code >= 0xd800 && code <= 0xdfff);
       return decodable ? String.fromCodePoint(code) : entier;
     }
-    return ENTITES[corps.toLowerCase()] ?? entier;
+    return ENTITES_CAPITALES[corps] ?? ENTITES[corps.toLowerCase()] ?? entier;
   });
 }
