@@ -5,4 +5,4 @@
  * unique sans fichiers voisins (ADR-001). Un test verifie que cette valeur reste
  * synchronisee avec package.json.
  */
-export const VERSION = "1.2.0";
+export const VERSION = "1.3.0";
