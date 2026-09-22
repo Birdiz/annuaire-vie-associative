@@ -85,6 +85,36 @@ test("des acquisitions concurrentes vers un meme hote se serialisent sans se che
   }
 });
 
+test("un reveil en retard repousse les creneaux deja reserves derriere lui", async () => {
+  // Sous Windows, un timer peut se reveiller une quinzaine de millisecondes apres son
+  // echeance. Le second appelant partait alors en retard, mais le troisieme gardait le
+  // creneau reserve avant ce retard, et partait trop pres de lui. On provoque le retard
+  // sur tout systeme en bloquant la boucle d'evenements a l'echeance du second.
+  const throttle = new DomainThrottle({ minDelayMs: DELAI, lookup: lookupFixe({ "a.example": "192.0.2.1" }) });
+  const url = new URL("https://a.example/page");
+
+  setTimeout(() => {
+    const fin = performance.now() + DELAI / 2;
+    while (performance.now() < fin) {
+      // attente active : aucun timer ne peut se declencher pendant ce temps
+    }
+  }, DELAI - 5);
+
+  const departs: number[] = [];
+  await Promise.all(
+    Array.from({ length: 3 }, async () => {
+      await throttle.acquire(url);
+      departs.push(performance.now());
+    }),
+  );
+
+  departs.sort((x, y) => x - y);
+  for (let i = 1; i < departs.length; i += 1) {
+    const ecart = departs[i]! - departs[i - 1]!;
+    assert.ok(ecart >= DELAI - 5, `depart ${i} trop proche du precedent : ${ecart.toFixed(0)} ms`);
+  }
+});
+
 test("une resolution DNS en echec n'empeche pas la requete mais garde le throttle par hote", async () => {
   const throttle = new DomainThrottle({
     minDelayMs: DELAI,
