@@ -39,6 +39,12 @@ export class DomainThrottle {
   readonly #minDelayMs: number;
   /** Prochaine date de depart autorisee, par cle. */
   readonly #nextAt = new Map<string, number>();
+  /**
+   * Plancher tire des departs effectifs, par cle. Distinct de `#nextAt`, qui porte aussi
+   * les reservations des appelants en attente : y attendre ferait attendre chacun
+   * derriere ceux qui partiront apres lui.
+   */
+  readonly #floorAt = new Map<string, number>();
   readonly #ipKeys = new Map<string, Promise<string | null>>();
 
   /**
@@ -75,25 +81,34 @@ export class DomainThrottle {
       this.#nextAt.set(key, startAt + effective);
     }
 
-    // `setTimeout` peut rendre la main avant l'echeance : on reboucle jusqu'a l'avoir
-    // reellement atteinte plutot que de faire confiance a une seule attente.
-    for (let remaining = startAt - this.#now(); remaining > 0; remaining = startAt - this.#now()) {
+    // Le creneau reserve ne suffit pas : il a ete calcule avant que les appelants qui
+    // precedent ne partent. Un reveil depasse toujours son echeance, d'un delai variable
+    // — une quinzaine de millisecondes sous Windows —, et l'appelant suivant, parti a
+    // l'heure de son creneau, se retrouverait trop pres du retardataire. On attend donc
+    // aussi le plancher pose par les departs REELS.
+    //
+    // `setTimeout` peut aussi rendre la main avant l'echeance : on reboucle jusqu'a
+    // l'avoir reellement atteinte plutot que de faire confiance a une seule attente.
+    for (let remaining = this.#target(keys, startAt) - this.#now(); remaining > 0;
+      remaining = this.#target(keys, startAt) - this.#now()) {
       await sleep(remaining, signal);
     }
 
-    // Reservation definitive depuis le depart REEL et non depuis le creneau prevu.
-    // Un reveil depasse toujours son echeance, d'un delai variable : deux creneaux
-    // espaces d'exactement 2 s produisent des departs a 1999 ms d'intervalle si le
-    // premier a depasse de 0,9 ms et le second de 0,1 ms. En repartant de l'instant
-    // constate, l'espacement est garanti sur les departs effectifs.
-    //
-    // Ce recalcul ne peut qu'avancer la date dans le futur — l'instant constate est
-    // toujours posterieur au creneau reserve — donc il ne peut pas laisser passer un
-    // appel concurrent plus tot que prevu.
+    // Aucun `await` entre la derniere lecture du plancher et son ecriture : deux appels
+    // concurrents ne peuvent pas partir tous deux sur le meme plancher.
     const departure = this.#now();
     for (const key of keys) {
-      this.#nextAt.set(key, Math.max(this.#nextAt.get(key) ?? 0, departure + effective));
+      const next = departure + effective;
+      this.#floorAt.set(key, Math.max(this.#floorAt.get(key) ?? 0, next));
+      this.#nextAt.set(key, Math.max(this.#nextAt.get(key) ?? 0, next));
     }
+  }
+
+  /** Depart au plus tot : le creneau reserve, et jamais avant le plancher des departs reels. */
+  #target(keys: string[], startAt: number): number {
+    let target = startAt;
+    for (const key of keys) target = Math.max(target, this.#floorAt.get(key) ?? 0);
+    return target;
   }
 
   /**
