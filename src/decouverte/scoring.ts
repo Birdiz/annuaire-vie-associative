@@ -7,7 +7,7 @@
  * passe. Tout ici est pur et testable sans reseau.
  */
 
-import { canonicalizeUrl } from "../http/cache.ts";
+import { canonicalizeUrl, normalizeForRequest } from "../http/cache.ts";
 import { normaliserNom } from "../texte.ts";
 import type { Lien } from "../parse/html.ts";
 
@@ -67,6 +67,9 @@ const TERMES_NEGATIFS: readonly string[] = [
   "plan du site", "politique de confidentialite", "cookie", "connexion", "mon compte",
   "newsletter", "recherche", "deces", "naissance", "cimetiere", "cadastre",
   "permis de construire", "conseil municipal", "arrete", "dechet", "assainissement",
+  // Mesure sur le Rhone (ADR-038) : `thematique-annuaire/services-municipaux` passait pour
+  // une page associative a cause du seul mot « annuaire », et livrait le cabinet du maire.
+  "services municipaux", "service municipal",
 ];
 
 const POIDS_NEGATIF = -4;
@@ -88,6 +91,9 @@ const POIDS_NEGATIF = -4;
 const TERMES_HORS_SUJET: readonly string[] = [
   "commerc", "entrepris", "artisan", "producteur", "immobili", "assurance",
   "economique", "developpement economique", "emploi", "professionnel de sante",
+  // Mesure sur le Rhone (ADR-038) : ces annuaires-la, ranges parfois sous la vie associative,
+  // livraient des orthoptistes et des cabinets sous l'indice que leur donnait « annuaire ».
+  "annuaire de la sante", "annuaire des professionnels", "professionnels de sante",
 ];
 
 const POIDS_HORS_SUJET = -6;
@@ -123,7 +129,13 @@ export function estReseauSocial(hostname: string): boolean {
   return hostname.toLowerCase() === "x.com" || hostname.toLowerCase().endsWith(".x.com");
 }
 
-export type LienScore = { url: string; ancre: string; score: number };
+/**
+ * `url` est la forme canonique — query triee —, cle de deduplication et de hachage de la
+ * page. `urlRequete` est ce que la page a ecrit, et c'est elle qui part sur le reseau :
+ * robots.txt doit juger l'URL qu'on demande, et `Disallow: /*?id=*` ne reconnait plus
+ * `?id=5&a=1` une fois retrie en `?a=1&id=5` (invariant 2).
+ */
+export type LienScore = { url: string; urlRequete: string; ancre: string; score: number };
 
 export type Selection = {
   retenus: readonly LienScore[];
@@ -166,7 +178,18 @@ export function scorerLien(url: URL, ancre: string): number {
   return score;
 }
 
-function decodeChemin(url: URL): string {
+/**
+ * Le texte porte-t-il un terme d'une rubrique administrative ou hors sujet ? Un score positif
+ * ne le dit pas : « /vie-associative/actualites » vaut 6 - 4, et une page d'actualites n'est
+ * pas un annuaire, quel que soit l'endroit ou elle est rangee (ADR-038).
+ */
+export function porteUnTermeNegatif(texte: string): boolean {
+  const normalise = normaliserNom(texte);
+  return [...TERMES_NEGATIFS, ...TERMES_HORS_SUJET].some((terme) => normalise.includes(terme));
+}
+
+/** Le chemin et la query de l'URL, decodes quand ils le peuvent. */
+export function decodeChemin(url: URL): string {
   const brut = `${url.pathname}${url.search}`;
   try {
     return decodeURIComponent(brut);
@@ -225,7 +248,7 @@ export function selectionner(liens: readonly Lien[], base: string, maxLiens = LI
 
     const connu = meilleurs.get(canonique);
     if (connu === undefined || score > connu.score) {
-      meilleurs.set(canonique, { url: canonique, ancre: lien.ancre, score });
+      meilleurs.set(canonique, { url: canonique, urlRequete: normalizeForRequest(url), ancre: lien.ancre, score });
     }
   }
 
@@ -238,7 +261,7 @@ export function selectionner(liens: readonly Lien[], base: string, maxLiens = LI
   return { retenus, horsDomaine, ignores, ecartes };
 }
 
-function extensionRejetee(pathname: string): boolean {
+export function extensionRejetee(pathname: string): boolean {
   const dernier = pathname.slice(pathname.lastIndexOf("/") + 1);
   const point = dernier.lastIndexOf(".");
   if (point <= 0) return false;

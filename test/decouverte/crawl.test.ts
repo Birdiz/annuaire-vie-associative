@@ -16,6 +16,7 @@ import { creerHandlersDecouverte } from "../../src/decouverte/index.ts";
 import { cleDecouverte } from "../../src/decouverte/contexte.ts";
 import { VERSION_NOM } from "../../src/decouverte/nom-pressenti.ts";
 import type { ContexteDecouverte } from "../../src/decouverte/contexte.ts";
+import { lignesCsv } from "../../src/export/csv.ts";
 import { startServer, robotsAllowAll, text } from "../helpers/server.ts";
 import type { Handler, TestServer } from "../helpers/server.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
@@ -86,7 +87,7 @@ type Montage = {
   db: ReturnType<typeof openDatabase>;
   server: TestServer;
   counters: Counters;
-  lancer: (options?: { maxPages?: number; avecMobiles?: boolean }) => Promise<void>;
+  lancer: (options?: { maxPages?: number; maxPagesAnnuaire?: number; avecMobiles?: boolean }) => Promise<void>;
 };
 
 async function setup(
@@ -142,11 +143,14 @@ async function setup(
     runId: null,
   };
 
-  const lancer = async (opts: { maxPages?: number; avecMobiles?: boolean } = {}): Promise<void> => {
+  const lancer = async (
+    opts: { maxPages?: number; maxPagesAnnuaire?: number; avecMobiles?: boolean } = {},
+  ): Promise<void> => {
     queue.enqueue("decouverte_planifiee", cleDecouverte("35", CAMPAGNE), {
       departement: "35",
       campagne: CAMPAGNE,
       maxPages: opts.maxPages ?? 10,
+      ...(opts.maxPagesAnnuaire === undefined ? {} : { maxPagesAnnuaire: opts.maxPagesAnnuaire }),
       avecMobiles: opts.avecMobiles === true,
     });
     const worker = new Worker(queue, creerHandlersDecouverte(ctx), { concurrency: 4 });
@@ -220,6 +224,36 @@ test("une page interdite par robots.txt n'est jamais demandee", async (t) => {
     | { statut: string }
     | undefined);
   assert.equal(privee?.statut, "bloquee", "elle doit rester en base, marquee bloquee");
+});
+
+test("INVARIANT 2 : robots.txt juge l'URL telle que la page l'ecrit, pas sa forme triee", async (t) => {
+  // La cle de deduplication trie la query. Si c'etait elle qu'on demandait, `?id=5&a=1`
+  // partirait en `?a=1&id=5` et echapperait a `Disallow: /*?id=*`.
+  const routesAvecLien = routes();
+  routesAvecLien["/robots.txt"] = text("User-agent: *\nDisallow: /*?id=*\n");
+  routesAvecLien["/vie-associative"] = html(
+    `<html><body><a href="/annuaire-des-associations?id=5&amp;a=1">Annuaire des associations</a></body></html>`,
+  );
+  const { db, server, lancer } = await setup(t, { routes: routesAvecLien });
+  await lancer();
+
+  assert.equal(server.countOf("/annuaire-des-associations"), 0, "la page interdite ne doit pas etre demandee");
+  const bloquee = db.prepare("SELECT statut FROM page WHERE url LIKE '%annuaire-des-associations%'").get() as
+    | { statut: string }
+    | undefined;
+  assert.equal(bloquee?.statut, "bloquee");
+});
+
+test("la query part telle que la page l'ecrit, sans etre retriee ni reencodee", async (t) => {
+  const routesAvecLien = routes();
+  routesAvecLien["/vie-associative"] = html(
+    `<html><body><a href="/annuaire-des-associations?z=1&amp;q=a%20b">Annuaire des associations</a></body></html>`,
+  );
+  const { server, lancer } = await setup(t, { routes: routesAvecLien });
+  await lancer();
+
+  const demandees = server.requests.map((r) => r.url).filter((u) => u.startsWith("/annuaire-des-associations"));
+  assert.deepEqual(demandees, ["/annuaire-des-associations?z=1&q=a%20b"]);
 });
 
 test("les contacts portent leur provenance et leur classification", async (t) => {
@@ -465,4 +499,144 @@ test("art. 17 : une adresse oubliee ne rentre pas au crawl suivant", async (t) =
 
   assert.deepEqual(valeurs, ["contact@mairie.example"], "l'adresse exclue ne devait pas revenir");
   assert.equal(counters.get(ETAPE.extraction, "contacts_exclus"), 1, "ce qui est refuse se compte aussi (§8)");
+});
+
+/**
+ * ADR-038. Un annuaire de CMS de mairie, ecrit a la main : trois pages de liste — cinq,
+ * cinq, puis deux cartes —, chaque carte liee a sa fiche, la pagination en query. Chaque
+ * fiche porte un fixe, un courriel chiffre par l'anti-spam de TYPO3, et le pied de page du
+ * site avec le standard de la mairie.
+ */
+const CLUBS = [
+  "Tennis club", "Judo club", "Amicale laique", "Chorale du Bourg", "Club de yoga",
+  "Comite des fetes", "Societe de peche", "Club de scrabble", "Harmonie municipale",
+  "Club des aines", "Twirling club", "Club photo",
+];
+
+const PIED_DE_PAGE = `<footer><p>Mairie de Bruz — <a href="tel:0299000000">02 99 00 00 00</a></p></footer>`;
+
+/** Le jeton TYPO3 de `mailto:club<i>@asso.example`, au decalage +1. */
+function jeton(i: number): string {
+  return `nbjmup+dmvc${[...String(i)].map((c) => String.fromCharCode(c.charCodeAt(0) + 1)).join("")}Abttp/fybnqmf`;
+}
+
+function pageDeListe(numero: number): string {
+  const debut = [0, 5, 10][numero - 1] ?? 0;
+  const fin = [5, 10, 12][numero - 1] ?? 0;
+  const cartes = CLUBS.slice(debut, fin)
+    .map(
+      (nom, rang) => `<li><article><p class="tag">Sport et culture</p>
+        <h3><a href="/associations/annuaire/club-${debut + rang}">${nom}</a></h3>
+        <p>Adresse : Chez Mme Jeanne MARTIN, 1 rue du Stade</p></article></li>`,
+    )
+    .join("\n");
+  const pages = [1, 2, 3]
+    .filter((n) => n !== numero)
+    .map((n) => `<a href="/associations/annuaire?tx_paginate%5BcurrentPage%5D=${n}&amp;cHash=h${n}">${n}</a>`)
+    .join(" ");
+  return `<html><body><main><h1>Annuaire des associations</h1><ul>${cartes}</ul>${pages}</main>${PIED_DE_PAGE}</body></html>`;
+}
+
+function ficheDeClub(i: number): string {
+  return `<html><body><nav><a href="/">Accueil</a></nav><main>
+    <header><h1>${CLUBS[i] ?? ""}</h1>
+    <p>Tel. : <a href="tel:02991000${String(i).padStart(2, "0")}">02 99 10 00 ${String(i).padStart(2, "0")}</a></p>
+    <p><a href="#" data-mailto-token="${jeton(i)}" data-mailto-vector="1">Courriel</a></p></header>
+    <a href="/associations/annuaire/club-${i}/galerie">Galerie photo du club</a>
+    </main>${PIED_DE_PAGE}</body></html>`;
+}
+
+function routesAnnuaire(): Record<string, Handler> {
+  const routes: Record<string, Handler> = {
+    "/robots.txt": text("User-agent: *\nDisallow:\n"),
+    "/": html(`<html><body><nav><a href="/associations/annuaire">Annuaire des associations</a>
+      <a href="/vie-associative">Vie associative</a></nav></body></html>`),
+    "/vie-associative": html(`<html><body><p>Le forum a lieu en septembre.</p></body></html>`),
+    "/associations/annuaire": (req, res) => {
+      const numero = Number(/currentPage%5D=(\d+)/.exec(req.url ?? "")?.[1] ?? "1");
+      html(pageDeListe(numero))(req, res);
+    },
+  };
+  CLUBS.forEach((_, i) => {
+    routes[`/associations/annuaire/club-${i}`] = html(ficheDeClub(i));
+    routes[`/associations/annuaire/club-${i}/galerie`] = html(`<html><body>photos</body></html>`);
+  });
+  return routes;
+}
+
+function pagesParRole(db: ReturnType<typeof openDatabase>): Record<string, number> {
+  const lignes = db.prepare("SELECT role, count(*) AS n FROM page GROUP BY role").all() as { role: string; n: number }[];
+  return Object.fromEntries(lignes.map((ligne) => [ligne.role, ligne.n]));
+}
+
+test("ADR-038 : un annuaire se suit jusqu'au bout, pagination et fiches, hors du budget d'exploration", async (t) => {
+  const { db, server, counters, lancer } = await setup(t, { routes: routesAnnuaire() });
+  await lancer({ maxPages: 3 });
+
+  // Trois pages de pagination pour deux pages suivantes : les pages 2 et 3 renvoient a la
+  // premiere sous une URL parametree. Elle coute une visite, et s'arrete la — meme contenu
+  // que la liste nue, donc aucun lien n'en repart.
+  assert.deepEqual(pagesParRole(db), { exploration: 3, pagination: 3, fiche: 12 });
+  assert.equal(counters.get(ETAPE.decouverte, "pages_dupliquees"), 1);
+  for (let i = 0; i < CLUBS.length; i += 1) {
+    assert.equal(server.countOf(`/associations/annuaire/club-${i}`), 1, `fiche ${i}`);
+  }
+  assert.equal(server.countOf("/associations/annuaire/club-0/galerie"), 0, "une fiche est une feuille");
+  assert.equal(counters.get(ETAPE.decouverte, "annuaires_reconnus"), 1);
+  assert.equal(counters.get(ETAPE.extraction, "emails_typo3"), 12);
+});
+
+test("ADR-038 : chaque club sort sous son nom, le standard de la mairie sous aucun", async (t) => {
+  const { db, lancer } = await setup(t, { routes: routesAnnuaire() });
+  await lancer();
+
+  const noms = db
+    .prepare("SELECT valeur_normalisee, nom_pressenti, nom_pressenti_source FROM contact")
+    .all() as { valeur_normalisee: string; nom_pressenti: string | null; nom_pressenti_source: string | null }[];
+  const nomDe = (valeur: string): string | null | undefined =>
+    noms.find((ligne) => ligne.valeur_normalisee === valeur)?.nom_pressenti;
+
+  assert.equal(nomDe("club7@asso.example"), "Club de scrabble");
+  assert.equal(nomDe("+33299100007"), "Club de scrabble");
+  assert.equal(nomDe("club11@asso.example"), "Club photo", "la derniere page de la liste compte aussi");
+  assert.notEqual(nomDe("+33299000000"), "Tennis club", "le pied de page n'appartient a aucune fiche");
+  assert.ok(
+    noms.every((ligne) => ligne.nom_pressenti === null || !/MARTIN|Sport et culture/.test(ligne.nom_pressenti)),
+    "ni l'adresse ni la categorie de la carte ne nomment une structure",
+  );
+});
+
+test("ADR-038 : le budget d'annuaire borne la pagination et les fiches", async (t) => {
+  const { db, lancer } = await setup(t, { routes: routesAnnuaire() });
+  await lancer({ maxPagesAnnuaire: 4 });
+  const parRole = pagesParRole(db);
+  assert.equal((parRole["pagination"] ?? 0) + (parRole["fiche"] ?? 0), 4);
+  assert.equal(parRole["pagination"], 2, "la pagination passe devant les fiches : c'est elle qui les fait connaitre");
+  assert.equal(parRole["fiche"], 2);
+});
+
+test("ADR-038 : un budget d'annuaire nul revient au crawl d'avant", async (t) => {
+  const { db, lancer } = await setup(t, { routes: routesAnnuaire() });
+  await lancer({ maxPagesAnnuaire: 0 });
+  assert.deepEqual(Object.keys(pagesParRole(db)), ["exploration"]);
+});
+
+test("ADR-038 : rejouer un annuaire ne cree ni page ni contact en double", async (t) => {
+  const { db, lancer } = await setup(t, { routes: routesAnnuaire() });
+  await lancer();
+  const avant = { pages: pages(db).length, contacts: contacts(db).length };
+  await lancer();
+  assert.deepEqual({ pages: pages(db).length, contacts: contacts(db).length }, avant);
+});
+
+test("ADR-038 : dans le profil simple, un club par ligne, sous son nom, courriel et fixe reunis", async (t) => {
+  const { db, lancer } = await setup(t, { routes: routesAnnuaire() });
+  await lancer();
+
+  const lignes = [...lignesCsv(db, { departement: "35", profil: "simple" })].slice(1).map((ligne) => ligne.trimEnd());
+  const scrabble = lignes.filter((ligne) => ligne.includes("Club de scrabble"));
+  assert.equal(scrabble.length, 1, lignes.join("\n"));
+  assert.equal(scrabble[0], "35;Bruz;Club de scrabble;;0299100007;club7@asso.example");
+  assert.match(scrabble[0] ?? "", /club7@asso\.example/);
+  assert.equal(lignes.filter((ligne) => /MARTIN|Sport et culture/.test(ligne)).length, 0);
 });

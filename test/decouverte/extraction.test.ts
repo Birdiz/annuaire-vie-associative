@@ -3,7 +3,9 @@ import assert from "node:assert/strict";
 
 import { analyser } from "../../src/parse/html.ts";
 import {
+  CONTACTS_MAX_PAR_BLOC,
   classerEmail,
+  decoderJetonTypo3,
   decollerEmail,
   estMobile,
   extraireContacts,
@@ -178,7 +180,7 @@ test("une page volumineuse sans adresse se balaie en temps borne", () => {
   // dessein — il attrape un retour au quadratique, pas une machine lente.
   const texte = "z".repeat(200_000);
   const debut = process.hrtime.bigint();
-  const { contacts } = extraireContacts({ texte, liens: [], blocs: [], fiches: [] }, { avecMobiles: false });
+  const { contacts } = extraireContacts({ texte, liens: [], blocs: [], fiches: [], gabarit: [] }, { avecMobiles: false });
   const millisecondes = Number(process.hrtime.bigint() - debut) / 1e6;
 
   assert.equal(contacts.length, 0);
@@ -272,6 +274,70 @@ test("une adresse reparee vaut moins qu'une lecture, et plus qu'une reconstructi
   // `base` du score vaut `confiance` et le score ne fait que descendre : sous 0,6, ces
   // adresses resteraient absentes du fichier livre au seuil courant.
   assert.ok((reparee?.confiance ?? 0) > 0.6, "reparer sans franchir le seuil d'export ne servirait a rien");
+});
+
+/**
+ * ADR-037. L'anti-spam de TYPO3 ecrit `<a href="#" data-mailto-token="…">` et laisse un
+ * script de la page dechiffrer le lien au clic. Les jetons ci-dessous sont calcules a la
+ * main, sur des adresses inventees : `mailto:tennis@asso.example` decale de +1, puis de -2.
+ */
+const JETON_PLUS_UN = "nbjmup+ufoojtAbttp/fybnqmf";
+const JETON_MOINS_DEUX = "kygjrm8rcllgqYyqqm,cvyknjc";
+
+test("ADR-037 : le jeton TYPO3 se dechiffre sans connaitre le sens du vecteur", () => {
+  assert.equal(decoderJetonTypo3(JETON_PLUS_UN), "tennis@asso.example");
+  assert.equal(decoderJetonTypo3(JETON_MOINS_DEUX), "tennis@asso.example");
+  // `+` est le premier caractere de sa plage : a -1 il boucle sur `:`.
+  assert.ok(JETON_PLUS_UN.includes("+"), "le jeton doit exercer le bouclage");
+});
+
+test("ADR-037 : un jeton qui ne rend pas un mailto a une seule arobase n'est pas dechiffre", () => {
+  assert.equal(decoderJetonTypo3("ufoojtAbttp/fybnqmf"), undefined, "pas de prefixe mailto:");
+  assert.equal(decoderJetonTypo3("nbjmup+bAcAd/fybnqmf"), undefined, "deux arobases");
+  assert.equal(decoderJetonTypo3(""), undefined);
+});
+
+test("ADR-037 : un lien de courriel chiffre par TYPO3 devient un contact, et la methode le dit", () => {
+  const { contacts } = extraire(
+    `<div class="fiche"><h1>Tennis club</h1><p><a href="#" data-mailto-token="${JETON_PLUS_UN}" data-mailto-vector="1">Courriel</a></p></div>`,
+  );
+  const trouve = contacts.find((contact) => contact.valeurNormalisee === "tennis@asso.example");
+  assert.ok(trouve !== undefined, "l'adresse doit sortir dechiffree");
+  assert.equal(trouve.methode, "dom:mailto+typo3");
+  assert.equal(trouve.confiance, 0.75, "la page declare le lien, mais n'ecrit pas l'adresse");
+  assert.ok(trouve.contextes.some((texte) => texte.includes("Courriel")), "le bloc du lien doit servir de contexte");
+});
+
+test("ADR-037 : la forme ancienne en javascript: est lue aussi, guillemets encodes compris", () => {
+  for (const href of [
+    `javascript:linkTo_UnCryptMailto('${JETON_PLUS_UN}');`,
+    `javascript:linkTo_UnCryptMailto(%27${JETON_MOINS_DEUX}%27, 2);`,
+  ]) {
+    const { contacts } = extraire(`<p><a href="${href}">Ecrire</a></p>`);
+    assert.equal(contacts[0]?.valeurNormalisee, "tennis@asso.example", href);
+    assert.equal(contacts[0]?.methode, "dom:mailto+typo3");
+  }
+});
+
+test("ADR-035 : les adresses chiffrees comptent dans le plafond d'un bloc", () => {
+  // Quatre fiches dans une liste : sans compter les jetons, la liste passait pour un bloc
+  // sans contact, et nommait les quatre d'apres son premier nom.
+  const jeton = (local: string): string =>
+    `nbjmup+${[...local].map((c) => String.fromCharCode(c.charCodeAt(0) + 1)).join("")}Abttp/fybnqmf`;
+  const fiches = ["club", "judo", "foot", "yoga"]
+    .map((local) => `<li><a href="#" data-mailto-token="${jeton(local)}">Courriel</a></li>`)
+    .join("");
+  const { contacts } = extraire(`<section><h2>Associations sportives</h2><ul>${fiches}</ul></section>`);
+
+  assert.equal(contacts.length, 4);
+  assert.ok(CONTACTS_MAX_PAR_BLOC < 4);
+  for (const contact of contacts) {
+    assert.ok(
+      contact.contextes.every((texte) => !texte.includes("Associations sportives")),
+      "la section qui porte les quatre ne doit nommer aucun d'eux",
+    );
+    assert.equal(contact.titre, undefined);
+  }
 });
 
 test("la reparation ne touche qu'a ce litteral, et jamais a une adresse deja valide", () => {

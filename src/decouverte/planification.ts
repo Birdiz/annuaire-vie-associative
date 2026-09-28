@@ -85,6 +85,8 @@ export function handlerDecouverte(ctx: ContexteDecouverte): JobHandler {
               campagne: payload.campagne,
               profondeur: 0,
               maxPages,
+              role: "exploration",
+              maxPagesAnnuaire: payload.maxPagesAnnuaire,
               avecMobiles: payload.avecMobiles,
             },
             // Une racine passe avant tout lien decouvert, quel que soit le score de

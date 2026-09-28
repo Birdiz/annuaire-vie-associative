@@ -265,3 +265,40 @@ test("la passe de rattrapage lit le titre de la fiche quand le bloc ne nomme qu'
   assert.equal(ligne.s, "bloc:titre");
   assert.equal(Number(ligne.v), VERSION_NOM);
 });
+
+test("ADR-038 : relire une fiche d'annuaire la nomme par son titre, comme au crawl", (t) => {
+  const racine = makeTempDir(t);
+  const cache = new HttpCache(join(racine, "cache"));
+  const db = openDatabase(join(racine, "fiche.sqlite"));
+  t.after(() => db.close());
+  db.prepare(
+    "INSERT INTO commune (code_insee, nom, departement, created_at, updated_at) VALUES (?, 'Bruz', '35', 't', 't')",
+  ).run(INSEE);
+
+  const url = "https://bruz.example/associations/annuaire/club-de-voile";
+  const corps = `<html><body><main><h1>Club de voile</h1>
+    <p><a href="#" data-mailto-token="nbjmup+wpjmfAbttp/fybnqmf">Courriel</a></p></main>
+    <footer><p>Mairie : mairie@bruz.example</p></footer></body></html>`;
+  cache.set(
+    url,
+    { finalUrl: url, status: 200, etag: null, lastModified: null, contentType: "text/html; charset=utf-8", fetchedAt: T },
+    Buffer.from(corps, "utf8"),
+  );
+  const insererPage = db.prepare(
+    "INSERT INTO page (url_hash, campagne, url, domaine, code_insee, statut, fetched_at, profondeur, role) " +
+      "VALUES (?, ?, ?, 'bruz.example', ?, 'visitee', 't', 2, ?)",
+  );
+  insererPage.run(hashPage(CAMPAGNE, INSEE, url), CAMPAGNE, url, INSEE, "fiche");
+  const insererContact = db.prepare(
+    "INSERT INTO contact (association_id, code_insee, kind, valeur, valeur_normalisee, is_generique, " +
+      "source_url, methode_extraction, confiance, collected_at) VALUES (NULL, ?, 'email', ?, ?, 1, ?, ?, 0.75, ?)",
+  );
+  insererContact.run(INSEE, "voile@asso.example", "voile@asso.example", url, "dom:mailto+typo3", T);
+  insererContact.run(INSEE, "mairie@bruz.example", "mairie@bruz.example", url, "texte:motif", T);
+
+  remplirNoms(db, cache, systemClock, { departement: "35" });
+
+  const trouves = noms(db);
+  assert.equal(trouves["voile@asso.example"], "Club de voile");
+  assert.notEqual(trouves["mairie@bruz.example"], "Club de voile", "le pied de page n'appartient pas a la fiche");
+});

@@ -38,6 +38,7 @@ function routes(): Record<string, Handler> {
         `<a href="/annuaire-des-associations">Annuaire des associations</a>` +
         `<a href="/sport">Sports et loisirs</a>` +
         `<a href="/culture">Culture</a>` +
+        `<a href="/associations/liste">Liste des associations</a>` +
         `</nav><p><a href="mailto:mairie@bruz.example">mairie@bruz.example</a></p></body></html>`,
     ),
   };
@@ -57,6 +58,23 @@ function routes(): Record<string, Handler> {
       `<html><body><p>Contact du secretariat : ${nom}.secretariat@asso.example</p></body></html>`,
     );
   }
+  // ADR-038 : un annuaire pagine, six fiches puis une. Ses pages ont leur propre budget et
+  // passent apres toute l'exploration : un kill -9 peut donc tomber au milieu de l'un comme
+  // de l'autre.
+  const clubs = ["judo", "yoga", "boxe", "rugby", "voile", "golf", "tir"];
+  const carte = (i: number): string =>
+    `<li><a href="/associations/liste/${clubs[i] ?? ""}">Club de ${clubs[i] ?? ""}</a></li>`;
+  table["/associations/liste"] = (req, res) => {
+    const deux = (req.url ?? "").includes("page=2");
+    const cartes = deux ? carte(6) : [0, 1, 2, 3, 4, 5].map(carte).join("");
+    const suite = deux ? `<a href="/associations/liste">1</a>` : `<a href="/associations/liste?page=2">2</a>`;
+    html(`<html><body><ul>${cartes}</ul>${suite}</body></html>`)(req, res);
+  };
+  clubs.forEach((nom) => {
+    table[`/associations/liste/${nom}`] = html(
+      `<html><body><main><h1>Club de ${nom}</h1><p><a href="mailto:${nom}@asso.example">ecrire</a></p></main></body></html>`,
+    );
+  });
   return table;
 }
 
@@ -124,7 +142,7 @@ function lancerWorker(
 }
 
 type Etat = {
-  pages: { url: string; statut: string; profondeur: number }[];
+  pages: { url: string; statut: string; profondeur: number; role: string }[];
   contacts: { valeur_normalisee: string; kind: string; association_id: number | null; confiance: number }[];
   compteurs: Record<string, Record<string, number>>;
   jobsNonTermines: { type: string; state: string }[];
@@ -135,7 +153,7 @@ function lireEtat(dbFile: string): Etat {
   try {
     return {
       pages: db
-        .prepare("SELECT url, statut, profondeur FROM page ORDER BY url")
+        .prepare("SELECT url, statut, profondeur, role FROM page ORDER BY url")
         .all() as unknown as Etat["pages"],
       contacts: db
         .prepare(
@@ -204,6 +222,7 @@ test("une decouverte complete sert de reference", { timeout: 60_000 }, async (t)
   assertExactementUneFois(etat);
   assert.ok(etat.contacts.length >= 5, `la reference doit collecter des contacts, vu ${etat.contacts.length}`);
   assert.ok(etat.pages.length >= 5, `la reference doit explorer des pages, vu ${etat.pages.length}`);
+  assert.equal(etat.pages.filter((page) => page.role === "fiche").length, 7, "l'annuaire doit etre suivi en entier");
 });
 
 test("reprise apres kill -9 entre le travail et la persistance", { timeout: 60_000 }, async (t) => {
@@ -218,6 +237,30 @@ test("reprise apres kill -9 entre le travail et la persistance", { timeout: 60_0
   // Puis le meme crawl, tue en plein vol et repris.
   const { dbFile, cacheDir } = preparer(t, server);
   const tue = await lancerWorker(dbFile, cacheDir, server.origin, 3, -1);
+  assertTueBrutalement(tue, "le worker aurait du etre tue brutalement");
+
+  await attendreExpirationDuBail();
+
+  const reprise = await lancerWorker(dbFile, cacheDir, server.origin, -1, -1);
+  assert.equal(reprise.code, 0, reprise.stderr);
+
+  const obtenu = lireEtat(dbFile);
+  assertExactementUneFois(obtenu);
+  assert.deepEqual(obtenu.pages, attendu.pages, "l'etat des pages doit etre celui d'un run sans incident");
+  assert.deepEqual(obtenu.contacts, attendu.contacts, "les contacts doivent etre ceux d'un run sans incident");
+});
+
+test("ADR-038 : reprise apres kill -9 au milieu d'un annuaire", { timeout: 60_000 }, async (t) => {
+  const server = await startServer(t, routes());
+
+  const reference = preparer(t, server);
+  const sortieReference = await lancerWorker(reference.dbFile, reference.cacheDir, server.origin, -1, -1);
+  assert.equal(sortieReference.code, 0, sortieReference.stderr);
+  const attendu = lireEtat(reference.dbFile);
+
+  // Dix pages d'exploration, puis l'annuaire : la douzieme page est l'une des siennes.
+  const { dbFile, cacheDir } = preparer(t, server);
+  const tue = await lancerWorker(dbFile, cacheDir, server.origin, 12, -1);
   assertTueBrutalement(tue, "le worker aurait du etre tue brutalement");
 
   await attendreExpirationDuBail();

@@ -29,7 +29,7 @@ import { SOURCE_EMAIL, SOURCE_TELEPHONE, porteUnNumero } from "./motifs.ts";
  * rend repondable « quels noms sont perimes », et qui sert de marqueur d'idempotence a la
  * passe de rattrapage.
  */
-export const VERSION_NOM = 4;
+export const VERSION_NOM = 5;
 
 /**
  * Ce que le nommage sait des communes : celle du contact, et toutes celles du departement.
@@ -58,8 +58,15 @@ export type NomPressenti = {
    * D'ou le segment a ete pris : de part et d'autre du contact dans son bloc, ou du titre de
    * sa fiche (ADR-036).
    */
-  source: "bloc:avant" | "bloc:apres" | "bloc:titre";
+  source: "bloc:avant" | "bloc:apres" | "bloc:titre" | SourceLue;
 };
+
+/**
+ * Un nom que la page donne elle-meme a la structure, sans qu'on le cherche dans un bloc :
+ * l'ancre du lien vers sa fiche sur la liste d'un annuaire, ou le `<h1>` de la fiche
+ * (ADR-038).
+ */
+export type SourceLue = "annuaire:ancre" | "fiche:titre";
 
 /**
  * On n'examine que les deux blocs les plus etroits.
@@ -571,6 +578,20 @@ export function nomPressenti(
  */
 export function nomPressentiDuContact(contact: ContactExtrait, commune?: Commune): NomPressenti | undefined {
   return nomPressenti(contact.contextes, contact.empreinte, commune, contact.titre);
+}
+
+/**
+ * Le nom qu'un texte donne a une structure — l'ancre d'une carte, le `<h1>` d'une fiche —,
+ * s'il passe le **meme** filtre que tout nom lu dans un bloc. Etre ecrit a une place de
+ * nom ne dispense de rien : un `<h1>` « Contact » ou « Jean DUPONT » ne nomme pas plus une
+ * structure qu'un segment de paragraphe.
+ */
+export function nomLu(texte: string, source: SourceLue, commune?: Commune): NomPressenti | undefined {
+  for (const segment of decouper(texte)) {
+    if (designeUnePersonne(segment)) continue;
+    if (acceptable(segment, commune)) return { nom: segment, normalise: normaliserNom(segment), source };
+  }
+  return undefined;
 }
 
 /**

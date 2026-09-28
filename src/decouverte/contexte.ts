@@ -15,6 +15,8 @@ import type { HttpClient } from "../http/client.ts";
 import type { JobQueue } from "../jobs/queue.ts";
 import type { Logger } from "../log.ts";
 import type { Counters } from "../metrics/counters.ts";
+import { PAGES_MAX_ANNUAIRE, ROLES_PAGE } from "./annuaire.ts";
+import type { RolePage } from "./annuaire.ts";
 
 export type ContexteDecouverte = {
   db: Database;
@@ -30,15 +32,31 @@ export type PayloadDecouverte = {
   departement: string;
   campagne: string;
   maxPages: number;
+  /** Pages d'annuaire par commune, en plus de `maxPages` (ADR-038). 0 : aucun annuaire suivi. */
+  maxPagesAnnuaire: number;
   avecMobiles: boolean;
 };
 
 export type PayloadPage = {
   codeInsee: string;
+  /** Forme canonique : la cle de la page (`hashPage`), jamais ce qu'on demande. */
   url: string;
+  /**
+   * L'URL telle que la page l'ecrivait, a demander au serveur. Absente des payloads
+   * anterieurs a la 1.4.0 et des racines, dont `url` est deja la forme a demander.
+   */
+  urlRequete?: string;
   campagne: string;
   profondeur: number;
   maxPages: number;
+  /**
+   * Ce qu'est la page pour le crawl, et le budget d'annuaire de sa commune (ADR-038). Un
+   * payload anterieur a la 1.4.0 n'a ni l'un ni l'autre : il se lit `exploration`, avec le
+   * budget par defaut. Une campagne reprise apres la mise a jour se met donc a suivre les
+   * annuaires qu'elle rencontre — c'est le comportement voulu.
+   */
+  role: RolePage;
+  maxPagesAnnuaire: number;
   avecMobiles: boolean;
 };
 
@@ -104,6 +122,18 @@ export function prioritePage(profondeur: number, score = 0): number {
   return bande + AMPLITUDE_DU_SCORE - ajustement;
 }
 
+/**
+ * Priorite d'une page d'annuaire : **apres toute l'exploration**, quelle que soit sa
+ * profondeur (les bandes s'arretent a 189). Un annuaire de trois cents pages sur un site
+ * qui demande cinq secondes entre deux requetes occuperait sinon un worker pendant que les
+ * accueils des autres communes attendent — et un run interrompu laisserait un annuaire
+ * complet et des communes jamais visitees. La liste passe avant ses fiches : c'est elle qui
+ * les fait connaitre.
+ */
+export function prioriteAnnuaire(role: Exclude<RolePage, "exploration">): number {
+  return role === "pagination" ? 200 : 205;
+}
+
 export function lirePayloadDecouverte(payload: unknown): PayloadDecouverte | undefined {
   if (typeof payload !== "object" || payload === null) return undefined;
   const brut = payload as Record<string, unknown>;
@@ -115,6 +145,7 @@ export function lirePayloadDecouverte(payload: unknown): PayloadDecouverte | und
     departement,
     campagne,
     maxPages: entierPositif(brut["maxPages"]) ?? 0,
+    maxPagesAnnuaire: entierPositif(brut["maxPagesAnnuaire"]) ?? PAGES_MAX_ANNUAIRE,
     avecMobiles: brut["avecMobiles"] === true,
   };
 }
@@ -128,12 +159,16 @@ export function lirePayloadPage(payload: unknown): PayloadPage | undefined {
   if (typeof codeInsee !== "string" || codeInsee === "") return undefined;
   if (typeof url !== "string" || url === "") return undefined;
   if (typeof campagne !== "string" || campagne === "") return undefined;
+  const urlRequete = brut["urlRequete"];
   return {
     codeInsee,
     url,
+    ...(typeof urlRequete === "string" && urlRequete !== "" ? { urlRequete } : {}),
     campagne,
     profondeur: entierPositif(brut["profondeur"]) ?? 0,
     maxPages: entierPositif(brut["maxPages"]) ?? 0,
+    role: ROLES_PAGE.find((role) => role === brut["role"]) ?? "exploration",
+    maxPagesAnnuaire: entierPositif(brut["maxPagesAnnuaire"]) ?? PAGES_MAX_ANNUAIRE,
     avecMobiles: brut["avecMobiles"] === true,
   };
 }

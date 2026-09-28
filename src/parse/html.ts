@@ -27,8 +27,18 @@ export class HtmlError extends Error {
   }
 }
 
-/** Un lien, resolu en absolu. `mailto:` et `tel:` sont conserves tels quels. */
+/**
+ * Un lien, resolu en absolu. `mailto:` et `tel:` sont conserves tels quels.
+ *
+ * Un lien qui porte le jeton anti-spam de TYPO3 — `<a href="#" data-mailto-token="…">` —
+ * rend `x-typo3-mailto:<jeton>`. Son `href` est un `#` que `resoudre` jette : sans cette
+ * forme, l'adresse que la page declare n'atteignait jamais l'extraction. Le jeton est rendu
+ * tel quel ; le decoder est une decision d'extraction (ADR-037), pas de lecture du DOM.
+ */
 export type Lien = { href: string; ancre: string };
+
+/** Schema des jetons TYPO3 : aucun navigateur ne le connait, aucun crawl ne le suit. */
+export const SCHEMA_JETON_TYPO3 = "x-typo3-mailto:";
 
 /**
  * Plus petit ensemble structurel susceptible de porter une association et ses
@@ -64,6 +74,18 @@ export type DocumentAnalyse = {
   liens: readonly Lien[];
   blocs: readonly Bloc[];
   fiches: readonly Fiche[];
+  /**
+   * Le premier `<h1>` de la page, et l'element qui le suit quand il est court : sur la fiche
+   * d'un annuaire, le nom de la structure et, souvent, sa forme longue — « ACPR », puis
+   * « Association culturelle portugaise de … » (ADR-038). Absent sans `<h1>`.
+   */
+  enTete?: { titre: string; sousTitre?: string } | undefined;
+  /**
+   * Ce que le site repete sur toutes ses pages : `<footer>`, `<nav>`, `<aside>`. Le
+   * telephone de l'accueil de la mairie y figure, et une fiche qui nommerait tout ce
+   * qu'elle porte le rangerait sous le nom de chaque association de l'annuaire.
+   */
+  gabarit: readonly Bloc[];
 };
 
 /** Elements dont le contenu textuel n'est pas du texte de page. */
@@ -76,6 +98,15 @@ const COUPURES = new Set([
   "header", "hr", "li", "main", "nav", "ol", "option", "p", "pre", "section",
   "table", "tbody", "td", "tfoot", "th", "thead", "tr", "ul",
 ]);
+
+/** Regions communes a toutes les pages d'un site : voir `DocumentAnalyse.gabarit`. */
+const GABARITS = new Set(["footer", "nav", "aside"]);
+
+/** Ce qui peut porter la forme longue d'un nom, juste sous le `<h1>`. */
+const SOUS_TITRES = new Set(["p", "div", "span", "h2", "h3"]);
+
+/** Au-dela, ce qui suit le `<h1>` est un texte de presentation, pas un nom. */
+const LONGUEUR_MAX_SOUS_TITRE = 150;
 
 /** Elements retenus comme blocs de contexte, du plus fin au plus grossier. */
 const BLOCS = new Set(["td", "tr", "li", "dd", "p", "article"]);
@@ -217,6 +248,9 @@ export function analyser(html: string, base: string): DocumentAnalyse {
   const liens: { lien: Lien; position: number }[] = [];
   const blocs: Bloc[] = [];
   const fiches: Fiche[] = [];
+  const gabarit: Bloc[] = [];
+  let enTete: { titre: string; sousTitre?: string } | undefined;
+  let dansGabarit = 0;
   let caracteres = 0;
 
   const pousser = (morceau: string): void => {
@@ -260,23 +294,52 @@ export function analyser(html: string, base: string): DocumentAnalyse {
 
     if (balise === "a") {
       const href = attribut(n, "href");
-      const resolu = href === undefined ? undefined : resoudre(href, base);
+      const jeton = attribut(n, "data-mailto-token")?.trim();
+      const resolu =
+        jeton !== undefined && jeton !== ""
+          ? `${SCHEMA_JETON_TYPO3}${jeton}`
+          : href === undefined
+            ? undefined
+            : resoudre(href, base);
       if (resolu !== undefined) {
         // L'ancre n'est connue qu'apres la descente : la position est reservee ici.
         liens.push({ lien: { href: resolu, ancre: "" }, position: morceaux.length });
       }
     }
 
+    const gabaritOuvert = GABARITS.has(balise) && dansGabarit === 0;
+    if (GABARITS.has(balise)) dansGabarit += 1;
+
     let titre: string | undefined;
     let branche = { debutTexte: 0, finTexte: 0, debutLiens: 0, finLiens: 0 };
+    // Le sous-titre est le premier element frere qui suit le `<h1>` : la question ne se pose
+    // qu'une fois par document, dans le parent du premier `<h1>`.
+    let sousTitreAttendu = false;
     for (const enfant of n.childNodes ?? []) {
       const avantTexte = morceaux.length;
       const avantLiens = liens.length;
+      const enTeteAvant = enTete;
       const trouve = parcourir(enfant, profondeur + 1);
       if (titre === undefined && trouve !== undefined) {
         titre = trouve;
         branche = { debutTexte: avantTexte, finTexte: morceaux.length, debutLiens: avantLiens, finLiens: liens.length };
       }
+      const baliseEnfant = baliseDe(enfant);
+      if (baliseEnfant === undefined) continue;
+      if (sousTitreAttendu) {
+        sousTitreAttendu = false;
+        const texte = normaliser(morceaux.slice(avantTexte).join("")).replace(/\s+/g, " ");
+        if (enTete !== undefined && SOUS_TITRES.has(baliseEnfant) && texte !== "" && texte.length <= LONGUEUR_MAX_SOUS_TITRE) {
+          enTete = { titre: enTete.titre, sousTitre: texte };
+        }
+      }
+      if (enTeteAvant === undefined && enTete !== undefined && baliseEnfant === "h1") sousTitreAttendu = true;
+    }
+
+    if (GABARITS.has(balise)) dansGabarit -= 1;
+    if (gabaritOuvert) {
+      const texte = normaliser(morceaux.slice(debutTexte).join(""));
+      gabarit.push({ texte, liens: liens.slice(debutLiens).map((e) => e.lien) });
     }
 
     if (balise === "a" && liens.length > debutLiens) {
@@ -295,6 +358,10 @@ export function analyser(html: string, base: string): DocumentAnalyse {
     }
 
     const longueur = caracteres - debutCaracteres;
+    if (balise === "h1" && enTete === undefined && dansGabarit === 0) {
+      const propre = normaliser(morceaux.slice(debutTexte).join("")).replace(/\s+/g, " ");
+      if (propre !== "") enTete = { titre: propre };
+    }
     if (TITRES.has(balise) || (longueur <= LONGUEUR_MAX_TITRE && CLASSE_DE_TITRE.test(classes(n)))) {
       const propre = normaliser(morceaux.slice(debutTexte).join("")).replace(/\s+/g, " ");
       if (propre !== "") return propre;
@@ -323,7 +390,15 @@ export function analyser(html: string, base: string): DocumentAnalyse {
     liens: liens.map((e) => e.lien),
     blocs,
     fiches,
+    enTete,
+    gabarit,
   };
+}
+
+function baliseDe(noeud: unknown): string | undefined {
+  const n = noeud as { nodeType?: number; rawTagName?: string };
+  if (n.nodeType !== NOEUD_ELEMENT) return undefined;
+  return (n.rawTagName ?? "").toLowerCase();
 }
 
 /** Les noms de classe, un par un : `CLASSE_DE_TITRE` les compare separement. */

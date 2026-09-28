@@ -25,12 +25,20 @@ import type { Database } from "../db/index.ts";
 import type { JobHandler } from "../jobs/worker.ts";
 import type { ContactExtrait } from "./extraction.ts";
 import type { ContexteDecouverte, PayloadPage } from "./contexte.ts";
-import { clePage, hashPage, lirePayloadPage, prioritePage } from "./contexte.ts";
+import { clePage, hashPage, lirePayloadPage, prioriteAnnuaire, prioritePage } from "./contexte.ts";
+import {
+  contextesDeRattachement,
+  horsAnnuaire,
+  nommerDansLaPage,
+  predicatFiche,
+  reconnaitreAnnuaire,
+} from "./annuaire.ts";
+import type { Annuaire, PageLue, RolePage } from "./annuaire.ts";
 import { extraireContacts } from "./extraction.ts";
 import { evaluerPage } from "./prefiltre.ts";
 import type { VerdictPrefiltre } from "./prefiltre.ts";
 import { indexerAssociations, rattacher } from "./rattachement.ts";
-import { VERSION_NOM, nomPressentiDuContact } from "./nom-pressenti.ts";
+import { VERSION_NOM } from "./nom-pressenti.ts";
 import { normaliserNom } from "../texte.ts";
 import type { ContexteCommune, NomPressenti } from "./nom-pressenti.ts";
 import { PROFONDEUR_MAX, estReseauSocial, selectionner } from "./scoring.ts";
@@ -59,7 +67,18 @@ const SQL_MAJ_COMMUNE = `
    WHERE code_insee = ?
 `;
 
-const SQL_BUDGET = `SELECT count(*) AS n FROM page WHERE campagne = ? AND code_insee = ?`;
+/**
+ * Deux budgets par commune, que la colonne `role` separe (ADR-038) : l'exploration, et
+ * l'annuaire — sa pagination et ses fiches. Un annuaire de trois cents pages ne doit pas
+ * priver la commune de ses rubriques, ni l'inverse.
+ */
+const SQL_BUDGET = `
+  SELECT count(*) AS n FROM page WHERE campagne = ? AND code_insee = ? AND role = 'exploration'
+`;
+
+const SQL_BUDGET_ANNUAIRE = `
+  SELECT count(*) AS n FROM page WHERE campagne = ? AND code_insee = ? AND role <> 'exploration'
+`;
 
 const SQL_DEJA_VU = `
   SELECT count(*) AS n FROM page
@@ -69,8 +88,8 @@ const SQL_DEJA_VU = `
 const SQL_INSERER_PAGE = `
   INSERT OR IGNORE INTO page
     (url_hash, campagne, url, domaine, code_insee, planifiee_at, profondeur, statut,
-     score_candidat, url_source)
-  VALUES (?, ?, ?, ?, ?, ?, ?, 'a_visiter', ?, ?)
+     score_candidat, url_source, role)
+  VALUES (?, ?, ?, ?, ?, ?, ?, 'a_visiter', ?, ?, ?)
 `;
 
 /**
@@ -180,7 +199,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     if (payload === undefined) return { kind: "skipped", reason: "payload de page inexploitable" };
 
     const hash = hashPage(payload.campagne, payload.codeInsee, payload.url);
-    const resultat = await ctx.client.fetch(payload.url, { signal: jobCtx.signal });
+    const resultat = await ctx.client.fetch(payload.urlRequete ?? payload.url, { signal: jobCtx.signal });
 
     if (resultat.kind === "blocked") {
       return terminer(ctx, payload, hash, { statut: "bloquee", raison: resultat.reason });
@@ -217,7 +236,19 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     }
 
     const doc = analyser(decoder(resultat.body, resultat.meta.contentType), resultat.meta.finalUrl);
-    const extraction = extraireContacts(doc, { avecMobiles: payload.avecMobiles });
+    // Reconnue meme quand le budget d'annuaire est nul : le nommage en depend, et la
+    // relecture du cache (`noms.ts`), qui ne connait pas ce budget, doit nommer pareil.
+    const annuaire = reconnaitreAnnuaire(doc.liens, resultat.meta.finalUrl, payload.role);
+    const extraction = extraireContacts(doc, {
+      avecMobiles: payload.avecMobiles,
+      estUneFiche: predicatFiche(annuaire, resultat.meta.finalUrl),
+    });
+    const page: PageLue = {
+      doc,
+      role: payload.role,
+      annuaire,
+      contactsHorsGabarit: extraction.contactsHorsGabarit,
+    };
 
     const nomCommune = (
       ctx.db.prepare(SQL_NOM_COMMUNE).get(payload.codeInsee) as { nom?: string } | undefined
@@ -246,8 +277,8 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
     // rendra deux homonymes, auquel cas la ligne se retrouve orpheline **et** anonyme.
     const contacts: ContactRattache[] = extraction.contacts.map((contact) => ({
       contact,
-      nomAssociation: rattacher(index, contact.contextes)?.nomNormalise,
-      pressenti: nomPressentiDuContact(contact, commune),
+      nomAssociation: rattacher(index, contextesDeRattachement(contact, page))?.nomNormalise,
+      pressenti: nommerDansLaPage(contact, page, commune),
     }));
 
     // Etape [4]. Elle vient apres [5] dans le code et avant elle dans l'entonnoir :
@@ -262,9 +293,12 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
       contactsRattaches: contacts.filter((entree) => entree.nomAssociation !== undefined).length,
     });
 
+    // Seule une page d'exploration explore. Une page de liste n'etend que son annuaire, une
+    // fiche est une feuille ; et les liens de l'annuaire sont retires des candidats, sans
+    // quoi, notes 7, ils prenaient les huit places des rubriques.
     const selection =
-      payload.profondeur < PROFONDEUR_MAX
-        ? selectionner(doc.liens, resultat.meta.finalUrl)
+      payload.role === "exploration" && payload.profondeur < PROFONDEUR_MAX
+        ? selectionner(horsAnnuaire(doc.liens, annuaire, resultat.meta.finalUrl), resultat.meta.finalUrl)
         : { retenus: [], horsDomaine: 0, ignores: 0, ecartes: 0 };
 
     const contentHash = createHash("sha256").update(resultat.body).digest("hex");
@@ -280,6 +314,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
           contacts,
           verdict,
           selection: selection.retenus,
+          annuaire,
           horsDomaine: selection.horsDomaine,
           mobilesExclus: extraction.mobilesExclus,
         }),
@@ -356,6 +391,7 @@ type Succes = {
   contacts: readonly ContactRattache[];
   verdict: VerdictPrefiltre;
   selection: readonly LienScore[];
+  annuaire: Annuaire | undefined;
   horsDomaine: number;
   mobilesExclus: number;
   /**
@@ -412,6 +448,7 @@ function persister(
 
   ecrireContacts(ctx, db, payload, succes.contacts, succes.sourceUrl, maintenant);
   enfilerFilles(ctx, db, payload, succes.selection, maintenant);
+  enfilerAnnuaire(ctx, db, payload, succes.annuaire, maintenant);
 }
 
 /**
@@ -467,6 +504,7 @@ function ecrireContacts(
   let emails = 0;
   let generiques = 0;
   let nominatifs = 0;
+  let typo3 = 0;
 
   let exclus = 0;
   for (const { contact, nomAssociation, pressenti } of contacts) {
@@ -538,6 +576,7 @@ function ecrireContacts(
       emails += 1;
       if (contact.isGenerique === 1) generiques += 1;
       if (contact.isGenerique === 0) nominatifs += 1;
+      if (contact.methode.startsWith("dom:mailto+typo3")) typo3 += 1;
     }
   }
 
@@ -546,6 +585,9 @@ function ecrireContacts(
   ctx.counters.inc(ETAPE.extraction, "telephones", ecrits - emails);
   ctx.counters.inc(ETAPE.extraction, "emails_generiques", generiques);
   ctx.counters.inc(ETAPE.extraction, "emails_nominatifs", nominatifs);
+  // ADR-037 : ce que l'outil dechiffre se compte a part, pour que la mesure dise ce que
+  // la regle rapporte — et qu'un CMS qui changerait de chiffrement se voie.
+  ctx.counters.inc(ETAPE.extraction, "emails_typo3", typo3);
   ctx.counters.inc(ETAPE.extraction, "rattaches_association", versAssociation);
   ctx.counters.inc(ETAPE.extraction, "rattaches_commune", ecrits - versAssociation);
   // §8 : ce que l'outil refuse de retenir se compte aussi. Sans ce compteur, une
@@ -596,6 +638,7 @@ function enfilerFilles(
         payload.profondeur + 1,
         lien.score,
         payload.url,
+        "exploration",
       ).changes,
     );
     // Deja planifiee : le job existe, et la decompter ferait mentir le budget.
@@ -607,9 +650,12 @@ function enfilerFilles(
       {
         codeInsee: payload.codeInsee,
         url: lien.url,
+        urlRequete: lien.urlRequete,
         campagne: payload.campagne,
         profondeur: payload.profondeur + 1,
         maxPages: payload.maxPages,
+        role: "exploration",
+        maxPagesAnnuaire: payload.maxPagesAnnuaire,
         avecMobiles: payload.avecMobiles,
       },
       { runId: ctx.runId, priority: prioritePage(payload.profondeur + 1, lien.score) },
@@ -619,6 +665,83 @@ function enfilerFilles(
   }
 
   ctx.counters.inc(ETAPE.decouverte, "liens_retenus", retenus);
+}
+
+/**
+ * La pagination, puis les fiches, dans la limite du budget d'annuaire de la commune
+ * (ADR-038). Meme transaction et memes gardes que `enfilerFilles` : `INSERT OR IGNORE` sur
+ * la page, cle de job derivee de son hash — un `kill -9` entre deux pages ne laisse ni
+ * doublon ni trou, et une fiche liee depuis dix pages de liste n'est planifiee qu'une fois.
+ */
+function enfilerAnnuaire(
+  ctx: ContexteDecouverte,
+  db: Database,
+  payload: PayloadPage,
+  annuaire: Annuaire | undefined,
+  maintenant: string,
+): void {
+  if (annuaire === undefined || payload.maxPagesAnnuaire <= 0) return;
+  // Une liste reconnue depuis l'exploration ou depuis une fiche-categorie ; ses pages
+  // suivantes ne sont pas de nouveaux annuaires.
+  if (payload.role !== "pagination") ctx.counters.inc(ETAPE.decouverte, "annuaires_reconnus");
+
+  const deja = Number(
+    (db.prepare(SQL_BUDGET_ANNUAIRE).get(payload.campagne, payload.codeInsee) as { n: number } | undefined)?.n ?? 0,
+  );
+  let restant = payload.maxPagesAnnuaire - deja;
+  const candidats: { lien: LienScore; role: Exclude<RolePage, "exploration"> }[] = [
+    ...annuaire.pagination.map((lien) => ({ lien, role: "pagination" as const })),
+    ...annuaire.fiches.map((lien) => ({ lien, role: "fiche" as const })),
+  ];
+
+  const inserer = db.prepare(SQL_INSERER_PAGE);
+  let pagination = 0;
+  let fiches = 0;
+  for (const { lien, role } of candidats) {
+    if (restant <= 0) {
+      ctx.counters.inc(ETAPE.decouverte, "budget_annuaire_atteint");
+      break;
+    }
+    const hashFille = hashPage(payload.campagne, payload.codeInsee, lien.url);
+    const insere = Number(
+      inserer.run(
+        hashFille,
+        payload.campagne,
+        lien.url,
+        new URL(lien.url).hostname,
+        payload.codeInsee,
+        maintenant,
+        payload.profondeur + 1,
+        lien.score,
+        payload.url,
+        role,
+      ).changes,
+    );
+    if (insere === 0) continue;
+
+    ctx.queue.enqueue(
+      "page_crawl",
+      clePage(hashFille),
+      {
+        codeInsee: payload.codeInsee,
+        url: lien.url,
+        urlRequete: lien.urlRequete,
+        campagne: payload.campagne,
+        profondeur: payload.profondeur + 1,
+        maxPages: payload.maxPages,
+        role,
+        maxPagesAnnuaire: payload.maxPagesAnnuaire,
+        avecMobiles: payload.avecMobiles,
+      },
+      { runId: ctx.runId, priority: prioriteAnnuaire(role) },
+    );
+    restant -= 1;
+    if (role === "pagination") pagination += 1;
+    else fiches += 1;
+  }
+
+  ctx.counters.inc(ETAPE.decouverte, "pages_pagination", pagination);
+  ctx.counters.inc(ETAPE.decouverte, "pages_fiche", fiches);
 }
 
 function arrondir(valeur: number): number {

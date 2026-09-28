@@ -14,6 +14,7 @@ import { MIGRATIONS } from "./db/migrations.ts";
 import { VERSION } from "./version.ts";
 import { executerRun, executerDecouverteSeule, refusDepartement, departementBienForme } from "./pipeline.ts";
 import type { OptionsDecouverte } from "./pipeline.ts";
+import { PAGES_MAX_ANNUAIRE } from "./decouverte/annuaire.ts";
 import { PAGES_MAX_PAR_COMMUNE, estReseauSocial } from "./decouverte/scoring.ts";
 import { SEUIL_EXTRACTION, SEUIL_PAR_DEFAUT } from "./decouverte/prefiltre.ts";
 import { derniereCampagne, distributionPrefiltre, rejouerPrefiltre } from "./decouverte/rejeu.ts";
@@ -57,6 +58,8 @@ Commandes
   exporter --departement <dd>   Exporte l'annuaire en CSV
   contacts --departement <dd>   Contacts collectes, avec leur provenance
   pages --departement <dd>      Pages explorees et verdict du pre-filtre
+  pages --commune <insee>       Ce que la visite d'une commune a donne, page par page :
+                                exploration, pagination et fiches d'annuaire
   associations --departement <dd>  Associations amorcees, avec leur commune
   dormance --departement <dd>   Anciennete de declaration des associations
   dumps                   Etat des dumps ouverts et de leur reprise
@@ -82,6 +85,9 @@ Options de run
 
 Options de decouverte
   --max-pages <n>         Pages explorees au maximum par commune (defaut : ${PAGES_MAX_PAR_COMMUNE})
+  --max-pages-annuaire <n>  Pages d'annuaire d'associations suivies au maximum par
+                          commune, en plus des precedentes : pagination et fiches
+                          (defaut : ${PAGES_MAX_ANNUAIRE} ; 0 n'en suit aucun)
   --avec-mobiles          RISQUE. Conserve les numeros en 06/07, que le brief exclut
                           par defaut (§4.6) : un mobile associatif est presque toujours
                           la ligne personnelle d'un benevole. A n'activer qu'en
@@ -182,6 +188,7 @@ export async function main(argv: readonly string[]): Promise<number> {
         "sans-decouverte": { type: "boolean", default: false },
         "avec-mobiles": { type: "boolean", default: false },
         "max-pages": { type: "string" },
+        "max-pages-annuaire": { type: "string" },
         campagne: { type: "string" },
         seuil: { type: "string" },
         verdict: { type: "string" },
@@ -249,9 +256,13 @@ export async function main(argv: readonly string[]): Promise<number> {
     return app;
   };
 
-  const decouverte = lireOptionsDecouverte(values["max-pages"], values["avec-mobiles"] === true);
-  if (decouverte === undefined) {
-    process.stderr.write(`--max-pages attend un entier positif, recu « ${values["max-pages"]} »\n`);
+  const decouverte = lireOptionsDecouverte(
+    values["max-pages"],
+    values["max-pages-annuaire"],
+    values["avec-mobiles"] === true,
+  );
+  if (typeof decouverte === "string") {
+    process.stderr.write(`${decouverte}\n`);
     return 2;
   }
 
@@ -313,6 +324,7 @@ export async function main(argv: readonly string[]): Promise<number> {
       case "contacts":
         return commandeContacts(ouvrir, values.departement, values.json === true, values.limit);
       case "pages":
+        if (values.commune !== undefined) return commandePagesDeCommune(ouvrir, values.commune, values.json === true);
         return commandePages(ouvrir, values.departement, values.verdict, values.json === true, values.limit);
       case "dormance":
         return commandeDormance(ouvrir, values.departement, values.json === true);
@@ -1123,15 +1135,26 @@ function commandeDumps(ouvrir: () => App, json: boolean): number {
   }
 }
 
-/** Rend `undefined` sur une valeur invalide : c'est une erreur d'usage, pas d'execution. */
+/** Rend le message d'erreur sur une valeur invalide : c'est une erreur d'usage, pas d'execution. */
 function lireOptionsDecouverte(
   maxPages: string | undefined,
+  maxPagesAnnuaire: string | undefined,
   avecMobiles: boolean,
-): OptionsDecouverte | undefined {
-  if (maxPages === undefined) return { maxPages: PAGES_MAX_PAR_COMMUNE, avecMobiles };
-  const valeur = Number.parseInt(maxPages, 10);
-  if (!Number.isInteger(valeur) || valeur < 1 || String(valeur) !== maxPages.trim()) return undefined;
-  return { maxPages: valeur, avecMobiles };
+): OptionsDecouverte | string {
+  const pages = maxPages === undefined ? PAGES_MAX_PAR_COMMUNE : lireEntier(maxPages, 1);
+  if (pages === undefined) return `--max-pages attend un entier positif, recu « ${maxPages ?? ""} »`;
+  // 0 est permis ici, et seulement ici : c'est la facon de revenir au crawl d'avant la 1.4.0.
+  const annuaire = maxPagesAnnuaire === undefined ? PAGES_MAX_ANNUAIRE : lireEntier(maxPagesAnnuaire, 0);
+  if (annuaire === undefined) {
+    return `--max-pages-annuaire attend un entier positif ou nul, recu « ${maxPagesAnnuaire ?? ""} »`;
+  }
+  return { maxPages: pages, maxPagesAnnuaire: annuaire, avecMobiles };
+}
+
+function lireEntier(brut: string, minimum: number): number | undefined {
+  const valeur = Number.parseInt(brut, 10);
+  if (!Number.isInteger(valeur) || valeur < minimum || String(valeur) !== brut.trim()) return undefined;
+  return valeur;
 }
 
 async function commandeDecouvrir(
@@ -1627,6 +1650,79 @@ type LignePage = {
   contacts_extraits: number | null;
   profondeur: number;
 };
+
+type LignePageDeCommune = {
+  url: string;
+  statut: string;
+  role: string;
+  profondeur: number;
+  contacts_extraits: number | null;
+};
+
+/**
+ * Pourquoi une commune a si peu donne (ADR-038). Toutes les pages de sa derniere campagne,
+ * bloquees et en erreur comprises, avec leur role : on y lit d'un coup d'oeil si
+ * l'exploration a sature ses vingt pages, si un annuaire a ete reconnu, et jusqu'ou il a
+ * ete suivi.
+ */
+function commandePagesDeCommune(ouvrir: () => App, codeInsee: string, json: boolean): number {
+  const app = ouvrir();
+  try {
+    const commune = app.db.prepare("SELECT nom, crawl_statut FROM commune WHERE code_insee = ?").get(codeInsee) as
+      | { nom: string; crawl_statut: string | null }
+      | undefined;
+    if (commune === undefined) {
+      process.stderr.write(`Aucune commune de code INSEE « ${codeInsee} » dans la base.\n`);
+      return 1;
+    }
+    const campagne = (
+      app.db.prepare("SELECT max(campagne) AS c FROM page WHERE code_insee = ?").get(codeInsee) as
+        | { c: string | null }
+        | undefined
+    )?.c ?? null;
+    const pages =
+      campagne === null
+        ? []
+        : (app.db
+            .prepare(
+              `SELECT url, statut, role, profondeur, contacts_extraits FROM page
+                WHERE code_insee = ? AND campagne = ?
+                ORDER BY CASE role WHEN 'exploration' THEN 0 WHEN 'pagination' THEN 1 ELSE 2 END, profondeur, url`,
+            )
+            .all(codeInsee, campagne) as unknown as LignePageDeCommune[]);
+    const parRole = { exploration: 0, pagination: 0, fiche: 0 } as Record<string, number>;
+    for (const page of pages) parRole[page.role] = (parRole[page.role] ?? 0) + 1;
+
+    if (json) {
+      process.stdout.write(
+        `${JSON.stringify({ code_insee: codeInsee, commune: commune.nom, campagne, parRole, pages }, null, 2)}\n`,
+      );
+      return 0;
+    }
+
+    if (campagne === null) {
+      process.stdout.write(
+        `${commune.nom} (${codeInsee}) n'a pas encore ete visitee (${commune.crawl_statut ?? "non tentee"}).\n`,
+      );
+      return 0;
+    }
+    const annuaire = (parRole["pagination"] ?? 0) + (parRole["fiche"] ?? 0) > 0;
+    process.stdout.write(
+      `${commune.nom} (${codeInsee}), campagne ${campagne} — visite : ${commune.crawl_statut ?? "non tentee"}\n` +
+        `  exploration ${parRole["exploration"] ?? 0} · pagination ${parRole["pagination"] ?? 0} · ` +
+        `fiches ${parRole["fiche"] ?? 0} — annuaire suivi : ${annuaire ? "oui" : "non"}\n\n`,
+    );
+    for (const page of pages) {
+      process.stdout.write(
+        `${page.statut.padEnd(9)} ${page.role.padEnd(11)} ${String(page.profondeur).padStart(2)} ` +
+          `${String(page.contacts_extraits ?? 0).padStart(3)} contacts  ${page.url}\n`,
+      );
+    }
+    return 0;
+  } finally {
+    app.close();
+  }
+}
 
 /** Les pages explorees et ce que le pre-filtre en dit — l'etage [4] de l'entonnoir. */
 function commandePages(

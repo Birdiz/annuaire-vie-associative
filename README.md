@@ -129,13 +129,21 @@ réellement un process en plein vol.
 Chaque étape se rejoue ensuite seule, sans relire le dump — c'est le mode d'itération :
 
 ```bash
-npm run annuaire -- decouvrir --departement 35 --max-pages 20
+npm run annuaire -- decouvrir --departement 35 --max-pages 20 --max-pages-annuaire 300
 npm run annuaire -- prefiltrer --departement 35     # depuis le cache, sans réseau
 npm run annuaire -- normaliser --departement 35
 npm run annuaire -- noms --departement 35        # nomme les orphelins, sans réseau
 npm run annuaire -- exporter --departement 35 --score-min 0.6 --fichier annuaire-35.csv
 npm run annuaire -- exporter --departement 35 --profil simple --fichier simple-35.csv
 ```
+
+**Les annuaires se suivent jusqu'au bout** ([ADR-038](docs/adr/038-suivre-un-annuaire-jusqu-au-bout.md)).
+L'exploration d'une commune s'arrête à vingt pages. Quand elle rencontre la liste paginée d'un
+annuaire d'associations, elle en suit la pagination et les fiches sur un budget à part — 300 pages
+par défaut, `--max-pages-annuaire 0` pour s'en passer —, après toutes les autres communes du
+département. Une carte y est nommée par le lien vers sa fiche, une fiche par son titre. Les
+courriels chiffrés par l'anti-spam de TYPO3 sont lus ([ADR-037](docs/adr/037-dechiffrer-le-mailto-de-typo3.md)).
+Pour savoir pourquoi une commune a peu donné : `annuaire pages --commune <insee>`.
 
 **Deux fichiers possibles** ([ADR-032](docs/adr/032-deux-profils-d-export.md)). Le profil
 `complet` — le défaut en ligne de commande — sort une ligne par contact, avec la page d'origine,
@@ -215,6 +223,7 @@ npm run annuaire -- --help
 | `exporter --profil simple` | Cinq colonnes, une ligne par structure |
 | `ui [--port <n>]` | Interface locale : lancement et suivi d'un run, revue, export |
 | `communes`, `associations`, `contacts`, `pages` | Lectures de la base, `--departement <dd>` |
+| `pages --commune <insee>` | Toutes les pages visitées d'une commune : exploration, pagination, fiches d'annuaire |
 | `dormance --departement <dd>` | Ancienneté de déclaration des associations |
 | `metrics [--json]` | Compteurs de l'entonnoir |
 | `status`, `jobs`, `dumps` | État de l'installation, de la file, des téléchargements |

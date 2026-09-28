@@ -197,6 +197,28 @@ Sans ce plafond, la section entiere d'une page d'annuaire servait de contexte a 
 ses vingt contacts, et le premier nom du RNA qui s'y trouvait leur etait donne a tous : 90
 adresses livrees sous un seul club. Une ligne fausse est pire qu'une ligne hors sujet.
 
+## Un annuaire se suit jusqu'au bout
+
+L'exploration d'une commune garde huit liens par page, deux sauts et vingt pages. Un annuaire
+pagine n'y laissait que sa premiere page (ADR-038). `src/decouverte/annuaire.ts` reconnait la
+**liste** d'un annuaire a sa forme — chemin d'annuaire d'associations, au moins cinq fiches
+enfants de ce chemin, pagination par query ou `/page/N` — et `page.role` (migration 14) separe
+`exploration`, `pagination` et `fiche`, chacun avec sa regle : la pagination s'etend, la fiche
+est une feuille, et **le budget d'annuaire (300) est distinct de celui d'exploration**. Les
+pages d'annuaire passent apres toute l'exploration du departement.
+
+Le nom suit le role : l'ancre du lien vers la fiche sur la liste, le `<h1>` sur la fiche — hors
+gabarit (`footer`, `nav`, `aside`), et jamais sur une « fiche » qui est une liste ou porte plus
+de six contacts. Le crawl et `noms.ts` passent par la **meme** `nommerDansLaPage`, role lu en
+base : deux chemins de nommage feraient diverger une base collectee et une base reparee.
+
+Le payload d'une page porte deux URL : `url`, forme canonique a query triee, cle de hachage et
+de dedup ; `urlRequete`, telle que la page l'ecrit, **seule a partir sur le reseau**. robots.txt
+juge ce qu'on demande — une query retriee echappait a `Disallow: /*?id=*`.
+
+Le courriel des fiches TYPO3 est chiffre (`data-mailto-token`). La porte DOM le rend en
+`x-typo3-mailto:<jeton>`, l'extraction le dechiffre (ADR-037) : `dom:mailto+typo3`, 0,75.
+
 ## Une seule porte d'entree DOM
 
 `node-html-parser` n'est importe que par `src/parse/html.ts`. Meme logique que la porte

@@ -19,6 +19,7 @@ import { MOBILE_PREFIXES } from "../invariants.ts";
 import { SOURCE_EMAIL, SOURCE_TELEPHONE } from "./motifs.ts";
 import { estEtiquetteDeMessagerie } from "../normalisation/messageries.ts";
 import { normaliserNom } from "../texte.ts";
+import { SCHEMA_JETON_TYPO3 } from "../parse/html.ts";
 import type { Bloc, DocumentAnalyse, Fiche } from "../parse/html.ts";
 
 export type KindContact = "email" | "phone";
@@ -55,11 +56,32 @@ export type ContactExtrait = {
    * bloc du contact ne nomme que son president (ADR-036). Absent sinon.
    */
   titre?: string | undefined;
+  /**
+   * Le contact figure dans le pied de page, la navigation ou un encart : ce que le site
+   * repete sur toutes ses pages. Une fiche d'annuaire ne le nomme pas (ADR-038).
+   */
+  gabarit: boolean;
+  /**
+   * Sur la liste d'un annuaire : l'ancre du seul lien vers une fiche que porte le bloc du
+   * contact — le nom que la carte donne elle-meme a sa structure (ADR-038). Absent sinon.
+   */
+  ancreDeFiche?: string | undefined;
 };
+
+/**
+ * Reconnait, parmi les liens d'une page, ceux qui menent a la fiche d'une structure. Fourni
+ * par l'appelant, qui seul sait si la page est la liste d'un annuaire (`annuaire.ts`).
+ */
+export type EstUneFiche = (href: string) => boolean;
 
 export type ResultatExtraction = {
   contacts: readonly ContactExtrait[];
   mobilesExclus: number;
+  /**
+   * Contacts distincts de la page hors gabarit, mobiles compris quel que soit le drapeau :
+   * le crawl et la relecture du cache, qui n'ont pas le meme, doivent compter pareil.
+   */
+  contactsHorsGabarit: number;
 };
 
 const CONFIANCE_DOM = 0.9;
@@ -127,6 +149,66 @@ export function reparerArobaseMasquee(brut: string): string | undefined {
   return repare.split("@").length === 2 ? repare : undefined;
 }
 
+/**
+ * Plages que l'anti-spam de TYPO3 decale, chacune sur elle-meme : `+` a `:`, `@` a `Z`,
+ * `a` a `z`. Le reste du jeton passe tel quel. C'est la fonction `decryptString` que le
+ * CMS sert a ses pages, reecrite ici parce que nous n'executons pas de script (invariant 1).
+ */
+const PLAGES_TYPO3: readonly (readonly [number, number])[] = [
+  [0x2b, 0x3a],
+  [0x40, 0x5a],
+  [0x61, 0x7a],
+];
+
+/** TYPO3 accepte un decalage de -10 a 10 ; au-dela, ce n'est pas un jeton de ce CMS. */
+const DECALAGE_MAX_TYPO3 = 10;
+
+/** Forme ancienne : `href="javascript:linkTo_UnCryptMailto('jeton', -1)"`. */
+const APPEL_TYPO3 = /linkTo_UnCryptMailto\(\s*(?:'|")([^'"]+)(?:'|")/;
+
+/**
+ * Le `mailto:` qu'un jeton TYPO3 encode, ou `undefined`.
+ *
+ * **Pourquoi c'est une lecture et non une inference.** Le lien est declare par la page, et
+ * le decalage est un chiffrement de Cesar sans cle : le CMS le choisit, mais le prefixe
+ * `mailto:` le trahit. Sur la plage des lettres, qui compte 26 caracteres, un seul decalage
+ * entre -10 et 10 peut rendre `mailto:` — le resultat ne depend donc ni de la convention de
+ * signe du vecteur, qui a change entre versions du CMS, ni d'un choix de notre part. On
+ * exige en plus exactement une arobase, comme pour l'ADR-030 : au-dela, on a affaire a
+ * autre chose et on ne touche a rien.
+ */
+export function decoderJetonTypo3(jeton: string): string | undefined {
+  for (let decalage = -DECALAGE_MAX_TYPO3; decalage <= DECALAGE_MAX_TYPO3; decalage += 1) {
+    if (decalerTypo3(jeton.slice(0, "mailto:".length), decalage) !== "mailto:") continue;
+    const adresse = decalerTypo3(jeton, decalage).slice("mailto:".length).split("?")[0] ?? "";
+    return adresse.split("@").length === 2 ? adresse : undefined;
+  }
+  return undefined;
+}
+
+function decalerTypo3(jeton: string, decalage: number): string {
+  let rendu = "";
+  for (const caractere of jeton) {
+    const code = caractere.charCodeAt(0);
+    const plage = PLAGES_TYPO3.find(([debut, fin]) => code >= debut && code <= fin);
+    if (plage === undefined) {
+      rendu += caractere;
+      continue;
+    }
+    const [debut, fin] = plage;
+    const largeur = fin - debut + 1;
+    rendu += String.fromCharCode(debut + ((((code - debut + decalage) % largeur) + largeur) % largeur));
+  }
+  return rendu;
+}
+
+/** Le jeton TYPO3 que porte un lien, sous l'une ou l'autre de ses deux formes. */
+function jetonTypo3(href: string): string | undefined {
+  if (href.startsWith(SCHEMA_JETON_TYPO3)) return href.slice(SCHEMA_JETON_TYPO3.length);
+  if (!href.toLowerCase().startsWith("javascript:")) return undefined;
+  return APPEL_TYPO3.exec(decoderSansEchec(href))?.[1];
+}
+
 /** Fixe francais ou mobile. Voir `motifs.ts` : ses bornes sont des chiffres, pas des mots. */
 const TELEPHONE = new RegExp(SOURCE_TELEPHONE, "g");
 
@@ -174,7 +256,7 @@ const EXTENSIONS_IMAGE = /\.(?:png|jpe?g|gif|webp|svg|css|js)$/i;
 
 export function extraireContacts(
   doc: DocumentAnalyse,
-  options: { avecMobiles: boolean },
+  options: { avecMobiles: boolean; estUneFiche?: EstUneFiche | undefined },
 ): ResultatExtraction {
   const trouves: ContactExtrait[] = [];
   let mobilesExclus = 0;
@@ -185,6 +267,11 @@ export function extraireContacts(
   const porteursDeFiche = compterContactsParBloc(doc.fiches);
   // Un titre n'est un en-tete que si sa branche ne porte aucun contact.
   const titresSeuls = compterContactsParBloc(doc.fiches.map((fiche) => fiche.branche)).map((n) => n === 0);
+  const situer = (empreinte: string): Pick<ContactExtrait, "gabarit" | "ancreDeFiche"> => ({
+    gabarit: doc.gabarit.some((bloc) => porteEmpreinte(bloc, empreinte)),
+    ancreDeFiche:
+      options.estUneFiche === undefined ? undefined : ancreDeFiche(doc.blocs, empreinte, porteurs, options.estUneFiche),
+  });
 
   const ajouterEmail = (brut: string, methode: string, confiance: number, empreinte: string): void => {
     const valeur = nettoyerEmail(brut);
@@ -199,6 +286,7 @@ export function extraireContacts(
       contextes: contextesDe(doc.blocs, empreinte, porteurs),
       empreinte,
       titre: titreDe(doc.fiches, empreinte, porteursDeFiche, titresSeuls),
+      ...situer(empreinte),
     });
   };
 
@@ -219,6 +307,7 @@ export function extraireContacts(
       contextes: contextesDe(doc.blocs, empreinte, porteurs),
       empreinte,
       titre: titreDe(doc.fiches, empreinte, porteursDeFiche, titresSeuls),
+      ...situer(empreinte),
     });
   };
 
@@ -237,6 +326,13 @@ export function extraireContacts(
       }
     } else if (bas.startsWith("tel:")) {
       ajouterTelephone(decoderSansEchec(lien.href.slice("tel:".length)), "dom:tel", CONFIANCE_DOM, lien.href);
+    } else {
+      // Un lien de courriel que le CMS a chiffre (ADR-037). Meme confiance qu'une arobase
+      // reparee, pour la meme raison : la page declare le lien, mais ce qu'on rend n'est
+      // pas ce qu'elle ecrit.
+      const jeton = jetonTypo3(lien.href);
+      const adresse = jeton === undefined ? undefined : decoderJetonTypo3(jeton);
+      if (adresse !== undefined) ajouterEmail(adresse, "dom:mailto+typo3", CONFIANCE_DOM_REPARE, lien.href);
     }
   }
 
@@ -258,7 +354,13 @@ export function extraireContacts(
     ajouterEmail(`${local}@${domaine}.${tld}`, "texte:obfusque", CONFIANCE_OBFUSQUE, entier);
   }
 
-  return { contacts: dedupliquer(trouves), mobilesExclus };
+  const [dansLaPage = 0] = compterContactsParBloc([{ texte: doc.texte, liens: doc.liens }]);
+  const dansLeGabarit = compterContactsParBloc(doc.gabarit).reduce((total, n) => total + n, 0);
+  return {
+    contacts: dedupliquer(trouves),
+    mobilesExclus,
+    contactsHorsGabarit: Math.max(0, dansLaPage - dansLeGabarit),
+  };
 }
 
 /**
@@ -305,11 +407,46 @@ function contextesDe(
   const portants: string[] = [];
   blocs.forEach((bloc, rang) => {
     if ((porteurs[rang] ?? 1) > CONTACTS_MAX_PAR_BLOC) return;
-    if (bloc.texte.includes(empreinte) || bloc.liens.some((lien) => lien.href === empreinte)) {
-      portants.push(bloc.texte);
-    }
+    if (porteEmpreinte(bloc, empreinte)) portants.push(bloc.texte);
   });
   return portants.sort((a, b) => a.length - b.length);
+}
+
+function porteEmpreinte(bloc: Bloc, empreinte: string): boolean {
+  if (empreinte === "") return false;
+  return bloc.texte.includes(empreinte) || bloc.liens.some((lien) => lien.href === empreinte);
+}
+
+/**
+ * L'ancre du lien vers une fiche que porte la carte du contact.
+ *
+ * On remonte du plus etroit bloc au plus large, jusqu'au premier qui porte un lien vers une
+ * fiche : le paragraphe du telephone n'en porte pas, l'`article` de la carte si. Il doit
+ * n'en porter qu'une — un bloc qui empile les cartes en porte plusieurs, et n'en designe
+ * aucune —, sous le meme plafond de contacts que les contextes. Deux liens vers la **meme**
+ * fiche — le nom, puis « En savoir plus » — n'en font qu'une, et c'est l'ancre la plus
+ * longue qui la nomme.
+ */
+function ancreDeFiche(
+  blocs: readonly Bloc[],
+  empreinte: string,
+  porteurs: readonly number[],
+  estUneFiche: EstUneFiche,
+): string | undefined {
+  const portants = blocs
+    .filter((bloc, rang) => (porteurs[rang] ?? 1) <= CONTACTS_MAX_PAR_BLOC && porteEmpreinte(bloc, empreinte))
+    .sort((a, b) => a.texte.length - b.texte.length);
+  for (const bloc of portants) {
+    const parFiche = new Map<string, string>();
+    for (const lien of bloc.liens) {
+      if (!estUneFiche(lien.href)) continue;
+      const connue = parFiche.get(lien.href);
+      if (connue === undefined || lien.ancre.length > connue.length) parFiche.set(lien.href, lien.ancre);
+    }
+    if (parFiche.size === 0) continue;
+    return parFiche.size === 1 ? [...parFiche.values()][0] : undefined;
+  }
+  return undefined;
 }
 
 /**
@@ -351,6 +488,13 @@ function compterContactsParBloc(blocs: readonly (Bloc | Fiche)[]): number[] {
       const bas = lien.href.toLowerCase();
       if (bas.startsWith("mailto:")) vus.add((bas.slice("mailto:".length).split("?")[0] ?? "").trim());
       else if (bas.startsWith("tel:")) vus.add(bas.slice("tel:".length).replace(/\D/g, ""));
+      else {
+        // Sans cette branche, une liste de vingt fiches aux adresses chiffrees passerait
+        // sous le plafond, et son conteneur nommerait les vingt (ADR-035).
+        const jeton = jetonTypo3(lien.href);
+        const adresse = jeton === undefined ? undefined : decoderJetonTypo3(jeton);
+        if (adresse !== undefined) vus.add(adresse.trim().toLowerCase());
+      }
     }
     return vus.size;
   });

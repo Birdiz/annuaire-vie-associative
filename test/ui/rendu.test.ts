@@ -1,7 +1,18 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { barre, dateHeure, duree, ecart, echapperHtml, jour, lienSur, pourcent, tableau } from "../../src/ui/rendu.ts";
+import {
+  barre,
+  dateHeure,
+  duree,
+  ecart,
+  echapperHtml,
+  jour,
+  lienSur,
+  page,
+  pourcent,
+  tableau,
+} from "../../src/ui/rendu.ts";
 
 /**
  * Ce qui est defendu ici : une valeur lue sur un site de mairie ne peut pas devenir du
@@ -140,4 +151,11 @@ test("la barre ne deborde pas et echappe son libelle", () => {
   assert.match(barre(25, 20, "communes"), /value="20"/);
   assert.match(barre(-3, 20, "communes"), /value="0"/);
   assert.match(barre(1, 2, '<img src=x onerror="alert(1)">'), /&lt;img/);
+});
+
+test("la version se lit en toutes lettres au pied de chaque page", () => {
+  // La premiere question d'un support : sans elle, on devine la version d'un client a ses
+  // symptomes — c'est ce qu'il a fallu faire sur le fichier du Rhone.
+  const html = page({ titre: "Synthese", onglet: "synthese", departement: "69", contenu: "", version: "9.8.7", portee: "" });
+  assert.match(html, /<footer>[\s\S]*Version 9\.8\.7[\s\S]*<\/footer>/);
 });

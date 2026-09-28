@@ -284,6 +284,7 @@ ${options.contenu}
 </main>
 <footer>
   Serveur local : rien de ce qui est affiché ici ne sort de cette machine.
+  <span class="version">Version ${echapperHtml(options.version)}</span>
 </footer>
 </body>
 </html>

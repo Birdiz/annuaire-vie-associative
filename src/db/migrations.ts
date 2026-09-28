@@ -850,4 +850,23 @@ UPDATE commune
  WHERE instr(upper(nom), ' CEDEX') > 1;
 `,
   },
+  {
+    version: 14,
+    name: "role-des-pages",
+    sql: `
+--------------------------------------------------------------------------------
+-- Ce qu'une page est pour le crawl (ADR-038)
+--------------------------------------------------------------------------------
+
+-- Les pages d'un annuaire — sa pagination, ses fiches — ont leur propre budget, a part de
+-- celui de l'exploration. Le compter demande de les distinguer en base : c'est la base, et
+-- non le payload d'un job, qui tient le budget, dans la transaction ou les pages filles
+-- sont inserees. Les pages deja en base etaient toutes de l'exploration.
+ALTER TABLE page ADD COLUMN role TEXT NOT NULL DEFAULT 'exploration'
+  CHECK (role IN ('exploration', 'pagination', 'fiche'));
+
+-- Le budget se compte a chaque page visitee, par commune et par role.
+CREATE INDEX idx_page_budget_role ON page (campagne, code_insee, role);
+`,
+  },
 ];

@@ -19,10 +19,11 @@ import type { ContexteSeed } from "./seed/index.ts";
 import { creerHandlersDecouverte, campagneDuJour, cleDecouverte } from "./decouverte/index.ts";
 import type { ContexteDecouverte } from "./decouverte/index.ts";
 import { PAGES_MAX_PAR_COMMUNE } from "./decouverte/scoring.ts";
+import { PAGES_MAX_ANNUAIRE } from "./decouverte/annuaire.ts";
 import { creerHandlersNormalisation, cleNormalisation } from "./normalisation/index.ts";
 import type { ContexteNormalisation } from "./normalisation/index.ts";
 
-export type OptionsDecouverte = { maxPages: number; avecMobiles: boolean };
+export type OptionsDecouverte = { maxPages: number; maxPagesAnnuaire: number; avecMobiles: boolean };
 
 /**
  * Les trois passes, dans l'ordre ou elles se succedent. Persistees sur la ligne `run`
@@ -88,7 +89,7 @@ export function departementBienForme(departement: string | undefined): departeme
 const REFUS_DE_FORME = "Un département est requis, sous la forme 35, 2A ou 971.";
 
 export function optionsDecouvertePardefaut(avecMobiles = false): OptionsDecouverte {
-  return { maxPages: PAGES_MAX_PAR_COMMUNE, avecMobiles };
+  return { maxPages: PAGES_MAX_PAR_COMMUNE, maxPagesAnnuaire: PAGES_MAX_ANNUAIRE, avecMobiles };
 }
 
 function marquerPhase(app: App, runId: number, phase: PhaseRun | null): void {
@@ -266,7 +267,13 @@ async function lancerDecouverte(
   app.queue.enqueue(
     "decouverte_planifiee",
     cleDecouverte(departement, campagne),
-    { departement, campagne, maxPages: options.maxPages, avecMobiles: options.avecMobiles },
+    {
+      departement,
+      campagne,
+      maxPages: options.maxPages,
+      maxPagesAnnuaire: options.maxPagesAnnuaire,
+      avecMobiles: options.avecMobiles,
+    },
     { runId },
   );
 

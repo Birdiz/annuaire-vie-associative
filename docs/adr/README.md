@@ -43,3 +43,5 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [034](034-ce-qui-n-est-pas-une-association.md) | Ce qui n'est pas une association | Acceptée |
 | [035](035-un-bloc-qui-porte-tout-ne-nomme-rien.md) | Un bloc qui porte tous les contacts n'en nomme aucun | Acceptée |
 | [036](036-une-personne-n-est-pas-une-structure.md) | Une personne n'est pas une structure | Acceptée |
+| [037](037-dechiffrer-le-mailto-de-typo3.md) | Déchiffrer le `mailto:` de TYPO3, et rien d'autre | Acceptée |
+| [038](038-suivre-un-annuaire-jusqu-au-bout.md) | Suivre un annuaire jusqu'au bout | Acceptée |

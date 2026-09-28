@@ -79,6 +79,9 @@ header {
 header .marque { font-weight: 650; letter-spacing: -0.01em; }
 header nav { display: flex; gap: 0.35rem; flex: 1; }
 header .version { color: var(--discret); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
+/* En toutes lettres au pied de page : c'est la premiere question d'un support, et le « v1.3.0 »
+   de l'en-tete passait inapercu. */
+footer .version { display: block; margin-top: 0.25rem; font-variant-numeric: tabular-nums; }
 
 header nav a {
   color: var(--discret);

@@ -186,3 +186,18 @@ test("un score aberrant ne fait jamais changer de bande de profondeur", () => {
   assert.ok(prioritePage(2, 10_000) > prioritePage(1, 0), "la profondeur 2 reste derriere la 1");
   assert.ok(prioritePage(1, 10_000) > prioritePage(0, 0), "et la profondeur 1 derriere la racine");
 });
+
+test("ADR-038 : les annuaires de sante et des professionnels ne passent pas pour associatifs", () => {
+  // Mesure sur le Rhone : sous le seul mot « annuaire », ils livraient des orthoptistes et le
+  // cabinet du maire. Le pluriel est ecrit : « professionnels de sante » ne contient pas
+  // « professionnel de sante ».
+  for (const chemin of [
+    "/solidarite-et-sante/annuaire-professionnels-de-sante/",
+    "/mon-quotidien/sante/annuaire-de-la-sante/",
+    "/fr/bu/1/annuaire-des-professionnels-745",
+    "/thematique-annuaire/services-municipaux/",
+  ]) {
+    assert.ok(scorerLien(new URL(`https://exemple.example${chemin}`), "") <= 0, chemin);
+  }
+  assert.ok(scorerLien(new URL("https://exemple.example/thematique-annuaire/annuaire-des-associations/"), "") > 0);
+});

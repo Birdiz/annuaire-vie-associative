@@ -198,6 +198,34 @@ test("« communes » dit, pour chacune, ce que la visite a donne", async (t) => 
   assert.match(stdout, /0 pages\s+0 contacts/);
 });
 
+test("ADR-038 : « pages --commune » dit jusqu'ou la visite est allee, annuaire compris", async (t) => {
+  const dir = dataDir(t);
+  await annuaire(["init", "--data-dir", dir]);
+  const db = openDatabase(join(dir, "annuaire.sqlite"));
+  db.prepare(
+    "INSERT INTO commune (code_insee, nom, departement, url_mairie, statut_resolution, crawl_statut, " +
+      "source_resolution, resolution_source_url, resolution_collected_at, resolution_confiance, created_at, updated_at) " +
+      "VALUES ('35047', 'Bruz', '35', 'https://bruz.example/', 'resolue', 'ok', 'annuaire', " +
+      "'https://annuaire.example/fiche', 't', 0.9, 't', 't')",
+  ).run();
+  const inserer = db.prepare(
+    "INSERT INTO page (url_hash, campagne, url, domaine, code_insee, planifiee_at, profondeur, statut, role) " +
+      "VALUES (?, '2026-09-28', ?, 'bruz.example', '35047', 't', ?, ?, ?)",
+  );
+  inserer.run("a", "https://bruz.example/", 0, "visitee", "exploration");
+  inserer.run("b", "https://bruz.example/annuaire?page=2", 2, "visitee", "pagination");
+  inserer.run("c", "https://bruz.example/annuaire/club", 2, "bloquee", "fiche");
+  db.close();
+
+  const { code, stdout } = await annuaire(["pages", "--commune", "35047", "--data-dir", dir]);
+  assert.equal(code, 0);
+  assert.match(stdout, /exploration 1 · pagination 1 · fiches 1 — annuaire suivi : oui/);
+  assert.match(stdout, /bloquee\s+fiche/, "une page bloquee se montre aussi : c'est souvent la reponse");
+
+  const inconnue = await annuaire(["pages", "--commune", "99999", "--data-dir", dir]);
+  assert.equal(inconnue.code, 1);
+});
+
 test("les commandes du jalon exigent un departement", async (t) => {
   const dir = dataDir(t);
   await annuaire(["init", "--data-dir", dir]);

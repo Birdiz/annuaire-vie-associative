@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import { analyser, decoder, estHtml } from "../../src/parse/html.ts";
+import { SCHEMA_JETON_TYPO3, analyser, decoder, estHtml } from "../../src/parse/html.ts";
 
 /** Fixtures synthetiques, ecrites a la main : aucune page reelle n'entre dans le depot. */
 const PAGE = `<html><head><title>Mairie de Bruz</title><style>a { color: red }</style></head><body>
@@ -83,6 +83,43 @@ test("une ancre interne ou un lien sans href ne produit aucun candidat", () => {
     "https://exemple.example/",
   );
   assert.deepEqual(doc.liens, [], "rien a suivre, et aucune exception");
+});
+
+test("ADR-037 : un lien au jeton TYPO3 est rendu, meme quand son href n'est qu'un #", () => {
+  const doc = analyser(
+    `<p><a href="#" data-mailto-token="nbjmup+bAc/ef" data-mailto-vector="1">Courriel</a></p>`,
+    "https://exemple.example/",
+  );
+  assert.deepEqual(doc.liens, [{ href: `${SCHEMA_JETON_TYPO3}nbjmup+bAc/ef`, ancre: "Courriel" }]);
+  assert.deepEqual(doc.blocs[0]?.liens, doc.liens, "le bloc doit le porter, pour nommer le contact");
+});
+
+test("ADR-038 : le premier h1 et l'element court qui le suit forment l'en-tete de la page", () => {
+  const doc = analyser(
+    `<nav><h1>Menu</h1></nav><header><p class="tag">Culture</p><h1>ACPR</h1>
+     <p class="teaser">Association culturelle portugaise</p><div>Tel. : 04 78 00 00 00</div></header>`,
+    "https://exemple.example/annuaire/acpr",
+  );
+  assert.deepEqual(doc.enTete, { titre: "ACPR", sousTitre: "Association culturelle portugaise" });
+});
+
+test("ADR-038 : un h1 sans voisin court n'a pas de sous-titre, une page sans h1 pas d'en-tete", () => {
+  const long = "x ".repeat(200);
+  assert.deepEqual(analyser(`<h1>Club</h1><p>${long}</p>`, "https://exemple.example/").enTete, { titre: "Club" });
+  assert.equal(analyser(`<h2>Club</h2>`, "https://exemple.example/").enTete, undefined);
+});
+
+test("ADR-038 : pied de page, navigation et encarts forment le gabarit, sans s'y imbriquer deux fois", () => {
+  const doc = analyser(
+    `<main><p>Club : 04 78 11 11 11</p></main>
+     <aside><p>Accueil : 04 78 22 22 22</p></aside>
+     <footer><nav><a href="tel:0478333333">Mairie</a></nav></footer>`,
+    "https://exemple.example/",
+  );
+  assert.equal(doc.gabarit.length, 2, "le nav du pied de page est deja dans le pied de page");
+  assert.ok(doc.gabarit.some((bloc) => bloc.texte.includes("04 78 22 22 22")));
+  assert.ok(doc.gabarit.some((bloc) => bloc.liens.some((lien) => lien.href === "tel:0478333333")));
+  assert.ok(doc.gabarit.every((bloc) => !bloc.texte.includes("04 78 11 11 11")));
 });
 
 test("un site declare en UTF-8 mais servi en Windows-1252 est quand meme lisible", () => {

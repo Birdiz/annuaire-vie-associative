@@ -33,7 +33,9 @@ import { toIso } from "../clock.ts";
 import { transaction } from "../db/index.ts";
 import { analyser, decoder, estHtml } from "../parse/html.ts";
 import { extraireContacts } from "./extraction.ts";
-import { VERSION_NOM, nomPressentiDuContact } from "./nom-pressenti.ts";
+import { nommerDansLaPage, predicatFiche, reconnaitreAnnuaire, ROLES_PAGE } from "./annuaire.ts";
+import type { RolePage } from "./annuaire.ts";
+import { VERSION_NOM } from "./nom-pressenti.ts";
 import { normaliserNom } from "../texte.ts";
 import type { Clock } from "../clock.ts";
 import type { Database } from "../db/index.ts";
@@ -64,7 +66,7 @@ const TAILLE_TRANCHE = 200;
  */
 const SQL_A_NOMMER = `
   SELECT ct.id, ct.kind, ct.valeur_normalisee, ct.code_insee, c.nom AS commune,
-         p.url_hash, p.url
+         p.url_hash, p.url, p.role
     FROM contact ct
     JOIN commune c ON c.code_insee = ct.code_insee
     JOIN page p
@@ -121,6 +123,7 @@ type LigneANommer = {
   commune: string;
   url_hash: string;
   url: string;
+  role: string;
 };
 
 type Ecriture = readonly [string | null, string | null, string | null, string, number, number];
@@ -189,7 +192,8 @@ export function remplirNoms(
 
     if (ligne.url_hash !== pageCourante) {
       pageCourante = ligne.url_hash;
-      noms = nomsDeLaPage(cache, ligne.url, communes(ligne.code_insee) ?? ligne.commune);
+      const role: RolePage = ROLES_PAGE.find((connu) => connu === ligne.role) ?? "exploration";
+      noms = nomsDeLaPage(cache, ligne.url, role, communes(ligne.code_insee) ?? ligne.commune);
     }
 
     // Un cache froid n'est pas un verdict : la ligne n'est **pas** marquee, elle
@@ -256,18 +260,26 @@ function compterAJour(db: Database, departement: string | null): number {
 function nomsDeLaPage(
   cache: HttpCache,
   url: string,
+  role: RolePage,
   commune: ContexteCommune | string,
 ): Map<string, NomPressenti> | undefined {
   const entree = cache.get(url);
   if (entree === undefined) return undefined;
   if (!estHtml(entree.meta.contentType)) return undefined;
 
+  // Le meme chemin qu'au crawl, role de la page compris (ADR-038) : deux facons de nommer
+  // feraient diverger une base collectee et une base reparee.
   const doc = analyser(decoder(entree.body, entree.meta.contentType), entree.meta.finalUrl);
-  const extraction = extraireContacts(doc, { avecMobiles: true });
+  const annuaire = reconnaitreAnnuaire(doc.liens, entree.meta.finalUrl, role);
+  const extraction = extraireContacts(doc, {
+    avecMobiles: true,
+    estUneFiche: predicatFiche(annuaire, entree.meta.finalUrl),
+  });
+  const page = { doc, role, annuaire, contactsHorsGabarit: extraction.contactsHorsGabarit };
 
   const noms = new Map<string, NomPressenti>();
   for (const contact of extraction.contacts) {
-    const trouve = nomPressentiDuContact(contact, commune);
+    const trouve = nommerDansLaPage(contact, page, commune);
     if (trouve !== undefined) noms.set(`${contact.kind} ${contact.valeurNormalisee}`, trouve);
   }
   return noms;
