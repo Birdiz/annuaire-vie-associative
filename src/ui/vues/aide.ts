@@ -53,7 +53,7 @@ transmettre quoi que ce soit à l'éditeur de l'outil.</p>
 
   <li>
     <h3>Choisir le département</h3>
-    <p>La plaque « Département », en haut à gauche de chaque écran. Ouvrez-la, tapez le code —
+    <p>La plaque du département, en haut à gauche de chaque écran. Ouvrez-la, tapez le code —
     <code>35</code>, <code>2A</code> en Corse, <code>971</code> outre-mer — puis « Ouvrir ». Un
     département encore jamais collecté s'ouvre vide, et la plaque le dit : c'est normal, l'étape
     suivante le remplira.</p>
@@ -124,8 +124,8 @@ c'est vous qui collectez.</p>
   règles, et il ne vous est pas fourni avec.</li>
 </ul>
 
-<p>Si une personne demande à être effacée : <strong>« Oublier ce contact »</strong>, sous la carte
-de relecture. Il supprime la donnée, efface la copie de la page gardée en cache, et inscrit une exclusion
+<p>Si une personne demande à être effacée : le bouton <strong>« Oublier »</strong>, replié sous
+la carte de relecture. Il supprime la donnée, efface la copie de la page gardée en cache, et inscrit une exclusion
 pour qu'elle ne revienne pas à la collecte suivante — sans quoi effacer ne durerait que jusqu'à la
 collecte d'après.</p>
 
@@ -224,7 +224,7 @@ ${SUR_CET_ECRAN[ecran]}
   <dd>Informer les personnes concernées dans le mois (article 14 du RGPD). Ce fichier n'est pas
   un fichier de prospection.</dd>
   <dt>Quelqu'un demande à être effacé</dt>
-  <dd>« Oublier ce contact », sous sa carte de relecture : la donnée est supprimée, sa copie
+  <dd>« Oublier », replié sous sa carte de relecture : la donnée est supprimée, sa copie
   effacée, et elle ne reviendra pas.</dd>
 </dl>
 <p><a href="/aide?departement=${dept}">Lire le mode d'emploi complet</a></p>`;
