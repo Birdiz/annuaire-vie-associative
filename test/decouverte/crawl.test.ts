@@ -17,6 +17,11 @@ import { cleDecouverte } from "../../src/decouverte/contexte.ts";
 import { VERSION_NOM } from "../../src/decouverte/nom-pressenti.ts";
 import type { ContexteDecouverte } from "../../src/decouverte/contexte.ts";
 import { lignesCsv } from "../../src/export/csv.ts";
+import { sqlContact } from "../../src/decouverte/crawl.ts";
+import { fileRevue } from "../../src/ui/requetes.ts";
+import { normaliser } from "../../src/normalisation/rejeu.ts";
+import { VERSION_SCORE } from "../../src/normalisation/score.ts";
+import { ResolveurMx } from "../../src/http/dns.ts";
 import { startServer, robotsAllowAll, text } from "../helpers/server.ts";
 import type { Handler, TestServer } from "../helpers/server.ts";
 import { makeTempDir } from "../helpers/tmp.ts";
@@ -639,4 +644,61 @@ test("ADR-038 : dans le profil simple, un club par ligne, sous son nom, courriel
   assert.equal(scrabble[0], "35;Bruz;Club de scrabble;;0299100007;club7@asso.example");
   assert.match(scrabble[0] ?? "", /club7@asso\.example/);
   assert.equal(lignes.filter((ligne) => /MARTIN|Sport et culture/.test(ligne)).length, 0);
+});
+
+test("ADR-039 : le crawl note chaque contact a titre provisoire, et la relecture s'ouvre avant la normalisation", async (t) => {
+  const { db, lancer } = await setup(t);
+  await lancer();
+
+  const lignes = db
+    .prepare("SELECT valeur_normalisee, score, score_version, score_motifs, extrait FROM contact")
+    .all() as unknown as {
+    valeur_normalisee: string;
+    score: number | null;
+    score_version: number | null;
+    score_motifs: string | null;
+    extrait: string | null;
+  }[];
+  assert.ok(lignes.length > 0);
+  for (const ligne of lignes) {
+    assert.notEqual(ligne.score, null, `${ligne.valeur_normalisee} doit etre note des le crawl`);
+    assert.equal(ligne.score_version, null, "un score du crawl est provisoire : sa version reste vide");
+  }
+
+  // Le domaine n'a jamais ete verifie : le score le dit, et la normalisation le reprendra.
+  const club = lignes.find((ligne) => ligne.valeur_normalisee === "club@asso.example");
+  const motifs = JSON.parse(club?.score_motifs ?? "{}") as { signaux: { signal: string; detail: string }[] };
+  assert.ok(motifs.signaux.some((signal) => signal.signal === "mx" && signal.detail === "MX non verifie"));
+
+  // ADR-040 : la preuve est prise sur la page, l'ancre du mailto comprise.
+  const preuve = JSON.parse(club?.extrait ?? "null") as { avant: string; cible: string; apres: string } | null;
+  assert.equal(preuve?.cible, "ecrire");
+  assert.match(preuve?.avant ?? "", /Club de Bruz/);
+
+  assert.ok(fileRevue(db, "35", 50).length > 0, "la file de relecture n'attend pas la normalisation");
+
+  await normaliser(db, fixedClock(T0), new ResolveurMx({ resolve: async (d) => [{ exchange: `mx.${d}`, priority: 10 }] }), {
+    departement: "35",
+  });
+  const versions = db.prepare("SELECT DISTINCT score_version AS v FROM contact").all() as { v: number | null }[];
+  assert.deepEqual(versions.map((ligne) => ligne.v), [VERSION_SCORE], "la normalisation rend chaque score definitif");
+});
+
+test("ADR-039 : une vue plus sure du meme contact le renote, au lieu de garder un score perime", (t) => {
+  const db = openDatabase(":memory:");
+  t.after(() => db.close());
+  db.prepare(
+    "INSERT INTO commune (code_insee, nom, departement, created_at, updated_at) VALUES ('35047', 'Bruz', '35', 't', 't')",
+  ).run();
+  const ecrire = (confiance: number): { id: number } | undefined =>
+    db
+      .prepare(sqlContact(false))
+      .get(null, "35047", "email", "club@asso.example", "club@asso.example", 1, "https://bruz.example/a",
+        "texte:motif", confiance, "t", null, null, null, null, null, null) as { id: number } | undefined;
+
+  const premiere = ecrire(0.45);
+  db.prepare("UPDATE contact SET score = 0.1, score_version = ? WHERE id = ?").run(VERSION_SCORE, premiere?.id ?? -1);
+
+  assert.equal(ecrire(0.3), undefined, "une vue moins sure n'ecrit rien, et n'a donc rien a renoter");
+  assert.notEqual(ecrire(0.9), undefined, "une vue plus sure rend la ligne pour qu'on la renote");
 });

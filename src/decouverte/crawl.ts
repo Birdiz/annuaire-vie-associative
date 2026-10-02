@@ -23,7 +23,7 @@ import { SQL_EST_EXCLU } from "../oubli.ts";
 import { analyser, decoder, estHtml } from "../parse/html.ts";
 import type { Database } from "../db/index.ts";
 import type { JobHandler } from "../jobs/worker.ts";
-import type { ContactExtrait } from "./extraction.ts";
+import type { ContactExtrait, Extrait } from "./extraction.ts";
 import type { ContexteDecouverte, PayloadPage } from "./contexte.ts";
 import { clePage, hashPage, lirePayloadPage, prioriteAnnuaire, prioritePage } from "./contexte.ts";
 import {
@@ -34,7 +34,7 @@ import {
   reconnaitreAnnuaire,
 } from "./annuaire.ts";
 import type { Annuaire, PageLue, RolePage } from "./annuaire.ts";
-import { extraireContacts } from "./extraction.ts";
+import { extraireContacts, extraitAutour } from "./extraction.ts";
 import { evaluerPage } from "./prefiltre.ts";
 import type { VerdictPrefiltre } from "./prefiltre.ts";
 import { indexerAssociations, rattacher } from "./rattachement.ts";
@@ -42,6 +42,8 @@ import { VERSION_NOM } from "./nom-pressenti.ts";
 import { normaliserNom } from "../texte.ts";
 import type { ContexteCommune, NomPressenti } from "./nom-pressenti.ts";
 import { PROFONDEUR_MAX, estReseauSocial, selectionner } from "./scoring.ts";
+import { noterLigne } from "../normalisation/rejeu.ts";
+import type { LigneANoter } from "../normalisation/rejeu.ts";
 import type { LienScore } from "./scoring.ts";
 
 /** Statuts que la page peut prendre en fin de traitement. */
@@ -53,6 +55,8 @@ type ContactRattache = {
   nomAssociation: string | undefined;
   /** Le nom lu dans le bloc, que le RNA connaisse la structure ou non (ADR-033). */
   pressenti: NomPressenti | undefined;
+  /** La preuve de la carte de relecture, prise sur la page pendant qu'on l'a (ADR-040). */
+  extrait: Extrait | undefined;
 };
 
 const SQL_MAJ_PAGE = `
@@ -151,6 +155,25 @@ export const SQL_COMBLER_NOM = `
      AND nom_pressenti IS NULL
 `;
 
+/**
+ * Le verdict MX deja connu d'un domaine. Le crawl ne fait aucun DNS — son commit est
+ * synchrone, et la porte DNS est `src/http/dns.ts` : un domaine jamais verifie se note
+ * « non verifie », et la normalisation le reprendra (ADR-039).
+ */
+const SQL_MX_CONNU = "SELECT mx FROM domaine_mail WHERE domaine = ?";
+
+/**
+ * Un score **provisoire** : `score_version` reste `NULL`. C'est ce qui le distingue d'un
+ * score definitif, et ce qui fait que `noterContacts` le reprend a la normalisation, avec
+ * les MX verifies. Meme convention que la revue, qui remet la version a `NULL` quand une
+ * correction rouvre la notation.
+ */
+const SQL_NOTER_PROVISOIRE = `
+  UPDATE contact
+     SET score = ?, score_motifs = ?, score_at = ?, score_version = NULL
+   WHERE id = ?
+`;
+
 const SQL_RESOUDRE_ASSOCIATION = `
   SELECT id FROM association
    WHERE code_insee = ? AND nom_normalise = ? AND date_dissolution IS NULL
@@ -179,8 +202,8 @@ export function sqlContact(rattache: boolean): string {
       (association_id, code_insee, kind, valeur, valeur_normalisee, is_generique,
        source_url, methode_extraction, confiance, collected_at,
        nom_pressenti, nom_pressenti_normalise, nom_pressenti_source, nom_pressenti_at,
-       nom_pressenti_version)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       nom_pressenti_version, extrait)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     ON CONFLICT ${cible} DO UPDATE SET
       valeur = excluded.valeur,
       is_generique = excluded.is_generique,
@@ -188,8 +211,13 @@ export function sqlContact(rattache: boolean): string {
       methode_extraction = excluded.methode_extraction,
       confiance = excluded.confiance,
       collected_at = excluded.collected_at,
+      -- L'extrait suit la source : une vue plus sure vient d'une autre page, et la preuve
+      -- doit citer celle que la provenance nomme. Faute d'extrait, on garde l'ancien.
+      extrait = coalesce(excluded.extrait, contact.extrait),
       ${["nom_pressenti", "nom_pressenti_normalise", "nom_pressenti_source", "nom_pressenti_at", "nom_pressenti_version"].map(garderLeNom).join(",\n      ")}
     WHERE excluded.confiance > contact.confiance
+    RETURNING id, kind, confiance, is_generique, association_id, valeur_normalisee,
+              (valeur_corrigee IS NOT NULL) AS corrige
   `;
 }
 
@@ -279,6 +307,7 @@ export function handlerPageCrawl(ctx: ContexteDecouverte): JobHandler {
       contact,
       nomAssociation: rattacher(index, contextesDeRattachement(contact, page))?.nomNormalise,
       pressenti: nommerDansLaPage(contact, page, commune),
+      extrait: extraitAutour(doc, contact),
     }));
 
     // Etape [4]. Elle vient apres [5] dans le code et avant elle dans l'entonnoir :
@@ -446,7 +475,7 @@ function persister(
     return;
   }
 
-  ecrireContacts(ctx, db, payload, succes.contacts, succes.sourceUrl, maintenant);
+  ecrireContacts(ctx, db, payload, succes.contacts, succes.sourceUrl, succes.verdict.verdict, maintenant);
   enfilerFilles(ctx, db, payload, succes.selection, maintenant);
   enfilerAnnuaire(ctx, db, payload, succes.annuaire, maintenant);
 }
@@ -489,9 +518,16 @@ function ecrireContacts(
   payload: PayloadPage,
   contacts: readonly ContactRattache[],
   sourceUrl: string,
+  prefiltreVerdict: VerdictPrefiltre["verdict"],
   maintenant: string,
 ): void {
   const rattache = db.prepare(sqlContact(true));
+  const noterProvisoire = db.prepare(SQL_NOTER_PROVISOIRE);
+  const mxConnu = db.prepare(SQL_MX_CONNU);
+  const mxDe = (domaine: string): 0 | 1 | null => {
+    const ligne = mxConnu.get(domaine) as { mx: number | null } | undefined;
+    return ligne === undefined || ligne.mx === null ? null : ligne.mx === 1 ? 1 : 0;
+  };
   const orphelin = db.prepare(sqlContact(false));
   const combler = db.prepare(SQL_COMBLER_NOM);
   const resoudre = db.prepare(SQL_RESOUDRE_ASSOCIATION);
@@ -505,9 +541,10 @@ function ecrireContacts(
   let generiques = 0;
   let nominatifs = 0;
   let typo3 = 0;
+  let avecExtrait = 0;
 
   let exclus = 0;
-  for (const { contact, nomAssociation, pressenti } of contacts) {
+  for (const { contact, nomAssociation, pressenti, extrait } of contacts) {
     if (exclu.get(contact.valeurNormalisee, payload.codeInsee) !== undefined) {
       exclus += 1;
       continue;
@@ -546,12 +583,15 @@ function ecrireContacts(
       pressenti?.source ?? null,
       pressenti === undefined ? null : maintenant,
       pressenti === undefined ? null : VERSION_NOM,
+      extrait === undefined ? null : JSON.stringify(extrait),
     ];
 
-    const changes = Number(
-      (associationId === undefined ? orphelin : rattache).run(...parametres).changes,
-    );
-    if (changes === 0) {
+    // `RETURNING` ne rend rien quand l'`ON CONFLICT` est garde : une vue moins sure n'a
+    // rien ecrit, elle n'a donc rien a noter non plus.
+    const ecrite = (associationId === undefined ? orphelin : rattache).get(...parametres) as
+      | (LigneANoter & { id: number })
+      | undefined;
+    if (ecrite === undefined) {
       // Le `SET` de l'`ON CONFLICT` est garde par la confiance : une vue moins sure
       // n'ecrit rien, et n'apporterait donc jamais un nom manquant. C'est l'autre moitie
       // de la regle — un nom absent se comble par n'importe quelle vue ulterieure.
@@ -570,7 +610,16 @@ function ecrireContacts(
       continue;
     }
 
+    // ADR-039 : la notation commence ici, pour que la relecture s'ouvre pendant la
+    // decouverte. Meme bareme que la normalisation — `noterLigne` est le seul chemin vers
+    // `noter()` —, mais un score provisoire : le MX d'un domaine jamais verifie compte pour
+    // « non verifie », et la normalisation renotera. Une vue plus sure renote aussi : c'est
+    // une autre lecture, l'ancien score ne la decrit plus.
+    const { score, motifs } = noterLigne({ ...ecrite, prefiltre_verdict: prefiltreVerdict }, mxDe);
+    noterProvisoire.run(score, JSON.stringify(motifs), maintenant, ecrite.id);
+
     ecrits += 1;
+    if (extrait !== undefined) avecExtrait += 1;
     if (associationId !== undefined) versAssociation += 1;
     if (contact.kind === "email") {
       emails += 1;
@@ -593,6 +642,9 @@ function ecrireContacts(
   // §8 : ce que l'outil refuse de retenir se compte aussi. Sans ce compteur, une
   // exclusion trop large passerait inapercue.
   ctx.counters.inc(ETAPE.extraction, "contacts_exclus", exclus);
+  // ADR-040 : une preuve introuvable n'est pas une erreur, mais un taux qui chute dirait
+  // qu'un gabarit de site cache ses valeurs au texte — et la carte perd sa preuve.
+  ctx.counters.inc(ETAPE.extraction, "contacts_avec_extrait", avecExtrait);
 }
 
 function enfilerFilles(

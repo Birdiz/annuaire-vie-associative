@@ -22,14 +22,18 @@ import type { JobQueue } from "../jobs/queue.ts";
 import type { Counters } from "../metrics/counters.ts";
 import type { Clock } from "../clock.ts";
 import { lireAsset } from "./assets.ts";
-import { page, nombre, octets, barrePortee } from "./rendu.ts";
-import type { EtatCollecte, Onglet } from "./rendu.ts";
+import { page, nombre, octets, barrePortee, barreStations, duree, ecart, dateHeure, jour, STATIONS } from "./rendu.ts";
+import type { EtatCollecte, EtatStations, Station } from "./rendu.ts";
 import {
+  activiteCollecte,
   amorceDuDepartement,
+  contactARevoir,
   departementParDefaut,
   departementsConnus,
   distributionRevue,
   fileRevue,
+  historiqueDuDepartement,
+  pagesRecentes,
   progressionAmorce,
   progressionDecouverte,
   progressionNotation,
@@ -37,26 +41,17 @@ import {
 } from "./requetes.ts";
 import type { LigneRun } from "./requetes.ts";
 import { arbitrer, estActionRevue } from "./revue.ts";
-import {
-  ecranSynthese,
-  fragmentSuivi,
-  fragmentReglages,
-  fragmentMobiles,
-  fragmentChiffres,
-} from "./vues/synthese.ts";
-import type {
-  DonneesSuivi,
-  DonneesReglages,
-  DonneesMobiles,
-  DonneesSynthese,
-  Progression,
-} from "./vues/synthese.ts";
+import { ecranCollecter, fragmentSuivi, fragmentChiffres } from "./vues/collecter.ts";
+import type { DonneesSuivi, DonneesCollecter, Progression } from "./vues/collecter.ts";
+import { ecranPreparer, fragmentReglages, fragmentMobiles } from "./vues/preparer.ts";
+import type { DonneesReglages, DonneesMobiles } from "./vues/preparer.ts";
 import { estPhaseRun, departementBienForme } from "../pipeline.ts";
 import { VERSION_SCORE } from "../normalisation/score.ts";
 import type { SurfacePilote } from "./pilote.ts";
-import { ecranRevue, fragmentFile } from "./vues/revue.ts";
-import { ecranExport } from "./vues/export.ts";
-import { ecranAide } from "./vues/aide.ts";
+import { ecranRelire, fragmentAtelier } from "./vues/relire.ts";
+import type { DonneesRelire, ModeRelire } from "./vues/relire.ts";
+import { ecranExporter } from "./vues/exporter.ts";
+import { ecranAide, panneauAide } from "./vues/aide.ts";
 import { fragmentReinitialisation } from "./vues/reinitialisation.ts";
 import type { DonneesReinitialisation } from "./vues/reinitialisation.ts";
 import { reinitialiser } from "../reinitialisation.ts";
@@ -64,13 +59,19 @@ import { derniereCampagne, distributionPrefiltre } from "../decouverte/rejeu.ts"
 import { distributionNormalisation } from "../normalisation/rejeu.ts";
 import { mesurerCouverture } from "../metrics/couverture.ts";
 import { mesurerDormance } from "../metrics/dormance.ts";
-import { compterEcartes, compterLignes, lignesCsv } from "../export/csv.ts";
+import { cellulesCsv, compterEcartes, compterLignes, lignesCsv } from "../export/csv.ts";
 import type { ProfilExport } from "../export/csv.ts";
 
 export const NOM_COOKIE = "annuaire_jeton";
 
-/** Contacts affiches d'un coup dans la file de revue. */
-export const TAILLE_FILE = 10;
+/** Contacts montres dans la colonne de la file, a cote de la carte (ADR-041). */
+export const TAILLE_FILE = 12;
+
+/** Contacts d'une page du mode liste. */
+export const TAILLE_LISTE = 50;
+
+/** Lignes de l'apercu d'export, en-tete non comprise. */
+const LIGNES_APERCU = 3;
 
 export type RequeteUi = {
   methode: string;
@@ -155,6 +156,15 @@ function texte(corps: string, statut: number): ReponseUi {
 
 function redirection(vers: string, entetes: Record<string, string> = {}): ReponseUi {
   return { statut: 303, entetes: { ...ENTETES_COMMUNES, ...entetes, Location: vers }, corps: "" };
+}
+
+/**
+ * Une adresse qui a change de nom (ADR-041) : `/revue` et `/export` vivent dans des
+ * favoris. 308 et non 301 : la redirection est definitive, et garde la methode.
+ */
+function demenagement(vers: string, requete: RequeteUi): ReponseUi {
+  const suffixe = requete.requete.size === 0 ? "" : `?${requete.requete.toString()}`;
+  return { statut: 308, entetes: { ...ENTETES_COMMUNES, Location: `${vers}${suffixe}` }, corps: "" };
 }
 
 function comparerJetons(attendu: string, recu: string): boolean {
@@ -264,11 +274,11 @@ function resoudrePortee(ctx: ContexteUi, requete: RequeteUi): Portee {
   };
 }
 
-/** Une page complete, barre de portee comprise. Le seul endroit qui la rend. */
+/** Une page complete — plaque, stations et aide comprises. Le seul endroit qui la rend. */
 function pageComplete(
   ctx: ContexteUi,
   portee: Portee,
-  vue: { titre: string; onglet: Onglet; contenu: string },
+  vue: { titre: string; onglet: Station; contenu: string },
 ): string {
   return page({
     titre: vue.titre,
@@ -283,7 +293,67 @@ function pageComplete(
       amorce: amorceDuDepartement(ctx.db, portee.departement),
       refus: portee.refus,
     }),
+    refusPortee: portee.refus,
+    stations: barreStations(etatStations(ctx, portee.departement), vue.onglet, portee.departement),
+    aide: panneauAide(vue.onglet, portee.departement),
   });
+}
+
+function estStation(valeur: string | null): valeur is Station {
+  return valeur !== null && (STATIONS as readonly string[]).includes(valeur);
+}
+
+/**
+ * Ce que chaque station dit d'elle-meme dans la barre (ADR-041). Lu sur la base et sur le
+ * pilote, comme le reste : la barre se rafraichit seule et doit dire vrai sans que l'ecran
+ * courant le lui apprenne.
+ */
+function etatStations(ctx: ContexteUi, departement: string): EtatStations {
+  const collecte = etatCollecte(ctx);
+  const revue = distributionRevue(ctx.db, departement);
+  const prets = Math.max(0, revue.aRevoir - revue.nonNotes);
+  const historique = historiqueDuDepartement(ctx.db, departement);
+  const amorce = amorceDuDepartement(ctx.db, departement);
+  const total = revue.aRevoir + revue.valides + revue.rejetes + revue.corriges;
+
+  const preparer =
+    ctx.reglages.contactUrl() === undefined
+      ? "URL de contact à renseigner"
+      : ctx.pilote.avecMobiles()
+        ? "mobiles conservés"
+        : "mobiles exclus";
+
+  let collecter: string;
+  const derniere = historique.derniere;
+  if (collecte.kind !== "inactif" && collecte.departement === departement && derniere?.statut === "en_cours") {
+    const ecoule = ecart(derniere.started_at, ctx.clock.now());
+    collecter = `en cours${ecoule === undefined || ecoule < 0 ? "" : ` · ${duree(ecoule)}`}`;
+  } else if (derniere === undefined) {
+    collecter = amorce.communes === 0 ? "jamais amorcé" : "en attente";
+  } else if (derniere.statut === "termine") {
+    collecter = `terminée le ${jour(derniere.finished_at ?? derniere.started_at).slice(0, 5)}`;
+  } else if (derniere.statut === "interrompu") {
+    collecter = `arrêtée le ${dateHeure(derniere.finished_at ?? derniere.started_at).slice(0, 5)}`;
+  } else if (derniere.statut === "echec") {
+    collecter = "interrompue";
+  } else {
+    collecter = "en cours";
+  }
+
+  const relire =
+    prets > 0
+      ? { sous: collecte.kind === "pilote" ? "ouverte pendant la collecte" : "restants", badge: nombre(prets) }
+      : { sous: total === 0 ? "vide" : revue.nonNotes > 0 ? "en attente de notation" : "tout est relu" };
+
+  const exporter =
+    collecte.kind === "pilote" ? "suspendu pendant la collecte" : total === 0 ? "rien à exporter" : "prêt";
+
+  return {
+    preparer: { sous: preparer },
+    collecter: { sous: collecter },
+    relire,
+    exporter: { sous: exporter },
+  };
 }
 
 export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
@@ -302,16 +372,44 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
   const portee = resoudrePortee(ctx, requete);
   const departement = portee.departement;
 
+  const dept = encodeURIComponent(departement);
+
+  // La porte d'entree du jeton (`serveur.ts`). Elle mene ou l'on a a faire : preparer tant
+  // que rien ne peut partir, collecter ensuite.
   if (requete.methode === "GET" && requete.chemin === "/") {
-    return html(ecran(ctx, portee, donneesReglages(ctx)));
+    const station = ctx.reglages.contactUrl() === undefined ? "/preparer" : "/collecter";
+    return redirection(`${station}?departement=${dept}`);
   }
+
+  if (requete.methode === "GET" && requete.chemin === "/preparer") {
+    return html(ecranPreparation(ctx, portee, donneesReglages(ctx)));
+  }
+
+  if (requete.methode === "GET" && requete.chemin === "/collecter") {
+    return html(
+      pageComplete(ctx, portee, {
+        titre: "Collecter",
+        onglet: "collecter",
+        contenu: ecranCollecter(donneesCollecter(ctx, departement)),
+      }),
+    );
+  }
+
+  // La barre des stations, seule : elle se rafraichit toutes les dix secondes.
+  if (requete.methode === "GET" && requete.chemin === "/stations") {
+    const onglet = requete.requete.get("onglet");
+    return html(barreStations(etatStations(ctx, departement), estStation(onglet) ? onglet : "collecter", departement));
+  }
+
+  if (requete.methode === "GET" && requete.chemin === "/revue") return demenagement("/relire", requete);
+  if (requete.methode === "GET" && requete.chemin === "/export") return demenagement("/exporter", requete);
 
   if (requete.methode === "GET" && requete.chemin === "/suivi") {
     return html(fragmentSuivi(donneesSuivi(ctx, departement)));
   }
 
   if (requete.methode === "GET" && requete.chemin === "/chiffres") {
-    return html(fragmentChiffres(donneesSynthese(ctx, departement, donneesReglages(ctx))));
+    return html(fragmentChiffres(donneesCollecter(ctx, departement)));
   }
 
   // Lancer et arreter. Rien n'est attendu ici : le pilote rend la main aussitot, et
@@ -337,9 +435,9 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     const statut = resultat.kind === "refus" ? 422 : 200;
     if (requete.entetes["hx-request"] === "true") return html(fragmentMobiles(donneesMobiles(ctx)), statut);
     if (resultat.kind === "refus") {
-      return html(ecran(ctx, portee, donneesReglages(ctx)), statut);
+      return html(ecranPreparation(ctx, portee, donneesReglages(ctx)), statut);
     }
-    return redirection(`/?departement=${encodeURIComponent(departement)}`);
+    return redirection(`/preparer?departement=${dept}`);
   }
 
   // Repartir de zero, en deux temps. La reponse *est* l'etat : htmx remplace le bloc,
@@ -353,8 +451,8 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
     return enregistrerReglages(ctx, requete, portee);
   }
 
-  // Le mode d'emploi ne porte pas de barre de portee : il ne depend d'aucun departement.
-  // Les onglets, eux, gardent le departement courant pour qu'on revienne ou l'on etait.
+  // Le mode d'emploi ne porte pas de plaque : il ne depend d'aucun departement. Les
+  // stations, elles, gardent le departement courant pour qu'on revienne ou l'on etait.
   if (requete.methode === "GET" && requete.chemin === "/aide") {
     return html(
       page({
@@ -363,26 +461,30 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
         departement,
         version: ctx.version,
         portee: "",
+        stations: `<nav class="stations-aide">${barreStations(etatStations(ctx, departement), "aide", departement)}</nav>`,
+        aide: "",
         contenu: ecranAide({ dataDir: ctx.dataDir, departement }),
       }),
     );
   }
 
-  if (requete.methode === "GET" && requete.chemin === "/revue") {
+  if (requete.methode === "GET" && requete.chemin === "/relire") {
     return html(
       pageComplete(ctx, portee, {
-        titre: "Revue",
-        onglet: "revue",
-        contenu: ecranRevue(donneesRevue(ctx, departement, undefined, requete.requete.get("page"))),
+        titre: "Relire",
+        onglet: "relire",
+        contenu: ecranRelire(donneesRelire(ctx, requete, departement, undefined)),
       }),
     );
   }
 
-  if (requete.methode === "POST" && requete.chemin.startsWith("/revue/")) {
+  // `/revue/:id` reste accepte : un formulaire rendu par la version precedente peut encore
+  // etre ouvert dans un onglet au moment de la mise a jour.
+  if (requete.methode === "POST" && (requete.chemin.startsWith("/relire/") || requete.chemin.startsWith("/revue/"))) {
     return arbitrage(ctx, requete, portee);
   }
 
-  if (requete.methode === "GET" && requete.chemin === "/export") {
+  if (requete.methode === "GET" && requete.chemin === "/exporter") {
     const scoreMin = requete.requete.get("score-min") ?? "";
     const avecRejetes = requete.requete.get("avec-rejetes") === "1";
     const profil = profilTolerant(requete.requete.get("profil"));
@@ -392,19 +494,25 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
       scoreMin: seuilTolerant(scoreMin),
       avecRejetes,
     };
+    const collecte = etatCollecte(ctx);
+    // Pendant une collecte pilotee, l'ecran ne montre que l'attente : inutile de compter
+    // des lignes que personne ne peut telecharger.
+    const suspendu = collecte.kind === "pilote";
     return html(
       pageComplete(ctx, portee, {
-        titre: "Export",
-        onglet: "export",
-        contenu: ecranExport({
+        titre: "Exporter",
+        onglet: "exporter",
+        contenu: ecranExporter({
           departement,
           scoreMin,
           avecRejetes,
           profil,
-          lignes: compterLignes(ctx.db, options),
-          ...compterEcartes(ctx.db, options),
+          lignes: suspendu ? 0 : compterLignes(ctx.db, options),
+          ...(suspendu ? { sansNom: 0, horsSujet: 0 } : compterEcartes(ctx.db, options)),
           rejetes: distributionRevue(ctx.db, departement).rejetes,
-          collecte: etatCollecte(ctx),
+          collecte,
+          apercu: suspendu ? { colonnes: [], lignes: [] } : apercuExport(ctx, options),
+          progression: suspendu ? progressionDuRun(ctx, runsRecents(ctx.db)) : undefined,
         }),
       }),
     );
@@ -450,40 +558,41 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
 }
 
 /**
- * La page de synthese au complet. Ecrite deux fois a l'identique : la seule chose qui
- * variait entre les deux appels etait le bloc de reglages.
+ * La station Preparer au complet. Ecrite une fois : les refus de reglage et la
+ * reinitialisation sans htmx la rendent aussi, avec leur propre etat.
  */
-function ecran(
+function ecranPreparation(
   ctx: ContexteUi,
   portee: Portee,
   reglages: DonneesReglages,
   reinit?: DonneesReinitialisation,
 ): string {
+  const departement = portee.departement;
   return pageComplete(ctx, portee, {
-    titre: "Synthese",
-    onglet: "synthese",
-    contenu: ecranSynthese(donneesSynthese(ctx, portee.departement, reglages, reinit)),
+    titre: "Préparer",
+    onglet: "preparer",
+    contenu: ecranPreparer({
+      departement,
+      departements: portee.departements,
+      amorce: amorceDuDepartement(ctx.db, departement),
+      historique: historiqueDuDepartement(ctx.db, departement),
+      reglages: { ...reglages, departement },
+      mobiles: donneesMobiles(ctx),
+      reinitialisation: reinit ?? {
+        departement,
+        simulation: undefined,
+        fait: undefined,
+        collecteEnCours: etatCollecte(ctx).kind !== "inactif",
+        refus: undefined,
+      },
+    }),
   });
 }
 
-function donneesSynthese(
-  ctx: ContexteUi,
-  departement: string,
-  reglages: DonneesReglages,
-  reinit?: DonneesReinitialisation,
-): DonneesSynthese {
+function donneesCollecter(ctx: ContexteUi, departement: string): DonneesCollecter {
   return {
     departement,
-    reinitialisation: reinit ?? {
-      departement,
-      simulation: undefined,
-      fait: undefined,
-      collecteEnCours: etatCollecte(ctx).kind !== "inactif",
-      refus: undefined,
-    },
     suivi: donneesSuivi(ctx, departement),
-    reglages,
-    mobiles: donneesMobiles(ctx),
     couverture: mesurerCouverture(ctx.db, departement),
     dormance: mesurerDormance(ctx.db, departement, ctx.clock.now()),
     prefiltre: distributionDuJour(ctx, departement),
@@ -515,7 +624,12 @@ function etatCollecte(ctx: ContexteUi): EtatCollecte {
 
 function donneesSuivi(ctx: ContexteUi, departement: string): DonneesSuivi {
   const runs = runsRecents(ctx.db);
+  const revue = distributionRevue(ctx.db, departement);
   return {
+    activite: activiteCollecte(ctx.db, departement, derniereCampagne(ctx.db, departement)),
+    recentes: pagesRecentes(ctx.db, departement),
+    aRelire: Math.max(0, revue.aRevoir - revue.nonNotes),
+    jamaisAmorce: amorceDuDepartement(ctx.db, departement).communes === 0,
     runs,
     jobs: ctx.queue.counts(),
     departement,
@@ -635,29 +749,68 @@ function distributionDuJour(ctx: ContexteUi, departement: string) {
   return campagne === undefined ? undefined : distributionPrefiltre(ctx.db, departement, campagne);
 }
 
-function donneesRevue(
+/**
+ * L'atelier de relecture. En mode carte : le haut de la file, et la carte ouverte — celle
+ * que le lien designe si elle est encore a relire, la premiere de la file sinon. En mode
+ * liste : une page.
+ */
+function donneesRelire(
   ctx: ContexteUi,
+  requete: RequeteUi,
   departement: string,
   refus: string | undefined,
-  pageDemandee: string | null,
-) {
+): DonneesRelire {
   const distribution = distributionRevue(ctx.db, departement);
+  const mode: ModeRelire = requete.requete.get("mode") === "liste" ? "liste" : "carte";
+  const collecte = etatCollecte(ctx);
 
   // Seuls les contacts notes entrent dans la file : `aRevoir` compte aussi ceux que
   // l'etape [8] n'a pas encore vus, et les paginer donnerait des pages vides.
   const prets = Math.max(0, distribution.aRevoir - distribution.nonNotes);
-  const pages = Math.max(1, Math.ceil(prets / TAILLE_FILE));
-  const page = bornerPage(pageDemandee, pages);
 
-  return {
-    departement,
-    file: fileRevue(ctx.db, departement, TAILLE_FILE, (page - 1) * TAILLE_FILE),
-    distribution,
-    refus,
-    collecte: etatCollecte(ctx),
-    page,
-    pages,
-  };
+  if (mode === "liste") {
+    const pages = Math.max(1, Math.ceil(prets / TAILLE_LISTE));
+    const page = bornerPage(requete.requete.get("page"), pages);
+    return {
+      departement,
+      mode,
+      file: fileRevue(ctx.db, departement, TAILLE_LISTE, (page - 1) * TAILLE_LISTE),
+      courant: undefined,
+      distribution,
+      refus,
+      collecte,
+      page,
+      pages,
+    };
+  }
+
+  const file = fileRevue(ctx.db, departement, TAILLE_FILE, 0);
+  const demande = Number(requete.requete.get("contact") ?? "");
+  const courant =
+    (Number.isInteger(demande) && demande > 0 ? contactARevoir(ctx.db, departement, demande) : undefined) ??
+    (file[0] === undefined ? undefined : contactARevoir(ctx.db, departement, file[0].id));
+  return { departement, mode, file, courant, distribution, refus, collecte, page: 1, pages: 1 };
+}
+
+/**
+ * Les premieres lignes du fichier, par le chemin du fichier lui-meme. Le generateur est
+ * abandonne apres quelques lignes : le curseur SQLite se referme avec lui.
+ */
+function apercuExport(
+  ctx: ContexteUi,
+  options: Parameters<typeof cellulesCsv>[1],
+): { colonnes: readonly string[]; lignes: readonly (readonly string[])[] } {
+  let colonnes: readonly string[] = [];
+  const lignes: (readonly string[])[] = [];
+  for (const cellules of cellulesCsv(ctx.db, options)) {
+    if (colonnes.length === 0) {
+      colonnes = cellules;
+      continue;
+    }
+    lignes.push(cellules);
+    if (lignes.length >= LIGNES_APERCU) break;
+  }
+  return { colonnes, lignes };
 }
 
 /**
@@ -680,7 +833,7 @@ function bornerPage(demandee: string | null, pages: number): number {
  */
 function reponseSuivi(ctx: ContexteUi, requete: RequeteUi, departement: string): ReponseUi {
   if (requete.entetes["hx-request"] === "true") return html(fragmentSuivi(donneesSuivi(ctx, departement)));
-  return redirection(`/?departement=${encodeURIComponent(departement)}`);
+  return redirection(`/collecter?departement=${encodeURIComponent(departement)}`);
 }
 
 /**
@@ -701,7 +854,7 @@ function reinitialisation(ctx: ContexteUi, requete: RequeteUi, portee: Portee): 
   const rendre = (donnees: Parameters<typeof fragmentReinitialisation>[0], statut = 200): ReponseUi => {
     if (requete.entetes["hx-request"] === "true") return html(fragmentReinitialisation(donnees), statut);
     // Sans htmx, on rend la page entiere : le bloc y porte le meme etat.
-    return html(ecran(ctx, portee, donneesReglages(ctx), donnees), statut);
+    return html(ecranPreparation(ctx, portee, donneesReglages(ctx), donnees), statut);
   };
 
   const repos = {
@@ -748,16 +901,16 @@ function enregistrerReglages(ctx: ContexteUi, requete: RequeteUi, portee: Portee
   const resultat = ctx.reglages.enregistrer(saisie);
   const erreur = "erreur" in resultat ? resultat.erreur : undefined;
   const message =
-    erreur === undefined ? "URL de contact enregistree. La collecte peut demarrer." : undefined;
+    erreur === undefined ? "URL de contact enregistrée. La collecte peut démarrer." : undefined;
 
-  const donnees = donneesReglages(ctx, message, erreur);
+  const donnees = { ...donneesReglages(ctx, message, erreur), departement: portee.departement };
   const statut = erreur === undefined ? 200 : 422;
 
   if (requete.entetes["hx-request"] === "true") return html(fragmentReglages(donnees), statut);
   if (erreur === undefined) {
-    return redirection(`/?departement=${encodeURIComponent(portee.departement)}`);
+    return redirection(`/preparer?departement=${encodeURIComponent(portee.departement)}`);
   }
-  return html(ecran(ctx, portee, donnees), statut);
+  return html(ecranPreparation(ctx, portee, donnees), statut);
 }
 
 /**
@@ -770,19 +923,20 @@ function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): Reponse
   const departement = portee.departement;
   const htmx = requete.entetes["hx-request"] === "true";
   const rendre = (refus: string | undefined, statut: number): ReponseUi => {
-    const donnees = donneesRevue(ctx, departement, refus, requete.requete.get("page"));
-    if (htmx) return html(fragmentFile(donnees), statut);
+    const donnees = donneesRelire(ctx, requete, departement, refus);
+    if (htmx) return html(fragmentAtelier(donnees), statut);
     return html(
       pageComplete(ctx, portee, {
-        titre: "Revue",
-        onglet: "revue",
-        contenu: ecranRevue(donnees),
+        titre: "Relire",
+        onglet: "relire",
+        contenu: ecranRelire(donnees),
       }),
       statut,
     );
   };
 
-  const id = Number(requete.chemin.slice("/revue/".length));
+  const prefixe = requete.chemin.startsWith("/relire/") ? "/relire/" : "/revue/";
+  const id = Number(requete.chemin.slice(prefixe.length));
   if (!Number.isInteger(id) || id <= 0) return rendre("Contact inconnu.", 400);
 
   const champs = new URLSearchParams(requete.corps);
@@ -805,7 +959,14 @@ function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): Reponse
   if (resultat.kind === "introuvable") return rendre("Ce contact n'existe plus.", 404);
   if (resultat.kind === "refus") return rendre(resultat.message, 422);
   if (htmx) return rendre(undefined, 200);
-  return redirection(`/revue?departement=${encodeURIComponent(departement)}`);
+  // Sans htmx, on revient a l'atelier tel qu'on l'avait : le mode et la page voyagent,
+  // sans quoi arbitrer depuis la page 4 de la liste renverrait a la premiere.
+  const suite = new URLSearchParams({ departement });
+  if (requete.requete.get("mode") === "liste") {
+    suite.set("mode", "liste");
+    suite.set("page", requete.requete.get("page") ?? "1");
+  }
+  return redirection(`/relire?${suite.toString()}`);
 }
 
 /**

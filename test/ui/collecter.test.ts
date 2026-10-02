@@ -1,10 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { fragmentSuivi, fragmentReglages, fragmentMobiles } from "../../src/ui/vues/synthese.ts";
-import type { DonneesSuivi, DonneesReglages, DonneesMobiles } from "../../src/ui/vues/synthese.ts";
+import { fragmentSuivi } from "../../src/ui/vues/collecter.ts";
+import type { DonneesSuivi } from "../../src/ui/vues/collecter.ts";
+import { fragmentReglages, fragmentMobiles } from "../../src/ui/vues/preparer.ts";
+import type { DonneesReglages, DonneesMobiles } from "../../src/ui/vues/preparer.ts";
 
 /**
- * L'ecran de synthese, rendu isolement.
+ * Les stations Collecter et Preparer, rendues isolement (ADR-041).
  *
  * Il n'etait couvert qu'a travers le routeur, ce qui laissait ses 279 lignes de rendu sans
  * assertion directe. Ce qui est defendu ici : le bloc de suivi est rafraichi toutes les
@@ -29,6 +31,10 @@ function suivi(surcharges: Partial<DonneesSuivi> = {}): DonneesSuivi {
     progression: undefined,
     mobilesActifs: false,
     maintenant: MAINTENANT,
+    activite: undefined,
+    recentes: [],
+    aRelire: 0,
+    jamaisAmorce: false,
     ...surcharges,
   };
 }

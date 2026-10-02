@@ -113,6 +113,8 @@ export type ContactARevoir = {
   valeur_corrigee: string | null;
   is_generique: number | null;
   score: number | null;
+  /** `NULL` sur un contact de la file : score du crawl, provisoire (ADR-039). */
+  score_version: number | null;
   score_motifs: string | null;
   confiance: number;
   methode_extraction: string;
@@ -120,7 +122,35 @@ export type ContactARevoir = {
   collected_at: string;
   commune: string;
   association: string | null;
+  /** La preuve, en JSON `{avant, cible, apres}` ; `NULL` quand la page ne la donnait plus (ADR-040). */
+  extrait: string | null;
 };
+
+const SELECT_CONTACT_A_REVOIR = `
+  SELECT ct.id, ct.kind, ct.valeur, ct.valeur_corrigee, ct.is_generique, ct.score,
+         ct.score_version, ct.score_motifs, ct.confiance, ct.methode_extraction, ct.source_url,
+         ct.collected_at, ct.extrait, c.nom AS commune, a.nom AS association
+    FROM contact ct
+    JOIN commune c ON c.code_insee = ct.code_insee
+    LEFT JOIN association a ON a.id = ct.association_id
+`;
+
+/**
+ * Un contact de la file, designe par son identifiant : la carte que l'on relit (ADR-041).
+ *
+ * Les memes conditions que `fileRevue` — departement, a revoir, note —, pour qu'une carte
+ * ouverte par son lien ne montre jamais un contact que la file ne montrerait pas : un
+ * contact deja arbitre, ou d'un autre departement, rend `undefined` et l'ecran retombe sur
+ * le premier de la file.
+ */
+export function contactARevoir(db: Database, departement: string, id: number): ContactARevoir | undefined {
+  return db
+    .prepare(
+      `${SELECT_CONTACT_A_REVOIR}
+        WHERE ct.id = ? AND c.departement = ? AND ct.review_statut = 'a_revoir' AND ct.score IS NOT NULL`,
+    )
+    .get(id, departement) as ContactARevoir | undefined;
+}
 
 /**
  * La file d'arbitrage, **les moins surs d'abord** : c'est la qu'un humain apporte quelque
@@ -147,12 +177,7 @@ export function fileRevue(
 ): ContactARevoir[] {
   return db
     .prepare(
-      `SELECT ct.id, ct.kind, ct.valeur, ct.valeur_corrigee, ct.is_generique, ct.score,
-              ct.score_motifs, ct.confiance, ct.methode_extraction, ct.source_url,
-              ct.collected_at, c.nom AS commune, a.nom AS association
-         FROM contact ct
-         JOIN commune c ON c.code_insee = ct.code_insee
-         LEFT JOIN association a ON a.id = ct.association_id
+      `${SELECT_CONTACT_A_REVOIR}
         WHERE c.departement = ? AND ct.review_statut = 'a_revoir' AND ct.score IS NOT NULL
         ORDER BY ct.score, ct.id
         LIMIT ? OFFSET ?`,
@@ -291,4 +316,84 @@ export function progressionAmorce(db: Database): ProgressionAmorce | undefined {
     octetsLus: Number(ligne.consumed_bytes ?? 0),
     octetsTotal: total === undefined || total <= 0 ? undefined : total,
   };
+}
+
+/**
+ * Ce que la collecte a fait jusqu'ici sur une campagne : les compteurs de l'ecran Collecter
+ * (ADR-041), lus sur la base comme le reste du suivi.
+ *
+ * Aucun n'est un « reste a faire » : les pages en file grandissent a chaque lien retenu, et
+ * l'ecran les montre comme un etat, pas comme un denominateur.
+ */
+export type ActiviteCollecte = {
+  /** Pages planifiees et pas encore visitees. */
+  enFile: number;
+  /** Pages que le `robots.txt` du site interdit : jamais demandees. */
+  bloquees: number;
+  /** Contacts du departement, toutes campagnes confondues. */
+  contacts: number;
+};
+
+export function activiteCollecte(db: Database, departement: string, campagne: string | undefined): ActiviteCollecte {
+  const pages = (
+    campagne === undefined
+      ? undefined
+      : db
+          .prepare(
+            `SELECT coalesce(sum(CASE WHEN p.statut = 'a_visiter' THEN 1 ELSE 0 END), 0) AS en_file,
+                    coalesce(sum(CASE WHEN p.statut = 'bloquee' THEN 1 ELSE 0 END), 0) AS bloquees
+               FROM page p JOIN commune c ON c.code_insee = p.code_insee
+              WHERE c.departement = ? AND p.campagne = ?`,
+          )
+          .get(departement, campagne)
+  ) as { en_file?: number; bloquees?: number } | undefined;
+  const contacts = db
+    .prepare("SELECT count(*) AS n FROM contact ct JOIN commune c ON c.code_insee = ct.code_insee WHERE c.departement = ?")
+    .get(departement) as { n?: number } | undefined;
+  return {
+    enFile: Number(pages?.en_file ?? 0),
+    bloquees: Number(pages?.bloquees ?? 0),
+    contacts: Number(contacts?.n ?? 0),
+  };
+}
+
+/** Une page que la collecte vient de traiter, pour « En ce moment ». */
+export type PageRecente = {
+  url: string;
+  fetched_at: string;
+  statut: string;
+  contacts_extraits: number | null;
+};
+
+/**
+ * Les dernieres pages traitees du departement, la plus recente d'abord.
+ *
+ * Lues dans `page`, que le crawl ecrit deja : rien n'est tenu en memoire pour l'ecran, et
+ * une collecte lancee dans un terminal s'y voit comme une collecte lancee d'ici.
+ */
+export function pagesRecentes(db: Database, departement: string, limite = 3): PageRecente[] {
+  return db
+    .prepare(
+      `SELECT coalesce(p.final_url, p.url) AS url, p.fetched_at, p.statut, p.contacts_extraits
+         FROM page p JOIN commune c ON c.code_insee = p.code_insee
+        WHERE c.departement = ? AND p.fetched_at IS NOT NULL
+        ORDER BY p.fetched_at DESC, p.url_hash
+        LIMIT ?`,
+    )
+    .all(departement, limite) as unknown as PageRecente[];
+}
+
+/** Les collectes d'un departement : combien, et la derniere. */
+export type HistoriqueDepartement = { collectes: number; derniere: LigneRun | undefined };
+
+export function historiqueDuDepartement(db: Database, departement: string): HistoriqueDepartement {
+  const compte = db.prepare("SELECT count(*) AS n FROM run WHERE departement = ?").get(departement) as
+    | { n?: number }
+    | undefined;
+  const derniere = db
+    .prepare(
+      "SELECT id, departement, started_at, finished_at, statut, phase FROM run WHERE departement = ? ORDER BY id DESC LIMIT 1",
+    )
+    .get(departement) as LigneRun | undefined;
+  return { collectes: Number(compte?.n ?? 0), derniere };
 }

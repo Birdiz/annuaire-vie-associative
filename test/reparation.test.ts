@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 
 import { openApp } from "../src/app.ts";
-import { VERSION_ADRESSES, reparerApresMiseAJour } from "../src/reparation.ts";
+import { VERSION_ADRESSES, VERSION_EXTRAITS, reparerApresMiseAJour } from "../src/reparation.ts";
 import { VERSION_NOM } from "../src/decouverte/nom-pressenti.ts";
 import { hashPage } from "../src/decouverte/contexte.ts";
 import { makeTempDir } from "./helpers/tmp.ts";
@@ -238,4 +238,30 @@ test("sans cache, un nom de personne ecrit par une version anterieure est efface
   assert.equal(reparerApresMiseAJour(app).nomsInvalides, 2);
   const noms = app.db.prepare("SELECT count(*) AS n FROM contact WHERE nom_pressenti IS NOT NULL").get() as { n: number };
   assert.equal(Number(noms.n), 0);
+});
+
+test("ADR-040 : un contact d'une base anterieure retrouve sa preuve dans le cache, une seule fois", (t) => {
+  const app = preparer(t);
+  contactAncien(app, "tennis@asso.example", "Tennis Club de Bruz");
+
+  assert.equal(reparerApresMiseAJour(app).extraitsRemplis, 1);
+  const extrait = JSON.parse(
+    (app.db.prepare("SELECT extrait FROM contact").get() as { extrait: string }).extrait,
+  ) as { avant: string; cible: string; apres: string };
+  assert.equal(extrait.cible, "tennis@asso.example");
+  assert.match(extrait.avant, /Tennis Club de Bruz/);
+
+  assert.equal(reparerApresMiseAJour(app).extraitsRemplis, 0, "le marqueur borne la reparation a une execution");
+});
+
+test("ADR-040 : sans cache, la carte reste sans preuve, et la base n'est pas relue a chaque commande", (t) => {
+  const app = preparer(t, { avecCache: false });
+  contactAncien(app, "tennis@asso.example", "Tennis Club de Bruz");
+
+  assert.equal(reparerApresMiseAJour(app).extraitsRemplis, 0);
+  assert.equal((app.db.prepare("SELECT extrait FROM contact").get() as { extrait: unknown }).extrait, null);
+  const marque = app.db
+    .prepare("SELECT valeur FROM metric WHERE run_id IS NULL AND etape = 'reparation' AND nom = 'extraits_version'")
+    .get() as { valeur: number } | undefined;
+  assert.equal(Number(marque?.valeur), VERSION_EXTRAITS);
 });

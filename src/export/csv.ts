@@ -428,21 +428,40 @@ export type OptionsExport = {
  * retenue est celle d'un seul groupe, pas d'une commune ni d'un departement.
  */
 export function* lignesCsv(db: Database, options: OptionsExport): Generator<string> {
+  let premiere = true;
+  for (const cellules of cellulesCsv(db, options)) {
+    if (premiere) {
+      premiere = false;
+      yield `${BOM}${cellules.join(SEPARATEUR)}${FIN_DE_LIGNE}`;
+      continue;
+    }
+    yield `${cellules.map(echapper).join(SEPARATEUR)}${FIN_DE_LIGNE}`;
+  }
+}
+
+/**
+ * Le fichier en cellules, en-tete d'abord, **avant** la mise en forme CSV.
+ *
+ * C'est le chemin du fichier, pas une seconde lecture : `lignesCsv` le met en forme,
+ * l'apercu de l'ecran d'export (ADR-041) en lit les premieres lignes. Un apercu tire d'une
+ * autre requete montrerait un jour des lignes que le fichier ne contient pas — meme raison
+ * que `compterLignes`, qui consomme les groupes au lieu de les compter en SQL.
+ *
+ * Les cellules sont brutes : `echapper` desamorce les formules pour le tableur, l'ecran
+ * echappe pour le HTML. Chacun sa sortie, chacun son echappement.
+ */
+export function* cellulesCsv(db: Database, options: OptionsExport): Generator<readonly string[]> {
   if ((options.profil ?? "complet") === "simple") {
-    yield* lignesSimples(db, options);
+    yield COLONNES_SIMPLE.map((colonne) => colonne.nom);
+    for (const groupe of groupesSimples(db, options)) yield COLONNES_SIMPLE.map((colonne) => colonne.cellule(groupe));
     return;
   }
 
-  yield entete(COLONNES_COMPLET);
+  yield COLONNES_COMPLET.map((colonne) => colonne.nom);
   const lignes = db
     .prepare(SQL_CONTACTS)
     .iterate(...parametres(options)) as unknown as Iterable<LigneComplet>;
-  for (const ligne of lignes) yield rendre(COLONNES_COMPLET, ligne);
-}
-
-function* lignesSimples(db: Database, options: OptionsExport): Generator<string> {
-  yield entete(COLONNES_SIMPLE);
-  for (const groupe of groupesSimples(db, options)) yield rendre(COLONNES_SIMPLE, groupe);
+  for (const ligne of lignes) yield COLONNES_COMPLET.map((colonne) => colonne.cellule(ligne));
 }
 
 /**
@@ -684,16 +703,6 @@ export function compterEcartes(db: Database, options: OptionsExport): Ecartes {
 function parametres(options: OptionsExport): [string, number | null, number | null, number] {
   const seuil = options.scoreMin ?? null;
   return [options.departement, seuil, seuil, options.avecRejetes === true ? 1 : 0];
-}
-
-function entete<L>(colonnes: readonly Colonne<L>[]): string {
-  return `${BOM}${colonnes.map((c) => c.nom).join(SEPARATEUR)}${FIN_DE_LIGNE}`;
-}
-
-function rendre<L>(colonnes: readonly Colonne<L>[], ligne: L): string {
-  return `${colonnes
-    .map((colonne) => echapper(colonne.cellule(ligne)))
-    .join(SEPARATEUR)}${FIN_DE_LIGNE}`;
 }
 
 /**

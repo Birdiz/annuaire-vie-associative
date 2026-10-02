@@ -1,18 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 
-import {
-  barre,
-  dateHeure,
-  duree,
-  ecart,
-  echapperHtml,
-  jour,
-  lienSur,
-  page,
-  pourcent,
-  tableau,
-} from "../../src/ui/rendu.ts";
+import { barre, dateHeure, duree, ecart, echapperHtml, jour, lienSur, page, pourcent, tableau, jauge, motConfiance, decimal } from "../../src/ui/rendu.ts";
+import { libelleDepartement } from "../../src/departements.ts";
 
 /**
  * Ce qui est defendu ici : une valeur lue sur un site de mairie ne peut pas devenir du
@@ -156,6 +146,35 @@ test("la barre ne deborde pas et echappe son libelle", () => {
 test("la version se lit en toutes lettres au pied de chaque page", () => {
   // La premiere question d'un support : sans elle, on devine la version d'un client a ses
   // symptomes — c'est ce qu'il a fallu faire sur le fichier du Rhone.
-  const html = page({ titre: "Synthese", onglet: "synthese", departement: "69", contenu: "", version: "9.8.7", portee: "" });
+  const html = page({
+    titre: "Collecter",
+    onglet: "collecter",
+    departement: "69",
+    contenu: "",
+    version: "9.8.7",
+    portee: "",
+    stations: "",
+    aide: "",
+  });
   assert.match(html, /<footer>[\s\S]*Version 9\.8\.7[\s\S]*<\/footer>/);
+});
+
+test("ADR-041 : la confiance tient en dix points et un mot, jamais en largeur ni en couleur seule", () => {
+  const html = jauge(0.38);
+  assert.equal((html.match(/class="on"/g) ?? []).length, 4);
+  assert.equal((html.match(/class="off"/g) ?? []).length, 6);
+  assert.doesNotMatch(html, /style=/, "la CSP refuse un attribut style");
+  assert.equal((jauge(null).match(/class="on"/g) ?? []).length, 0);
+  assert.equal((jauge(1.7).match(/class="on"/g) ?? []).length, 10, "un score hors bornes ne deborde pas");
+
+  assert.equal(motConfiance(0.38), "faible");
+  assert.equal(motConfiance(0.54), "moyenne");
+  assert.equal(motConfiance(0.91), "élevée");
+  assert.equal(decimal(0.38), "0,38");
+});
+
+test("ADR-041 : la plaque nomme le departement, et un code inconnu reste lisible", () => {
+  assert.equal(libelleDepartement("35"), "35 · Ille-et-Vilaine");
+  assert.equal(libelleDepartement("2A"), "2A · Corse-du-Sud");
+  assert.equal(libelleDepartement("constructor"), "constructor");
 });

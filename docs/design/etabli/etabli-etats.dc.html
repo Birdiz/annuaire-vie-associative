@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<meta name="design_doc_mode" content="canvas">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;700&display=swap" rel="stylesheet">
+<style>
+body{margin:0;background:#e6e4ee;font-family:'Atkinson Hyperlegible Next',system-ui,sans-serif;color:#1C1A17}
+a{color:#4338A8}a:hover{color:#2e2580}
+[data-t=l]{--bg:#F4F2EE;--sf:#FFFFFF;--sf2:#EAE7E1;--tx:#1C1A17;--mu:#5E5850;--bd:#DDD8D0;--pr:#4338A8;--on-pr:#FFFFFF;--pr-bg:#ECEAFB;--ac:#0B6670;--al:#B0201E;--al-bg:#FBEAE8;--c1:#E3E0F7;--c2:#B7AFEB;--c3:#7A6FD6;--c4:#4338A8;--f:'Atkinson Hyperlegible Next',system-ui,sans-serif;--m:ui-monospace,'Cascadia Mono',Consolas,monospace}
+.dv-turn{padding:40px 44px 32px;border-bottom:1px solid rgba(0,0,0,.08)}.dv-thd{display:flex;align-items:baseline;gap:10px;margin:0 0 20px}.dv-tid{font:600 10px ui-monospace,Menlo,monospace;padding:3px 7px;background:#1a1a1a;color:#fff;border-radius:4px;text-decoration:none}.dv-tname{font:600 13px/1.2 system-ui,sans-serif;color:#1a1a1a}.dv-opts{display:flex;flex-wrap:wrap;gap:28px;align-items:flex-start}.dv-opt{flex:none;display:flex;flex-direction:column;gap:9px}.dv-oid{font:600 10.5px ui-monospace,Menlo,monospace;padding:3px 7px;background:rgba(0,0,0,.08);color:#1a1a1a;border-radius:5px;text-decoration:none}.dv-olabel{display:flex;align-items:baseline;gap:8px;font:400 11px/1.3 system-ui,sans-serif;color:rgba(0,0,0,.55)}.dv-card{max-width:100%;background:#fff;border:1px solid rgba(0,0,0,.08);border-radius:8px;box-shadow:0 1px 3px rgba(0,0,0,.06);overflow:hidden}.dv-next{margin:22px 0 0;font:12px/1.5 system-ui,sans-serif;color:rgba(0,0,0,.5)}
+</style>
+</helmet>
+
+<section class="dv-turn" id="prep" data-screen-label="Préparer">
+<div class="dv-thd"><a class="dv-tid" href="#prep">1</a><span class="dv-tname">Préparer — usage courant · premier lancement (URL manquante, erreur de saisie)</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="P1"><div class="dv-olabel"><a class="dv-oid" href="#P1">P1</a>Préparer — usage courant, « Repartir de zéro » déplié</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navPrep }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:28px;display:grid;grid-template-columns:1fr 1fr;gap:20px;align-items:start">
+<h1 style="grid-column:1/-1;margin:0;font-size:34px">Préparer</h1>
+<section style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:14px">
+<h2 style="margin:0;font-size:18px">Département</h2>
+<label style="display:flex;flex-direction:column;gap:6px;font-size:14px;color:var(--mu)">Département de travail<select style="font:16px var(--f);padding:11px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--sf);color:var(--tx)"><option>35 · Ille-et-Vilaine</option></select></label>
+<div style="display:grid;grid-template-columns:repeat(2,1fr);gap:10px">
+<div style="padding:12px 14px;border-radius:10px;background:var(--sf2)"><div style="font-size:26px;font-weight:700">36 112</div><div style="font-size:14px;color:var(--mu)">associations actives en base</div></div>
+<div style="padding:12px 14px;border-radius:10px;background:var(--sf2)"><div style="font-size:26px;font-weight:700">14</div><div style="font-size:14px;color:var(--mu)">collectes, la dernière le 02/10</div></div>
+</div>
+<p style="margin:0;font-size:14px;color:var(--mu)">Aussi en base : 56 · Morbihan. Changer de département ne supprime rien.</p>
+</section>
+<div style="display:flex;flex-direction:column;gap:20px">
+<form style="margin:0;background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px">
+<h2 style="margin:0;font-size:18px">URL de contact</h2>
+<p style="margin:0;font-size:14px;line-height:1.5;color:var(--mu)">Envoyée aux sites visités, pour qu'un webmestre puisse vous joindre. À renseigner une fois.</p>
+<div style="display:flex;gap:10px"><input type="text" value="https://www.cc-exemple.fr/contact-annuaire" style="flex:1;font:15px var(--f);padding:10px 12px;border-radius:8px;border:1px solid var(--bd)"><button style="font:700 15px var(--f);padding:10px 16px;border-radius:8px;background:var(--sf);border:2px solid var(--tx)">Enregistrer</button></div>
+</form>
+<form style="margin:0;background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px">
+<h2 style="margin:0;font-size:18px">Numéros mobiles 06/07</h2>
+<div style="display:flex;gap:10px;align-items:center"><label style="flex:1;display:flex;gap:10px;align-items:center;font-size:15px"><input type="checkbox" style="width:18px;height:18px">Conserver aussi les numéros mobiles pendant cette session</label><button style="font:700 14px var(--f);padding:9px 14px;border-radius:8px;background:var(--sf);border:2px solid var(--tx)">Appliquer</button></div>
+<p style="margin:0;font-size:14px;color:var(--mu)">Actuellement exclus : ils ne sont ni lus ni enregistrés.</p>
+</form>
+</div>
+<section style="grid-column:1/-1;border-top:1px dashed var(--bd);padding-top:20px;display:flex;flex-direction:column;gap:14px">
+<details open="" style="display:flex;flex-direction:column"><summary style="cursor:pointer;color:var(--al);font-weight:700">Repartir de zéro</summary>
+<div style="margin-top:14px;background:var(--sf);border:2px solid var(--al);border-radius:12px;padding:20px;display:flex;flex-direction:column;gap:14px;max-width:760px">
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:14px">
+<div style="padding:12px 14px;border-radius:10px;background:var(--al-bg)"><b>Sera effacé — 35</b><ul style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>36 112 associations</li><li>4 980 pages en cache</li><li>4 261 contacts et leur provenance</li><li>1 377 décisions de relecture</li><li>14 collectes</li></ul></div>
+<div style="padding:12px 14px;border-radius:10px;background:var(--sf2)"><b>Reste</b><ul style="margin:6px 0 0;padding-left:18px;line-height:1.7"><li>23 demandes d'effacement (toujours actives)</li><li>Département 56</li><li>URL de contact, réglages</li></ul></div>
+</div>
+<div style="display:flex;gap:10px"><button style="font:700 15px var(--f);padding:12px 16px;border-radius:10px;background:var(--al);color:#fff;border:0">Oui, effacer le département 35</button><button style="font:700 15px var(--f);padding:12px 16px;border-radius:10px;background:var(--sf);border:2px solid var(--tx)">Annuler</button></div>
+</div></details>
+</section>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+<div class="dv-opt" id="P2"><div class="dv-olabel"><a class="dv-oid" href="#P2">P2</a>Premier lancement — URL de contact absente, saisie invalide</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--mu);background:var(--sf2)"><span style="font-size:12px">Département</span><b>à choisir ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navFirst }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:40px 28px;display:flex;justify-content:center">
+<div style="width:640px;display:flex;flex-direction:column;gap:20px">
+<div><div style="font-size:14px;color:var(--mu)">Avant la première collecte — 2 réglages</div><h1 style="margin:4px 0 0;font-size:34px">Préparer l'établi</h1></div>
+<form style="margin:0;background:var(--sf);border:2px solid var(--al);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;gap:10px;align-items:center"><span style="width:28px;height:28px;border-radius:50%;border:2px solid var(--tx);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">1</span><h2 style="margin:0;font-size:18px">URL de contact</h2></div>
+<p style="margin:0;font-size:14px;line-height:1.5;color:var(--mu)">Envoyée aux sites visités, pour qu'un webmestre puisse vous joindre. Sans elle, la collecte ne démarre pas.</p>
+<label style="display:flex;flex-direction:column;gap:6px;font-size:14px;font-weight:700">Adresse de votre page contact<input type="text" value="www.cc-exemple.fr/contact" aria-invalid="true" style="font:15px var(--f);padding:10px 12px;border-radius:8px;border:2px solid var(--al)"></label>
+<div style="display:flex;gap:8px;align-items:flex-start;font-size:14px;color:var(--al)"><svg width="16" height="16" viewBox="0 0 20 20" style="flex:none;margin-top:2px"><path d="M10 2l9 16H1z" fill="none" stroke="currentColor" stroke-width="1.8"></path><rect x="9.1" y="7.5" width="1.8" height="5" fill="currentColor"></rect><rect x="9.1" y="14" width="1.8" height="1.8" fill="currentColor"></rect></svg><span>L'adresse doit commencer par https:// — par exemple https://www.cc-exemple.fr/contact</span></div>
+<button style="align-self:flex-start;font:700 15px var(--f);padding:10px 16px;border-radius:8px;background:var(--sf);border:2px solid var(--tx)">Enregistrer</button>
+</form>
+<form style="margin:0;background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px">
+<div style="display:flex;gap:10px;align-items:center"><span style="width:28px;height:28px;border-radius:50%;border:2px solid var(--tx);display:flex;align-items:center;justify-content:center;font-weight:700;font-size:14px">2</span><h2 style="margin:0;font-size:18px">Département</h2></div>
+<select style="font:16px var(--f);padding:11px 12px;border-radius:8px;border:1px solid var(--bd);background:var(--sf);color:var(--tx)"><option>Choisir un département…</option></select>
+<p style="margin:0;font-size:14px;color:var(--mu)">Aucun département en base pour l'instant.</p>
+</form>
+<p style="margin:0;font-size:14px;color:var(--mu)">Les numéros mobiles 06/07 sont exclus par défaut. Vous pourrez changer ce réglage ici plus tard.</p>
+</div>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+</div>
+</section>
+
+<section class="dv-turn" id="col" data-screen-label="Collecter">
+<div class="dv-thd"><a class="dv-tid" href="#col">2</a><span class="dv-tname">Collecter — jamais amorcé · arrêtée · erreur (l'état « en cours » est dans <a href="Direction 2 - L'Établi.dc.html">Direction 2</a>, écran A)</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="C1"><div class="dv-olabel"><a class="dv-oid" href="#C1">C1</a>Vide — département jamais amorcé</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>22 · Côtes-d'Armor ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navEmpty }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:56px 28px;display:flex;justify-content:center">
+<div style="width:680px;border:2px dashed var(--bd);border-radius:14px;padding:36px;display:flex;flex-direction:column;gap:14px;align-items:flex-start">
+<h1 style="margin:0;font-size:34px">Côtes-d'Armor n'a jamais été collecté</h1>
+<p style="margin:0;font-size:17px;line-height:1.55">La collecte commence par lire le registre national des associations du département, puis visite les sites des mairies. Comptez plusieurs heures ; vous pourrez relire dès les premiers contacts.</p>
+<ol style="margin:4px 0 0;padding:0;list-style:none;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;width:100%;font-size:14px">
+<li style="padding:12px;border-radius:10px;background:var(--sf)"><b>Amorce</b><br><span style="color:var(--mu)">lecture du registre</span></li>
+<li style="padding:12px;border-radius:10px;background:var(--sf)"><b>Découverte</b><br><span style="color:var(--mu)">sites des mairies</span></li>
+<li style="padding:12px;border-radius:10px;background:var(--sf)"><b>Normalisation</b><br><span style="color:var(--mu)">nettoyage, score</span></li>
+</ol>
+<button style="margin-top:8px;font:700 17px var(--f);padding:14px 22px;border-radius:10px;background:var(--pr);color:var(--on-pr);border:0">Lancer la collecte complète</button>
+<p style="margin:0;font-size:14px;color:var(--mu)">Déjà en base : 35, 56 · mobiles 06/07 exclus</p>
+</div>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+<div class="dv-opt" id="C2"><div class="dv-olabel"><a class="dv-oid" href="#C2">C2</a>Collecte arrêtée par l'utilisateur</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navStopped }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:28px;display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start">
+<section style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:22px">
+<div style="display:flex;justify-content:space-between;align-items:baseline;gap:16px"><h1 style="margin:0;font-size:34px;line-height:1.1">Collecte arrêtée pendant la découverte</h1><span style="font-size:14px;color:var(--mu);white-space:nowrap">n°14 · arrêtée à 10:58</span></div>
+<div style="display:grid;grid-template-columns:1fr 2fr 1fr;gap:6px">
+<div style="display:flex;flex-direction:column;gap:6px"><div style="height:8px;border-radius:4px;background:var(--pr)"></div><b style="font-size:15px">Amorce · faite</b><span style="font-size:13px;color:var(--mu)">36 112 associations lues</span></div>
+<div style="display:flex;flex-direction:column;gap:6px"><div style="height:8px;border-radius:4px;background:linear-gradient(90deg,var(--mu) 0 26%,var(--sf2) 26%)"></div><b style="font-size:15px">Découverte · en pause</b><span style="font-size:13px;color:var(--mu)">1 302 pages visitées sur 4 980</span></div>
+<div style="display:flex;flex-direction:column;gap:6px"><div style="height:6px;border-radius:4px;border:1px dashed var(--mu)"></div><b style="font-size:15px;color:var(--mu)">Normalisation · à venir</b><span style="font-size:13px;color:var(--mu)">pas encore de décompte</span></div>
+</div>
+<div style="padding:16px 18px;border-radius:10px;background:var(--sf2);font-size:15px;line-height:1.55">Tout est conservé : les 1 302 pages lues et les 851 contacts extraits. Relancer reprend à la page 1 303 ; les pages déjà en cache ne sont pas revisitées.</div>
+</section>
+<aside style="display:flex;flex-direction:column;gap:20px">
+<section style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:12px">
+<button style="font:700 16px var(--f);padding:14px;border-radius:10px;background:var(--pr);color:var(--on-pr);border:0">Reprendre la collecte</button>
+<p style="margin:0;font-size:14px;line-height:1.5;color:var(--mu)">Environ 5 h restantes. L'export reste possible tant que la collecte est arrêtée.</p>
+</section>
+<section style="background:var(--pr-bg);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:10px">
+<b style="font-size:17px">357 contacts attendent une relecture</b>
+<a href="#" style="align-self:flex-start;font:700 15px var(--f);padding:10px 16px;border-radius:10px;background:var(--sf);color:var(--tx);border:2px solid var(--tx);text-decoration:none">Relire</a>
+</section>
+</aside>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+<div class="dv-opt" id="C3"><div class="dv-olabel"><a class="dv-oid" href="#C3">C3</a>Erreur — la collecte s'est interrompue seule</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navError }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:28px;display:grid;grid-template-columns:1fr 360px;gap:20px;align-items:start">
+<section style="background:var(--sf);border:2px solid var(--tx);border-radius:12px;padding:26px 28px;display:flex;flex-direction:column;gap:18px">
+<div style="display:flex;gap:14px;align-items:flex-start"><svg width="28" height="28" viewBox="0 0 20 20" style="flex:none;margin-top:4px"><circle cx="10" cy="10" r="8.5" fill="none" stroke="currentColor" stroke-width="1.8"></circle><rect x="9.1" y="5" width="1.8" height="6.5" fill="currentColor"></rect><rect x="9.1" y="13" width="1.8" height="1.8" fill="currentColor"></rect></svg>
+<div><h1 style="margin:0;font-size:32px;line-height:1.15">La collecte s'est interrompue : le registre national ne répond plus</h1><p style="margin:8px 0 0;font-size:16px;line-height:1.55;color:var(--mu)">Collecte n°15, phase Amorce, à 14:07. Ce n'est pas une erreur de votre part : le service distant est indisponible ou la connexion de cette machine est coupée.</p></div></div>
+<div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;font-size:15px">
+<div style="padding:14px 16px;border-radius:10px;background:var(--sf2)"><b>Ce qui est conservé</b><br>Les 12 480 associations déjà lues, et toutes les données des collectes précédentes.</div>
+<div style="padding:14px 16px;border-radius:10px;background:var(--sf2)"><b>Ce qui manque</b><br>Environ 23 600 associations à lire. La découverte n'a pas commencé.</div>
+</div>
+<details style="font-size:14px"><summary style="cursor:pointer;color:var(--pr)">Détail technique, à transmettre au support</summary><pre style="margin:8px 0 0;padding:12px;border-radius:8px;background:var(--sf2);font:12px var(--m);white-space:pre-wrap">14:07:31 amorce · délai dépassé après 3 essais (30 s)</pre></details>
+</section>
+<aside style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;padding:22px;display:flex;flex-direction:column;gap:12px">
+<button style="font:700 16px var(--f);padding:14px;border-radius:10px;background:var(--pr);color:var(--on-pr);border:0">Réessayer maintenant</button>
+<p style="margin:0;font-size:14px;line-height:1.5;color:var(--mu)">Reprend là où elle s'est arrêtée. Si le problème persiste, réessayez dans une heure.</p>
+<p style="margin:0;font-size:14px;line-height:1.5;color:var(--mu);border-top:1px solid var(--bd);padding-top:12px">En attendant, relire et exporter restent possibles sur les données déjà collectées.</p>
+</aside>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+</div>
+<p class="dv-next">L'erreur n'utilise pas le rouge : il reste réservé à l'effacement et au RGPD. Un cadre noir et une icône suffisent.</p>
+</section>
+
+<section class="dv-turn" id="rel" data-screen-label="Relire">
+<div class="dv-thd"><a class="dv-tid" href="#rel">3</a><span class="dv-tname">Relire — mode liste pendant la collecte · file vide (le mode carte est dans <a href="Direction 2 - L'Établi.dc.html">Direction 2</a>, écran B, avec la bascule ci-dessous ajoutée)</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="R1"><div class="dv-olabel"><a class="dv-oid" href="#R1">R1</a>Mode liste — collecte en cours</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navReview }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:24px 28px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;justify-content:space-between;align-items:flex-end;gap:24px">
+<div><div style="font-size:14px;color:var(--mu)">1 377 relus : 1 102 validés · 211 rejetés · 64 corrigés</div><h1 style="margin:4px 0 0;font-size:34px">Relire — 1 287 restants</h1></div>
+<div role="radiogroup" aria-label="Affichage" style="display:flex;border:2px solid var(--tx);border-radius:10px;overflow:hidden;font-weight:700;font-size:15px">
+<a href="#" role="radio" aria-checked="false" style="padding:9px 18px;text-decoration:none;color:var(--tx)">Carte</a>
+<a href="#" role="radio" aria-checked="true" style="padding:9px 18px;text-decoration:none;background:var(--tx);color:var(--sf)">Liste</a>
+</div>
+</div>
+<div style="display:flex;gap:12px;align-items:center;padding:12px 16px;border-radius:10px;background:var(--pr-bg);font-size:15px"><svg width="18" height="18" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="none" stroke="var(--pr)" stroke-width="2"></circle><circle cx="8" cy="8" r="3" fill="var(--pr)"></circle></svg><span style="flex:1">La collecte continue. <b>24 nouveaux contacts</b> sont arrivés depuis l'ouverture de cette page.</span><a href="#" style="font-weight:700;color:var(--pr)">Les ajouter à la liste</a></div>
+<div style="display:flex;gap:16px;align-items:center;font-size:14px">
+<label style="display:flex;gap:8px;align-items:center">Type<select style="font:14px var(--f);padding:7px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--sf)"><option>Tous</option></select></label>
+<label style="display:flex;gap:8px;align-items:center">Commune<select style="font:14px var(--f);padding:7px 10px;border-radius:8px;border:1px solid var(--bd);background:var(--sf)"><option>Toutes</option></select></label>
+<span style="color:var(--mu);margin-left:auto">Triés du moins sûr au plus sûr · 50 par page</span>
+</div>
+<section style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;overflow:hidden">
+<div style="display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1.6fr) 150px minmax(0,1.5fr) 290px;font-size:13px;color:var(--mu);background:var(--sf2)"><span style="padding:10px 18px">Contact</span><span style="padding:10px 12px">Association · commune</span><span style="padding:10px 12px">Confiance</span><span style="padding:10px 12px">Lue sur</span><span style="padding:10px 18px 10px 12px">Décision</span></div>
+<sc-for list="{{ rows }}" as="r" hint-placeholder-count="6">
+<div style="display:grid;grid-template-columns:minmax(0,2.2fr) minmax(0,1.6fr) 150px minmax(0,1.5fr) 290px;align-items:center;border-top:1px solid var(--bd);font-size:14px">
+<div style="padding:12px 18px;display:flex;flex-direction:column;gap:3px;min-width:0"><b style="font-size:15px;word-break:break-all">{{ r.value }}</b><span style="font-size:13px;color:var(--mu)">{{ r.kind }}</span></div>
+<div style="padding:12px;min-width:0"><span>{{ r.asso }}</span><br><span style="font-size:13px;color:var(--mu)">{{ r.town }}</span></div>
+<div style="padding:12px;display:flex;flex-direction:column;gap:4px"><span style="display:flex;gap:2px"><sc-for list="{{ r.dots }}" as="d" hint-placeholder-count="10"><sc-if value="{{ d.on }}" hint-placeholder-val="{{ false }}"><span style="width:8px;height:8px;border-radius:50%;background:var(--c4)"></span></sc-if><sc-if value="{{ d.off }}" hint-placeholder-val="{{ true }}"><span style="width:8px;height:8px;border-radius:50%;border:1.5px solid var(--c3);box-sizing:border-box"></span></sc-if></sc-for></span><span style="font-size:13px"><b>{{ r.score }}</b> · {{ r.word }}</span></div>
+<div style="padding:12px;min-width:0;font-size:13px;word-break:break-all"><a href="#" style="color:var(--ac)">{{ r.src }}</a></div>
+<div style="padding:10px 18px 10px 12px;display:flex;gap:6px"><button style="flex:1;font:700 14px var(--f);padding:9px 0;border-radius:8px;background:var(--sf);color:var(--tx);border:1.5px solid var(--tx)">Valider</button><button style="flex:1;font:700 14px var(--f);padding:9px 0;border-radius:8px;background:var(--sf);color:var(--tx);border:1.5px solid var(--tx)">Rejeter</button><button style="flex:1;font:700 14px var(--f);padding:9px 0;border-radius:8px;background:var(--sf);color:var(--tx);border:1.5px solid var(--tx)">Corriger</button></div>
+</div>
+</sc-for>
+</section>
+<p style="margin:0;font-size:14px;color:var(--mu)">« Corriger » et « Oublier » ouvrent la carte du contact : la correction et l'effacement demandent la preuve sous les yeux. Pas de décision groupée.</p>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+<div class="dv-opt" id="R2"><div class="dv-olabel"><a class="dv-oid" href="#R2">R2</a>File vide — tout est relu</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navDone }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:56px 28px;display:flex;justify-content:center">
+<div style="width:640px;display:flex;flex-direction:column;gap:16px;align-items:flex-start">
+<h1 style="margin:0;font-size:34px">Plus rien à relire</h1>
+<p style="margin:0;font-size:17px;line-height:1.55">Les 2 664 contacts du département 35 ont reçu une décision. Les prochaines collectes rempliront à nouveau la file.</p>
+<dl style="margin:0;display:grid;grid-template-columns:repeat(3,1fr);gap:10px;width:100%">
+<div style="padding:14px;border-radius:10px;background:var(--sf)"><dt style="font-size:14px;color:var(--mu)">validés</dt><dd style="margin:2px 0 0;font-size:26px;font-weight:700">2 214</dd></div>
+<div style="padding:14px;border-radius:10px;background:var(--sf)"><dt style="font-size:14px;color:var(--mu)">rejetés</dt><dd style="margin:2px 0 0;font-size:26px;font-weight:700">318</dd></div>
+<div style="padding:14px;border-radius:10px;background:var(--sf)"><dt style="font-size:14px;color:var(--mu)">corrigés</dt><dd style="margin:2px 0 0;font-size:26px;font-weight:700">132</dd></div>
+</dl>
+<div style="display:flex;gap:10px;margin-top:6px"><a href="#" style="font:700 16px var(--f);padding:12px 18px;border-radius:10px;background:var(--pr);color:var(--on-pr);text-decoration:none">Aller à l'export</a><a href="#" style="font:700 16px var(--f);padding:12px 18px;border-radius:10px;border:2px solid var(--tx);color:var(--tx);text-decoration:none">Revoir les décisions</a></div>
+</div>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+</div>
+</section>
+
+<section class="dv-turn" id="exp" data-screen-label="Exporter">
+<div class="dv-thd"><a class="dv-tid" href="#exp">4</a><span class="dv-tname">Exporter — fichier complet · suspendu pendant la collecte (le fichier simple est dans <a href="Direction 2 - L'Établi.dc.html">Direction 2</a>, écran C)</span></div>
+<div class="dv-opts">
+
+<div class="dv-opt" id="E1"><div class="dv-olabel"><a class="dv-oid" href="#E1">E1</a>Fichier complet — score minimum à 0,90 (peu de lignes)</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navExport }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:28px;display:grid;grid-template-columns:440px 1fr;gap:24px;align-items:start">
+<form style="margin:0;display:flex;flex-direction:column;gap:14px">
+<h1 style="margin:0 0 4px;font-size:34px">Export CSV</h1>
+<label style="display:flex;gap:12px;padding:16px 18px;border-radius:12px;background:var(--sf);border:1px solid var(--bd)"><input type="radio" name="e1" style="width:18px;height:18px"><span><b style="font-size:17px">Fichier simple</b><br><span style="font-size:14px;color:var(--mu)">6 colonnes, une ligne par structure. Sans provenance, ne nomme jamais une personne.</span></span></label>
+<label style="display:flex;gap:12px;padding:16px 18px;border-radius:12px;background:var(--sf);border:2px solid var(--pr)"><input type="radio" name="e1" checked="" style="accent-color:var(--pr);width:18px;height:18px"><span><b style="font-size:17px">Fichier complet</b><br><span style="font-size:14px;color:var(--mu)">Toutes les colonnes, une ligne par contact — le fichier auditable, avec provenance et régime juridique.</span></span></label>
+<div style="display:flex;gap:20px;align-items:center;padding:14px 18px;border-radius:12px;background:var(--sf);border:1px solid var(--bd)">
+<label style="display:flex;gap:8px;align-items:center;font-size:15px">Score minimum<input type="text" value="0,90" style="width:64px;font:15px var(--f);padding:8px;border-radius:8px;border:1px solid var(--bd)"></label>
+<label style="display:flex;gap:8px;align-items:center;font-size:15px"><input type="checkbox" style="width:18px;height:18px">Inclure les contacts rejetés</label>
+</div>
+<div style="padding:16px 18px;border-radius:12px;background:var(--sf2);display:flex;flex-direction:column;gap:8px;font-size:14px">
+<b style="font-size:15px">3 819 contacts restent sur l'établi</b>
+<div style="display:flex;justify-content:space-between"><span>score inférieur à 0,90</span><b>3 608</b></div>
+<div style="display:flex;justify-content:space-between"><span>rejetés à la relecture</span><b>211</b></div>
+<p style="margin:4px 0 0;color:var(--mu)">Avec un seuil à 0,60, le fichier compterait 3 519 lignes.</p>
+</div>
+</form>
+<div style="display:flex;flex-direction:column;gap:16px">
+<section style="background:var(--sf);border:1px solid var(--bd);border-radius:12px;overflow:hidden">
+<div style="padding:16px 20px;display:flex;justify-content:space-between;align-items:baseline"><b style="font-size:24px">442 lignes vont sortir</b><span style="font-size:14px;color:var(--mu)">une par contact · 19 colonnes</span></div>
+<div style="padding:0 20px 16px;display:flex;flex-wrap:wrap;gap:6px;font:12px var(--m)"><sc-for list="{{ cols }}" as="c" hint-placeholder-count="19"><span style="padding:3px 8px;border-radius:6px;background:var(--sf2)">{{ c }}</span></sc-for></div>
+</section>
+<section style="border-radius:12px;border:2px solid var(--al);overflow:hidden">
+<div style="padding:18px 22px;background:var(--al-bg);display:flex;flex-direction:column;gap:8px;font-size:15px;line-height:1.55">
+<b style="color:var(--al);font-size:16px">Avant de télécharger</b>
+<p style="margin:0;font-weight:700">Ce fichier contient des données personnelles, et vous en êtes responsable de traitement.</p>
+<p style="margin:0">Vous devez informer les personnes concernées dans le mois (article 14 du RGPD).</p>
+<p style="margin:0">Cet outil ne prospecte pas, et ce fichier n'est pas un fichier de prospection.</p>
+</div>
+<div style="padding:16px 22px;background:var(--sf);display:flex;justify-content:flex-end"><button style="font:700 17px var(--f);padding:14px 26px;border-radius:10px;background:var(--pr);color:var(--on-pr);border:0">Télécharger le fichier</button></div>
+</section>
+</div>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+<div class="dv-opt" id="E2"><div class="dv-olabel"><a class="dv-oid" href="#E2">E2</a>Suspendu — une collecte tourne</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navLocked }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--tx);font-weight:700;font-size:20px">?</a>
+</header>
+<main style="padding:56px 28px;display:flex;justify-content:center">
+<div style="width:640px;display:flex;flex-direction:column;gap:16px;align-items:flex-start">
+<svg width="36" height="36" viewBox="0 0 16 16"><rect x="3" y="7" width="10" height="7" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.3"></rect><path d="M5.5 7V5a2.5 2.5 0 015 0v2" fill="none" stroke="currentColor" stroke-width="1.3"></path></svg>
+<h1 style="margin:0;font-size:34px">L'export attend la fin de la collecte</h1>
+<p style="margin:0;font-size:17px;line-height:1.55">La collecte n°14 écrit encore dans la base. Exporter maintenant donnerait un fichier pris à mi-chemin. Il se débloque dès qu'elle se termine, ou si vous l'arrêtez.</p>
+<div style="width:100%;display:flex;flex-direction:column;gap:6px;padding:16px 18px;border-radius:12px;background:var(--sf)"><div style="display:flex;justify-content:space-between;font-size:15px"><b>Découverte · 1 240 pages sur 4 980</b><span style="color:var(--mu)">environ 5 h 10</span></div><progress value="1240" max="4980" style="width:100%;height:8px;accent-color:var(--pr)">1 240 sur 4 980</progress></div>
+<div style="display:flex;gap:10px"><a href="#" style="font:700 16px var(--f);padding:12px 18px;border-radius:10px;background:var(--pr);color:var(--on-pr);text-decoration:none">Relire en attendant</a><a href="#" style="font:700 16px var(--f);padding:12px 18px;border-radius:10px;border:2px solid var(--tx);color:var(--tx);text-decoration:none">Voir la collecte</a></div>
+</div>
+</main>
+<footer style="padding:12px 28px;border-top:1px solid var(--bd);font-size:13px;color:var(--mu)">Serveur local : rien de ce qui est affiché ici ne sort de cette machine.</footer>
+</div></div>
+
+</div>
+</section>
+
+<section class="dv-turn" id="aide" data-screen-label="Aide">
+<div class="dv-thd"><a class="dv-tid" href="#aide">5</a><span class="dv-tname">Aide — panneau latéral ouvert par « ? », par-dessus la relecture</span></div>
+<div class="dv-opts">
+<div class="dv-opt" id="H1"><div class="dv-olabel"><a class="dv-oid" href="#H1">H1</a>Aide ouverte depuis Relire — la carte reste visible</div>
+<div class="dv-card" data-t="l" style="width:1280px;background:var(--bg);color:var(--tx);font-family:var(--f);font-size:16px">
+<header style="display:flex;align-items:stretch;height:68px;background:var(--sf);border-bottom:1px solid var(--bd)">
+<div style="display:flex;align-items:center;padding:0 22px"><svg width="26" height="26" viewBox="0 0 24 24"><rect x="1" y="1" width="22" height="22" rx="5" fill="#4338A8"></rect><rect x="7.5" y="5" width="11" height="8" rx="1.5" fill="#B7AFEB"></rect><rect x="5.5" y="8.5" width="11" height="10" rx="1.5" fill="#fff"></rect></svg></div>
+<a href="#" style="display:flex;flex-direction:column;justify-content:center;padding:0 22px;border-right:1px solid var(--bd);border-left:1px solid var(--bd);text-decoration:none;color:var(--tx);background:var(--sf2)"><span style="font-size:12px;color:var(--mu)">Département</span><b>35 · Ille-et-Vilaine ▾</b></a>
+<nav style="display:flex;flex:1"><sc-for list="{{ navReview }}" as="st" hint-placeholder-count="4"><a href="#" style="position:relative;flex:1;display:flex;align-items:center;gap:10px;padding:0 20px;text-decoration:none;color:var(--tx);border-right:1px solid var(--bd)"><sc-if value="{{ st.active }}" hint-placeholder-val="{{ false }}"><span style="position:absolute;inset:0;background:var(--pr-bg);box-shadow:inset 0 -4px 0 var(--pr)"></span></sc-if><sc-if value="{{ st.badge }}" hint-placeholder-val="{{ false }}"><span style="position:relative;font:700 13px var(--f);padding:2px 8px;border-radius:999px;background:var(--pr);color:var(--on-pr)">{{ st.badge }}</span></sc-if><span style="position:relative"><b>{{ st.name }}</b><br><span style="font-size:13px;color:var(--mu)">{{ st.sub }}</span></span></a></sc-for></nav>
+<a href="#" aria-expanded="true" style="display:flex;align-items:center;justify-content:center;width:68px;text-decoration:none;color:var(--on-pr);background:var(--pr);font-weight:700;font-size:20px">?</a>
+</header>
+<div style="display:grid;grid-template-columns:1fr 440px;min-height:780px">
+<main style="padding:24px 28px;display:flex;flex-direction:column;gap:16px">
+<div style="display:flex;justify-content:space-between;align-items:flex-end"><h1 style="margin:0;font-size:34px">Relire</h1><div style="display:flex;border:2px solid var(--tx);border-radius:10px;overflow:hidden;font-weight:700;font-size:15px"><a href="#" style="padding:9px 18px;text-decoration:none;background:var(--tx);color:var(--sf)">Carte</a><a href="#" style="padding:9px 18px;text-decoration:none;color:var(--tx)">Liste</a></div></div>
+<article style="background:var(--sf);border:1px solid var(--bd);border-radius:14px;padding:24px 26px;display:flex;flex-direction:column;gap:12px">
+<div style="font-size:14px;color:var(--mu)">Adresse email</div>
+<div style="font-size:24px;font-weight:700;word-break:break-all">j.morvan-tresorier@laposte.net</div>
+<div><b>Judo club du Val de Seiche</b> · <span style="color:var(--mu)">Brémont-sur-Seiche</span></div>
+<b style="font-size:15px">score 0,38 · lu 0,52</b>
+<blockquote style="margin:0;padding:14px 16px;border-radius:10px;background:var(--sf2);font-size:15px;line-height:1.6">… Pour toute inscription, écrire au trésorier : <mark style="background:var(--c2);color:var(--tx);padding:1px 3px;border-radius:3px">j.morvan-tresorier@laposte.net</mark>. Tennis de table …</blockquote>
+<div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;margin-top:4px"><button style="font:700 16px var(--f);padding:13px;border-radius:10px;background:var(--sf);border:2px solid var(--tx)">Valider</button><button style="font:700 16px var(--f);padding:13px;border-radius:10px;background:var(--sf);border:2px solid var(--tx)">Rejeter</button><button style="font:700 16px var(--f);padding:13px;border-radius:10px;background:var(--sf);border:2px solid var(--tx)">Corriger</button></div>
+</article>
+</main>
+<aside aria-label="Aide" style="background:var(--sf);border-left:1px solid var(--bd);padding:24px 26px;display:flex;flex-direction:column;gap:18px">
+<div style="display:flex;justify-content:space-between;align-items:center"><h2 style="margin:0;font-size:24px">Aide</h2><button style="font:700 14px var(--f);padding:7px 12px;border-radius:8px;background:var(--sf);border:1.5px solid var(--tx)">Fermer</button></div>
+<section style="display:flex;flex-direction:column;gap:8px;padding:16px;border-radius:12px;background:var(--pr-bg)">
+<b style="font-size:16px">Sur cet écran : les quatre boutons</b>
+<dl style="margin:0;display:grid;grid-template-columns:84px 1fr;gap:6px 10px;font-size:14px;line-height:1.5">
+<dt style="font-weight:700">Valider</dt><dd style="margin:0">Le contact est juste. Il pourra sortir dans l'export.</dd>
+<dt style="font-weight:700">Rejeter</dt><dd style="margin:0">Faux ou hors sujet. Il reste en base mais ne sort pas.</dd>
+<dt style="font-weight:700">Corriger</dt><dd style="margin:0">Remplace la valeur ; la valeur lue reste dans la provenance.</dd>
+<dt style="font-weight:700;color:var(--al)">Oublier</dt><dd style="margin:0">Efface le contact et empêche toute collecte future. Motif obligatoire, sans retour.</dd>
+</dl>
+</section>
+<section style="display:flex;flex-direction:column;gap:6px">
+<b style="font-size:16px">Les cinq étapes</b>
+<ol style="margin:0;padding-left:20px;font-size:14px;line-height:1.8"><li>Renseigner l'URL de contact, une fois</li><li>Choisir le département</li><li>Lancer la collecte et la laisser travailler</li><li style="font-weight:700">Relire ce dont l'outil n'est pas sûr</li><li>Exporter le fichier</li></ol>
+</section>
+<section style="display:flex;flex-direction:column;gap:0;font-size:15px">
+<b style="font-size:16px;margin-bottom:6px">Questions fréquentes</b>
+<details style="border-top:1px solid var(--bd);padding:10px 0"><summary style="cursor:pointer">Que veulent dire « score » et « lu » ?</summary><p style="margin:8px 0 0;font-size:14px;line-height:1.5;color:var(--mu)">« Lu » : à quel point l'outil est sûr d'avoir bien lu la valeur sur la page. « Score » : à quel point il pense qu'elle appartient bien à cette association.</p></details>
+<details style="border-top:1px solid var(--bd);padding:10px 0"><summary style="cursor:pointer">Pourquoi relire pendant la collecte ?</summary></details>
+<details style="border-top:1px solid var(--bd);padding:10px 0"><summary style="cursor:pointer">Pourquoi les mobiles sont-ils exclus ?</summary></details>
+<details style="border-top:1px solid var(--bd);padding:10px 0"><summary style="cursor:pointer">Que dois-je faire après l'export ?</summary></details>
+<details style="border-top:1px solid var(--bd);border-bottom:1px solid var(--bd);padding:10px 0"><summary style="cursor:pointer">Quelqu'un demande à être effacé</summary></details>
+</section>
+</aside>
+</div>
+</div></div>
+</div>
+<p class="dv-next">Le panneau ne recouvre pas la carte : on peut lire l'aide et décider sans le fermer. Il est servi comme fragment à part, hors des blocs actualisés.</p>
+</section>
+</x-dc>
+<script type="text/x-dc" data-dc-script>
+class Component extends DCLogic {
+  renderVals() {
+    const names = ['Préparer', 'Collecter', 'Relire', 'Exporter'];
+    const N = (active, subs, badge) => names.map((name, i) => ({ name, sub: subs[i], active: i === active, badge: i === 2 ? (badge || null) : null }));
+    const dots = n => Array.from({ length: 10 }, (_, i) => ({ on: i < n, off: i >= n }));
+    const rows = [
+      { value: 'j.morvan-tresorier@laposte.net', kind: 'email · nominative', asso: 'Judo club du Val de Seiche', town: 'Brémont-sur-Seiche', score: '0,38', word: 'faible', n: 4, src: 'bremont-sur-seiche.fr/vie-associative/sport' },
+      { value: 'presidence.asm@orange.fr', kind: 'email · de fonction', asso: 'Amicale des sapeurs de Melesse', town: 'Melesse', score: '0,41', word: 'faible', n: 4, src: 'melesse.fr/associations' },
+      { value: '02 99 41 27 80', kind: 'téléphone fixe', asso: 'sans association rattachée', town: 'Brémont-sur-Seiche', score: '0,54', word: 'moyenne', n: 5, src: 'bremont-sur-seiche.fr/la-mairie/salles' },
+      { value: 'chorale.couesnon@gmail.com', kind: 'email · de fonction', asso: 'Chorale Les Voix du Couesnon', town: 'La Chapelle-aux-Ormes', score: '0,57', word: 'moyenne', n: 6, src: 'la-chapelle-aux-ormes.fr/culture' },
+      { value: '02 99 18 63 05', kind: 'téléphone fixe', asso: 'Chorale Les Voix du Couesnon', town: 'La Chapelle-aux-Ormes', score: '0,62', word: 'moyenne', n: 6, src: 'la-chapelle-aux-ormes.fr/culture' },
+      { value: 'contact@comitedesfetes-saintaubin.fr', kind: 'email · de fonction', asso: 'Comité des fêtes de Saint-Aubin-des-Landes', town: 'Saint-Aubin-des-Landes', score: '0,91', word: 'élevée', n: 9, src: 'saint-aubin-des-landes.fr/annuaire-associations' }
+    ].map(r => ({ ...r, dots: dots(r.n) }));
+    return {
+      navPrep: N(0, ['mobiles exclus', 'terminée le 02/10', 'restants', 'prêt'], '1 287'),
+      navFirst: N(0, ['2 réglages à faire', 'en attente', 'vide', 'rien à exporter']),
+      navEmpty: N(1, ['mobiles exclus', 'jamais amorcé', 'vide', 'rien à exporter']),
+      navStopped: N(1, ['mobiles exclus', 'arrêtée à 10:58', 'restants', 'prêt'], '357'),
+      navError: N(1, ['mobiles exclus', 'interrompue', 'restants', 'prêt'], '1 287'),
+      navReview: N(2, ['mobiles exclus', 'en cours · 2 h 41', 'restants', 'suspendu'], '1 287'),
+      navDone: N(2, ['mobiles exclus', 'terminée le 02/10', 'tout est relu', 'prêt']),
+      navExport: N(3, ['mobiles exclus', 'terminée le 02/10', 'restants', 'fichier complet'], '1 287'),
+      navLocked: N(3, ['mobiles exclus', 'en cours · 2 h 41', 'restants', 'suspendu'], '1 287'),
+      rows,
+      cols: ['rna', 'nom', 'commune', 'code_insee', 'type', 'valeur', 'valeur_lue', 'nominative', 'score', 'lu', 'decision', 'decide_le', 'url_source', 'vue_le', 'methode', 'extrait', 'collecte', 'regime', 'base_legale']
+    };
+  }
+}
+</script>
+</body>
+</html>

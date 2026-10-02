@@ -1,521 +1,846 @@
-/* Ecrit a la main (D5). Pas de framework : trois ecrans ne le justifient pas, et le
-   poids du bundle est un critere de conception.
+/*
+ * L'Établi (ADR-041) — feuille de style unique de l'interface locale, écrite à la main.
+ *
+ * Quatre stations dans une barre en haut d'écran ; une carte à la fois en relecture, la
+ * preuve à côté de la décision. Les jetons sont ceux de la maquette retenue
+ * (docs/design/etabli/, palette 2b), clair et sombre, avec leurs contrastes WCAG.
+ *
+ * Trois règles tiennent toute la feuille :
+ *
+ * - **L'alerte est réservée** à l'effacement et au RGPD. Une erreur de collecte se dit par
+ *   un cadre noir et une icône, jamais en rouge.
+ * - **La confiance tient en une seule teinte**, l'indigo, avec son chiffre et un mot :
+ *   jamais vert, orange, rouge. Les boutons de décision restent neutres.
+ * - **Rien en ligne.** La CSP est `default-src 'self'` : pas d'attribut `style`, pas de
+ *   police ni d'image distantes. Les largeurs passent par des classes, la progression par
+ *   `<progress>`.
+ */
 
-   Aucun style en ligne nulle part : la CSP du serveur est `default-src 'self'`, donc
-   `style-src 'self'`. Un `style="..."` serait refuse par le navigateur sans que rien ne
-   le signale — c'est pour cela que la barre de progression est un `<progress>` natif et
-   que la mise en page passe par des classes. */
+/* ---- Police ------------------------------------------------------------------ */
+
+/* Atkinson Hyperlegible Next, police variable, servie depuis cette machine (OFL). Un seul
+   fichier couvre le 400 et le 700. La mono reste celle du système : 0 Ko. */
+@font-face {
+  font-family: "Atkinson Hyperlegible Next";
+  src: url("/assets/atkinson-hyperlegible-next.woff2") format("woff2");
+  font-weight: 200 800;
+  font-style: normal;
+  font-display: swap;
+}
+
+/* ---- Jetons ------------------------------------------------------------------ */
 
 :root {
-  --fond: #f7f6f3;
-  --fond-carte: #ffffff;
-  --fond-creux: #efece6;
-  --texte: #1c1a17;
-  --discret: #6b655c;
-  --trait: #ddd8d0;
-  --trait-fort: #c6bfb4;
-  --accent: #1c4f7c;
-  --accent-doux: #e7eff6;
-  --alerte: #8c2f16;
-  --alerte-doux: #f8ebe6;
-  --bon: #2f6b3a;
-  --ombre: 0 1px 2px rgb(28 26 23 / 6%), 0 1px 6px rgb(28 26 23 / 4%);
-  --rayon: 8px;
+  color-scheme: light;
+  --bg: #F4F2EE;
+  --sf: #FFFFFF;
+  --sf2: #EAE7E1;
+  --tx: #1C1A17;
+  --mu: #5E5850;
+  --bd: #DDD8D0;
+  --pr: #4338A8;
+  --pr-bg: #ECEAFB;
+  --on-pr: #FFFFFF;
+  --ac: #0B6670;
+  --al: #B0201E;
+  --al-bg: #FBEAE8;
+  --c1: #E3E0F7;
+  --c2: #B7AFEB;
+  --c3: #7A6FD6;
+  --c4: #4338A8;
+
+  --f: "Atkinson Hyperlegible Next", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --m: ui-monospace, "Cascadia Mono", Consolas, Menlo, monospace;
+  --rayon: 10px;
+  --rayon-carte: 12px;
 }
 
 @media (prefers-color-scheme: dark) {
   :root {
-    --fond: #14130f;
-    --fond-carte: #1e1d19;
-    --fond-creux: #26241f;
-    --texte: #eae7e1;
-    --discret: #9c968c;
-    --trait: #35322d;
-    --trait-fort: #4a463f;
-    --accent: #7fb0d8;
-    --accent-doux: #1b2b38;
-    --alerte: #e8a08a;
-    --alerte-doux: #33201a;
-    --bon: #8fc79b;
-    --ombre: none;
+    color-scheme: dark;
+    --bg: #15141A;
+    --sf: #1E1D25;
+    --sf2: #282731;
+    --tx: #ECEAF2;
+    --mu: #A7A3B3;
+    --bd: #34323F;
+    --pr: #A49BFF;
+    --pr-bg: #2A2650;
+    --on-pr: #15141A;
+    --ac: #5CC8D2;
+    --al: #FF8B85;
+    --al-bg: #3A1F22;
+    --c1: #2E2A55;
+    --c2: #4D4596;
+    --c3: #7A6FD6;
+    --c4: #A49BFF;
   }
 }
 
-* { box-sizing: border-box; }
+/* ---- Base -------------------------------------------------------------------- */
+
+*, *::before, *::after { box-sizing: border-box; }
+
+html { -webkit-text-size-adjust: 100%; }
 
 body {
   margin: 0;
-  background: var(--fond);
-  color: var(--texte);
-  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif;
-}
-
-a { color: var(--accent); }
-
-/* Les ligatures d'une fonte monospace transforment « -- » en tiret long : une commande
-   affichee doit pouvoir etre recopiee telle quelle. */
-code {
-  font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
-  font-variant-ligatures: none;
-  font-feature-settings: "liga" 0, "calt" 0;
-  font-size: 0.9em;
-  background: var(--fond-creux);
-  border-radius: 3px;
-  padding: 0.05em 0.3em;
-}
-
-/* ---- Bandeau et navigation ------------------------------------------------ */
-
-header {
+  min-height: 100vh;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  align-items: center;
-  padding: 0.7rem 1.5rem;
-  background: var(--fond-carte);
-  border-bottom: 1px solid var(--trait);
+  flex-direction: column;
+  background: var(--bg);
+  color: var(--tx);
+  font: 16px/1.55 var(--f);
+  font-variant-numeric: tabular-nums;
 }
-
-header .marque { font-weight: 650; letter-spacing: -0.01em; }
-header nav { display: flex; gap: 0.35rem; flex: 1; }
-header .version { color: var(--discret); font-size: 0.8125rem; font-variant-numeric: tabular-nums; }
-/* En toutes lettres au pied de page : c'est la premiere question d'un support, et le « v1.3.0 »
-   de l'en-tete passait inapercu. */
-footer .version { display: block; margin-top: 0.25rem; font-variant-numeric: tabular-nums; }
-
-header nav a {
-  color: var(--discret);
-  text-decoration: none;
-  padding: 0.25rem 0.7rem;
-  border-radius: 999px;
-}
-header nav a:hover { color: var(--texte); background: var(--fond-creux); }
-header nav a.actif { color: var(--accent); background: var(--accent-doux); font-weight: 600; }
-
-/* ---- Barre de portee ------------------------------------------------------
-
-   Le seul endroit ou le departement se dit, et le seul ou il se change. Elle a sa
-   propre bande, sous le bandeau : coincee dans l'en-tete elle passait pour un ornement,
-   alors qu'elle porte la question « sur quoi je travaille ». */
-
-.portee {
-  display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 0.6rem 1.25rem;
-  padding: 0.6rem 1.5rem;
-  background: var(--fond-creux);
-  border-bottom: 1px solid var(--trait);
-  font-size: 0.9375rem;
-}
-
-.portee form { display: flex; align-items: center; gap: 0.5rem; }
-.portee label { color: var(--discret); }
-.portee input[type="text"] {
-  flex: 0 0 auto;
-  width: 4.5rem;
-  text-align: center;
-  font-weight: 650;
-  font-size: 1rem;
-  letter-spacing: 0.04em;
-}
-.portee .vide { color: var(--alerte); }
-.portee .autres { color: var(--discret); margin-left: auto; }
-.portee .autres a { margin-left: 0.4rem; }
-
-/* ---- Ossature -------------------------------------------------------------
-
-   62rem centres dans un ecran de 2000 px laissaient deux marges vides plus larges que
-   le contenu. La colonne s'elargit, mais le texte suivi garde une longueur de ligne
-   lisible : c'est `.prose` qui la borne, pas la page. */
 
 main {
-  max-width: 74rem;
+  flex: 1;
+  width: 100%;
+  max-width: 1440px;
   margin: 0 auto;
-  padding: 1.75rem 1.5rem 3rem;
+  padding: 28px;
 }
 
-footer {
-  max-width: 74rem;
-  margin: 0 auto;
-  padding: 0 1.5rem 2.5rem;
-  color: var(--discret);
-  font-size: 0.875rem;
+h1 { font-size: 34px; line-height: 1.1; margin: 0 0 16px; font-weight: 700; }
+h2 { font-size: 18px; line-height: 1.3; margin: 0 0 12px; font-weight: 700; }
+h3 { font-size: 16px; line-height: 1.3; margin: 18px 0 8px; font-weight: 700; }
+p { margin: 0 0 12px; }
+
+a { color: var(--pr); text-underline-offset: 2px; }
+a:hover { text-decoration-thickness: 2px; }
+
+code, kbd {
+  font-family: var(--m);
+  font-size: 0.875em;
+  font-variant-ligatures: none;
+}
+code {
+  padding: 1px 5px;
+  border-radius: 4px;
+  background: var(--sf2);
+}
+kbd {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--bd);
+  border-radius: 4px;
+  color: var(--mu);
+  font-size: 12px;
+  line-height: 1.6;
 }
 
-main > p, main > .discret, .intro, section > p {
-  max-width: 72ch;
-}
+strong, b { font-weight: 700; }
 
-h2 {
-  font-size: 1.0625rem;
-  letter-spacing: 0.02em;
-  text-transform: uppercase;
-  color: var(--discret);
-  margin: 2.25rem 0 0.9rem;
-  padding-bottom: 0.4rem;
-  border-bottom: 1px solid var(--trait);
-}
-h2:first-child { margin-top: 0; }
-h3 { font-size: 0.9375rem; margin: 1.5rem 0 0.5rem; }
+.discret { color: var(--mu); font-size: 14px; }
+.grand { font-size: 24px; font-weight: 700; margin: 0 0 12px; }
+.surtitre { color: var(--mu); font-size: 14px; margin: 0 0 6px; }
+.vide { color: var(--mu); font-style: italic; }
 
-section { margin-bottom: 0.5rem; }
-
-.discret { color: var(--discret); font-size: 0.875rem; }
-.alerte { color: var(--alerte); }
-.bon { color: var(--bon); }
-
-/* ---- Encarts --------------------------------------------------------------
-
-   Trois niveaux, et ils ne disent pas la meme chose : `avis` informe, `avertissement`
-   engage la responsabilite du lecteur, `refus` dit qu'une action n'a pas eu lieu. */
-
-.avis, .avertissement, .refus {
-  border-left: 3px solid;
-  border-radius: 0 var(--rayon) var(--rayon) 0;
-  padding: 0.7rem 1rem;
-  margin: 0 0 1rem;
-  max-width: 72ch;
-  font-size: 0.9375rem;
-}
-
-.avis { border-color: var(--accent); background: var(--accent-doux); }
-.avertissement { border-color: var(--alerte); background: var(--alerte-doux); }
-.refus { border-color: var(--alerte); background: var(--alerte-doux); color: var(--alerte); }
-
-/* ---- Champs et boutons ---------------------------------------------------- */
-
-input[type="text"], input[type="url"], select {
-  font: inherit;
-  padding: 0.4rem 0.6rem;
-  border: 1px solid var(--trait-fort);
-  border-radius: 6px;
-  background: var(--fond-carte);
-  color: var(--texte);
-}
-input[type="text"], input[type="url"] { flex: 1 1 14rem; min-width: 0; }
-input:focus-visible, select:focus-visible, button:focus-visible, a:focus-visible,
-summary:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: 1px;
-}
-input:invalid { border-color: var(--alerte); }
-
-button {
-  font: inherit;
-  padding: 0.4rem 0.9rem;
-  border: 1px solid var(--trait-fort);
-  border-radius: 6px;
-  background: var(--fond-carte);
-  color: var(--texte);
-  cursor: pointer;
+/* Ce qu'un lecteur d'écran doit entendre et qu'on n'a pas besoin de voir. */
+.masque {
+  position: absolute !important;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
   white-space: nowrap;
 }
-button:hover { border-color: var(--accent); color: var(--accent); }
 
-/* L'action que l'ecran attend. Une seule par bloc : deux boutons pleins cote a cote ne
-   designent plus rien. */
-button.primaire {
-  background: var(--accent);
-  border-color: var(--accent);
-  color: var(--fond-carte);
-  font-weight: 600;
+:focus-visible {
+  outline: 3px solid var(--pr);
+  outline-offset: 2px;
 }
-button.primaire:hover { filter: brightness(1.12); color: var(--fond-carte); }
 
-/* « Oublier » supprime definitivement, la ou « rejeter » pose un statut. Le bouton le dit. */
-button.danger { color: var(--alerte); border-color: var(--alerte); }
-button.danger:hover { background: var(--alerte-doux); color: var(--alerte); border-color: var(--alerte); }
+/* ---- En-tête : logo, plaque du département, stations, aide ------------------- */
 
-:disabled { cursor: not-allowed; opacity: 0.55; }
+header.barre {
+  display: flex;
+  align-items: stretch;
+  min-height: 68px;
+  background: var(--sf);
+  border-bottom: 1px solid var(--bd);
+  position: relative;
+}
 
-/* ---- Chiffres -------------------------------------------------------------
+.marque {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 22px;
+  color: var(--tx);
+  text-decoration: none;
+  white-space: nowrap;
+}
+.marque > span { display: flex; flex-direction: column; line-height: 1.2; }
+.marque strong { font-size: 15px; }
+.sous-marque { font-size: 12px; color: var(--mu); }
 
-   Une grille plutot qu'une rangee flex : sur un ecran large, `flex: 1 1 8rem` etirait
-   quatre cartes sur toute la largeur et un chiffre de trois caracteres flottait au
-   milieu de vingt centimetres de vide. */
+.logo { flex: 0 0 auto; }
+.logo-fond { fill: var(--pr); }
+.logo-pile { fill: var(--c2); }
+.logo-carte { fill: var(--sf); }
 
+/* La plaque : le seul endroit où le département se lit et se change. */
+details.portee {
+  position: relative;
+  display: flex;
+  border-left: 1px solid var(--bd);
+  border-right: 1px solid var(--bd);
+  background: var(--sf2);
+}
+details.portee > summary {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 0 22px;
+  min-height: 68px;
+  cursor: pointer;
+  list-style: none;
+  white-space: nowrap;
+}
+details.portee > summary::-webkit-details-marker { display: none; }
+details.portee > summary strong::after { content: " ▾"; color: var(--mu); }
+details.portee[open] > summary strong::after { content: " ▴"; }
+.etiquette-plaque { font-size: 12px; color: var(--mu); }
+
+.plaque-panneau {
+  position: absolute;
+  top: 100%;
+  left: -1px;
+  z-index: 20;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+  padding: 18px 20px;
+  background: var(--sf);
+  border: 1px solid var(--bd);
+  border-radius: 0 0 var(--rayon) var(--rayon);
+  box-shadow: 0 12px 28px rgb(0 0 0 / 14%);
+}
+.plaque-panneau form { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin-bottom: 12px; }
+.plaque-panneau label { width: 100%; font-size: 14px; color: var(--mu); }
+.plaque-panneau input { width: 5.5em; }
+.plaque-panneau p { margin: 0 0 8px; font-size: 14px; }
+
+/* Les stations : la barre est le parcours. */
+#stations { display: flex; flex: 1; min-width: 0; }
+.stations-aide { display: flex; flex: 1; min-width: 0; }
+
+ol.stations {
+  display: flex;
+  flex: 1;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+ol.stations > li { flex: 1; display: flex; min-width: 0; }
+
+a.station {
+  flex: 1;
+  display: grid;
+  grid-template-columns: auto 1fr;
+  grid-template-rows: auto auto;
+  column-gap: 10px;
+  align-content: center;
+  padding: 10px 20px;
+  border-right: 1px solid var(--bd);
+  color: var(--tx);
+  text-decoration: none;
+  min-width: 0;
+}
+a.station:hover { background: var(--bg); }
+a.station.actif {
+  background: var(--pr-bg);
+  box-shadow: inset 0 -4px 0 var(--pr);
+}
+.station .rang {
+  grid-row: 1 / span 2;
+  align-self: center;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 2px solid var(--bd);
+  color: var(--mu);
+  font-size: 12px;
+  font-weight: 700;
+}
+.station.actif .rang { border-color: var(--pr); background: var(--pr); color: var(--on-pr); }
+.station .nom { font-weight: 700; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+.station .sous {
+  font-size: 13px;
+  color: var(--mu);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.badge {
+  display: inline-block;
+  min-width: 18px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: var(--pr);
+  color: var(--on-pr);
+  font-size: 13px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.bouton-aide {
+  width: 68px;
+  flex: 0 0 68px;
+  border: none;
+  border-left: 1px solid var(--bd);
+  border-radius: 0;
+  background: transparent;
+  color: var(--tx);
+  font-size: 20px;
+  font-weight: 700;
+  cursor: pointer;
+}
+.bouton-aide:hover { background: var(--bg); }
+
+.refus-portee { max-width: 1440px; margin: 16px auto 0; width: calc(100% - 56px); }
+
+/* ---- Panneau d'aide ---------------------------------------------------------- */
+
+/* Un popover déclaratif : il ne recouvre pas la carte, on lit l'aide et on décide sans
+   le fermer. Placé à droite, sur toute la hauteur. */
+.panneau-aide {
+  position: fixed;
+  inset: 0 0 0 auto;
+  width: 400px;
+  max-width: 100vw;
+  height: 100vh;
+  max-height: none;
+  margin: 0;
+  padding: 22px 24px;
+  overflow-y: auto;
+  border: none;
+  border-left: 1px solid var(--bd);
+  background: var(--sf);
+  color: var(--tx);
+  box-shadow: -12px 0 32px rgb(0 0 0 / 14%);
+  font-size: 15px;
+}
+.panneau-aide::backdrop { background: transparent; }
+.panneau-entete { display: flex; align-items: center; justify-content: space-between; margin-bottom: 8px; }
+.panneau-entete h2 { margin: 0; font-size: 22px; }
+.panneau-aide h3 { font-size: 15px; margin-top: 22px; }
+.panneau-aide dl { margin: 0; }
+.panneau-aide dt { font-weight: 700; margin-top: 10px; }
+.panneau-aide dd { margin: 2px 0 0; color: var(--mu); }
+.etapes-courtes { margin: 0; padding-left: 1.2rem; }
+.etapes-courtes li { margin-bottom: 4px; }
+
+/* ---- Pied de page ------------------------------------------------------------ */
+
+footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 18px;
+  align-items: center;
+  padding: 12px 28px;
+  border-top: 1px solid var(--bd);
+  font-size: 13px;
+  color: var(--mu);
+}
+footer .version { margin-left: auto; }
+
+/* ---- Composants communs ------------------------------------------------------ */
+
+.carte,
+.suivi-principal,
+#chiffres,
+.bloc-commandes,
+.bloc-historique,
+.carte-relecture {
+  background: var(--sf);
+  border: 1px solid var(--bd);
+  border-radius: var(--rayon-carte);
+}
+.carte { padding: 22px 26px; }
+
+button, a.bouton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 10px 18px;
+  border: 2px solid var(--tx);
+  border-radius: var(--rayon);
+  background: var(--sf);
+  color: var(--tx);
+  font: 700 15px/1.2 var(--f);
+  text-decoration: none;
+  cursor: pointer;
+}
+button:hover, a.bouton:hover { background: var(--bg); }
+button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+button.primaire, a.bouton {
+  background: var(--pr);
+  border-color: var(--pr);
+  color: var(--on-pr);
+}
+button.primaire:hover, a.bouton:hover { filter: brightness(1.08); background: var(--pr); }
+
+/* La seule couleur d'action qui ne soit pas l'indigo : celle qui efface. */
+button.danger {
+  background: var(--al);
+  border-color: var(--al);
+  color: var(--sf);
+}
+button.danger:hover { filter: brightness(1.08); background: var(--al); }
+
+input[type="text"], input[type="url"] {
+  padding: 9px 12px;
+  border: 1px solid var(--bd);
+  border-radius: 8px;
+  background: var(--sf);
+  color: var(--tx);
+  font: 15px var(--f);
+}
+input[type="text"]:focus, input[type="url"]:focus { border-color: var(--pr); }
+
+input[type="radio"], input[type="checkbox"] { accent-color: var(--pr); width: 1.1rem; height: 1.1rem; }
+
+details > summary { cursor: pointer; }
+details > summary:hover { color: var(--pr); }
+
+/* Messages. L'avertissement porte la couleur d'alerte : il parle de données personnelles. */
+.avis, .avertissement, .refus, .succes {
+  padding: 12px 16px;
+  border-radius: var(--rayon);
+  margin: 0 0 14px;
+}
+.avis { background: var(--pr-bg); }
+.avertissement { background: var(--al-bg); border-left: 4px solid var(--al); }
+.refus { background: var(--sf); border: 2px solid var(--tx); }
+.refus::before { content: "⚠ "; }
+.succes { background: var(--pr-bg); }
+
+.intro { max-width: 80ch; color: var(--mu); }
+
+/* Tableaux. */
+table { width: 100%; border-collapse: collapse; font-size: 14px; }
+th { text-align: left; font-weight: 400; color: var(--mu); font-size: 13px; padding: 0 8px 4px 0; }
+td { padding: 7px 8px 7px 0; border-top: 1px solid var(--bd); vertical-align: top; }
+th.num, td.num { text-align: right; }
+
+/* Chiffres en tuiles. */
 .cartes {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr));
-  gap: 0.75rem;
-  margin-bottom: 1rem;
+  gap: 12px;
+  margin: 0 0 12px;
 }
-
 .chiffre {
-  background: var(--fond-carte);
-  border: 1px solid var(--trait);
-  border-radius: var(--rayon);
-  padding: 0.85rem 1rem;
-  box-shadow: var(--ombre);
-}
-.chiffre b {
-  display: block;
-  font-size: 1.6rem;
-  font-weight: 650;
-  line-height: 1.2;
-  letter-spacing: -0.02em;
-}
-.chiffre span { color: var(--discret); font-size: 0.8125rem; line-height: 1.35; display: block; margin-top: 0.2rem; }
-
-/* ---- Tableaux ------------------------------------------------------------- */
-
-table {
-  border-collapse: collapse;
-  width: 100%;
-  font-size: 0.9375rem;
-  background: var(--fond-carte);
-  border: 1px solid var(--trait);
-  border-radius: var(--rayon);
-  overflow: hidden;
-}
-th, td { text-align: left; padding: 0.5rem 0.75rem; border-bottom: 1px solid var(--trait); }
-tbody tr:last-child td { border-bottom: none; }
-th {
-  color: var(--discret);
-  font-weight: 600;
-  font-size: 0.8125rem;
-  text-transform: uppercase;
-  letter-spacing: 0.03em;
-  background: var(--fond-creux);
-}
-/* Une colonne de nombres s'aligne a droite, titre compris — sans quoi le titre reste a
-   gauche pendant que la valeur file a droite, et la lecture se perd. */
-th.num, td.num { text-align: right; }
-td > span.n { display: block; }
-td > span.n, .chiffre b { font-variant-numeric: tabular-nums; }
-
-/* ---- Ecran de revue -------------------------------------------------------
-
-   La carte etait un bloc plat : valeur, metadonnees et six controles alignes bout a
-   bout, sans que rien ne dise ce qu'on regardait. Elle a maintenant un chapeau qui
-   nomme le type, un corps, et des actions groupees par intention. */
-
-.intro { font-size: 0.9375rem; }
-
-.legende {
-  margin: 0.75rem 0 1.5rem;
-  border: 1px solid var(--trait);
-  border-radius: var(--rayon);
-  background: var(--fond-carte);
-  max-width: 72ch;
-}
-.legende summary {
-  cursor: pointer;
-  padding: 0.6rem 1rem;
-  font-size: 0.9375rem;
-  color: var(--accent);
-}
-.legende dl { margin: 0; padding: 0 1rem 0.9rem; font-size: 0.9375rem; }
-.legende dt { font-weight: 650; margin-top: 0.6rem; }
-.legende dd { margin: 0.1rem 0 0; color: var(--discret); }
-
-.contact {
-  background: var(--fond-carte);
-  border: 1px solid var(--trait);
-  border-radius: var(--rayon);
-  padding: 1rem 1.15rem 0.9rem;
-  margin-bottom: 1rem;
-  box-shadow: var(--ombre);
-}
-
-.contact .chapeau {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1rem;
-  align-items: baseline;
-  justify-content: space-between;
-  border-bottom: 1px solid var(--trait);
-  padding-bottom: 0.5rem;
-  margin-bottom: 0.7rem;
+  flex-direction: column;
+  padding: 14px 16px;
+  border-radius: var(--rayon);
+  background: var(--sf2);
 }
-.contact .type {
-  font-size: 0.75rem;
-  text-transform: uppercase;
-  letter-spacing: 0.06em;
-  font-weight: 650;
-  color: var(--discret);
-}
-.contact .score { font-variant-numeric: tabular-nums; font-size: 0.875rem; }
+.chiffre b { font-size: 28px; line-height: 1.15; }
+.chiffre span { font-size: 14px; color: var(--mu); }
 
-.contact .valeur {
-  font-size: 1.2rem;
-  font-weight: 650;
-  word-break: break-word;
-  overflow-wrap: anywhere;
-  line-height: 1.35;
+dl.compteurs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 12px;
+  margin: 0 0 12px;
 }
-.contact .cible { margin-top: 0.15rem; }
-
-.contact .meta {
+dl.compteurs > div {
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.35rem 0.75rem;
-  align-items: center;
-  margin-top: 0.5rem;
-  font-size: 0.8125rem;
+  flex-direction: column-reverse;
+  padding: 14px 16px;
+  border-radius: var(--rayon);
+  background: var(--sf2);
 }
+dl.compteurs dt { font-size: 14px; color: var(--mu); }
+dl.compteurs dd { margin: 0; font-size: 30px; font-weight: 700; line-height: 1.15; }
 
-/* Le regime d'une adresse est une qualification juridique, pas une note de bas de page :
-   il se distingue du reste de la ligne de metadonnees. */
-.contact .meta .etiquette {
-  border: 1px solid var(--trait-fort);
-  border-radius: 999px;
-  padding: 0.05rem 0.55rem;
-  color: var(--discret);
-}
-.contact .meta .etiquette.bonne { color: var(--bon); border-color: var(--bon); }
-.contact .meta .etiquette.alerte { color: var(--alerte); border-color: var(--alerte); }
-
-.contact ul {
-  margin: 0.7rem 0 0;
-  padding: 0.55rem 0.75rem 0.55rem 1.9rem;
-  background: var(--fond-creux);
-  border-radius: 6px;
-  color: var(--discret);
-  font-size: 0.875rem;
-}
-.contact ul li { margin: 0.1rem 0; }
-
-.contact .lien-source { margin-top: 0.7rem; font-size: 0.875rem; color: var(--discret); }
-.contact .source { word-break: break-all; overflow-wrap: anywhere; }
-
-/* Trois groupes, trois intentions : trancher, corriger, effacer. Alignes bout a bout,
-   un champ paraissait appartenir au bouton qui le precede. */
-form.arbitrage {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.25rem;
-  align-items: center;
-  margin-top: 0.9rem;
-  padding-top: 0.85rem;
-  border-top: 1px solid var(--trait);
-}
-form.arbitrage .groupe {
-  display: flex;
-  gap: 0.4rem;
-  align-items: center;
-  flex: 0 1 auto;
-}
-form.arbitrage .groupe:nth-child(2) { flex: 1 1 16rem; }
-form.arbitrage .groupe:nth-child(3) { flex: 1 1 18rem; }
-form.arbitrage .groupe:nth-child(3) { margin-left: auto; }
-
-/* ---- Suivi du run --------------------------------------------------------- */
-
-/* `<progress>` natif, et non un div dont on reglerait la largeur : un attribut `style`
-   en ligne serait refuse par la CSP, et la barre resterait vide sans que rien ne le
-   signale. L'apparence par defaut differe d'un moteur a l'autre, d'ou les trois
-   selecteurs : `appearance: none` puis le fond, la valeur WebKit, la valeur Gecko. */
+/* `<progress>` natif, et non un div dont on réglerait la largeur : un attribut `style`
+   en ligne serait refusé par la CSP. Trois sélecteurs, un par moteur. */
 .progression {
   display: flex;
   align-items: center;
-  gap: 0.75rem;
   flex-wrap: wrap;
-  margin: 0.5rem 0 0.75rem;
+  gap: 6px 12px;
+  margin: 8px 0 10px;
 }
-
 .progression progress {
   appearance: none;
-  flex: 1 1 18rem;
-  height: 0.6rem;
+  flex: 1 1 16rem;
+  height: 8px;
   border: none;
-  border-radius: 999px;
-  background: var(--trait);
+  border-radius: 4px;
+  background: var(--sf2);
   overflow: hidden;
 }
-.progression progress::-webkit-progress-bar { background: var(--trait); border-radius: 999px; }
-.progression progress::-webkit-progress-value { background: var(--accent); border-radius: 999px; }
-.progression progress::-moz-progress-bar { background: var(--accent); border-radius: 999px; }
-.progression .etiquette { font-size: 0.875rem; font-variant-numeric: tabular-nums; }
+.progression progress::-webkit-progress-bar { background: var(--sf2); border-radius: 4px; }
+.progression progress::-webkit-progress-value { background: var(--pr); border-radius: 4px; }
+.progression progress::-moz-progress-bar { background: var(--pr); border-radius: 4px; }
+.progression .etiquette { font-size: 13px; color: var(--mu); }
 
-/* Les trois passes du run. Une liste ordonnee : c'est bien une suite d'etapes, et un
-   lecteur d'ecran doit l'entendre comme telle. */
-.etapes {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.4rem 1.4rem;
-  list-style: none;
-  margin: 0.75rem 0 0.5rem;
-  padding: 0;
-  font-size: 0.875rem;
-}
-.etapes li { position: relative; color: var(--discret); }
-.etapes li + li::before {
-  content: "→";
-  position: absolute;
-  left: -1rem;
-  color: var(--trait-fort);
-}
-.etapes li.faite { color: var(--bon); }
-.etapes li.faite::after { content: " ✓"; }
-.etapes li.courante { color: var(--texte); font-weight: 650; }
+/* La jauge de confiance : dix points, une seule teinte. Pleins = lus, cerclés = manquants. */
+.jauge { display: inline-flex; gap: 3px; vertical-align: middle; }
+.jauge span { width: 10px; height: 10px; border-radius: 50%; }
+.jauge .on { background: var(--c4); }
+.jauge .off { border: 1.5px solid var(--c3); }
 
-/* Lancer, arreter, regler : les seules commandes de l'interface qui agissent. */
-.commandes, .reglages {
+/* ---- Préparer ---------------------------------------------------------------- */
+
+.grille-preparer {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 24px;
+}
+
+.reglages, .commandes {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
-  gap: 0.75rem;
-  margin-bottom: 0.75rem;
+  gap: 10px;
+  margin: 0 0 12px;
 }
-.commandes .discret, .reglages label { flex: 1 1 20rem; }
-.reglages label { display: flex; align-items: center; gap: 0.5rem; }
+.reglages label { display: flex; flex-direction: column; gap: 4px; flex: 1 1 16rem; font-size: 14px; color: var(--mu); }
+.reglages label input[type="url"] { width: 100%; }
 
-/* La case du drapeau des mobiles : elle ouvre un traitement de donnees personnelles,
-   elle ne se glisse donc pas dans une ligne de formulaire ordinaire. */
-label.bascule { flex: 1 1 22rem; display: flex; align-items: center; gap: 0.6rem; cursor: pointer; }
-label.bascule input { width: 1.1rem; height: 1.1rem; accent-color: var(--alerte); flex: 0 0 auto; }
-
-/* Les liens de page, rendus deux fois : au-dessus et au-dessous de la file. Une carte de
-   revue est haute, et remonter chercher « suivante » apres avoir lu dix contacts est le
-   genre de frottement qui fait abandonner une revue. */
-.pages {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.9rem;
-  align-items: baseline;
-  margin: 1rem 0;
-  font-size: 0.9375rem;
+/* En bloc et non en flex : la phrase porte un `<em>`, et un conteneur flex en ferait un
+   élément à part, détaché de ses voisins. */
+label.bascule {
+  display: block;
+  color: var(--tx);
+  font-size: 15px;
+  cursor: pointer;
 }
-.pages span { font-variant-numeric: tabular-nums; }
+.reglages label.bascule { flex: 1 1 16rem; }
+label.bascule input { accent-color: var(--al); vertical-align: -3px; margin: 0 8px 0 0; }
 
-/* ---- Ecrans etroits -------------------------------------------------------
-
-   Un telephone n'est pas la cible, mais l'outil s'ouvre dans le navigateur du poste :
-   une fenetre a demi-ecran est un cas courant, et les trois groupes d'arbitrage doivent
-   y rester distincts plutot que de s'empiler en un seul rang illisible. */
-
-@media (max-width: 40rem) {
-  header, .portee, main, footer { padding-left: 1rem; padding-right: 1rem; }
-  .portee .autres { margin-left: 0; }
-  form.arbitrage { gap: 0.6rem; }
-  form.arbitrage .groupe { flex: 1 1 100%; }
-  form.arbitrage .groupe:nth-child(3) { margin-left: 0; }
-  .contact .valeur { font-size: 1.05rem; }
-}
-
-/* ---- Mode d'emploi --------------------------------------------------------
-
-   Un ecran de texte, et le seul de l'outil : sa lisibilite tient a la longueur de ligne
-   et a la respiration entre les etapes, pas a une mise en page. La colonne y est donc
-   plus etroite qu'ailleurs. */
-
-.marche {
+.etapes-reglage {
   list-style: none;
-  counter-reset: etape;
   margin: 0;
   padding: 0;
-  max-width: 72ch;
+  display: grid;
+  gap: 20px;
+  max-width: 760px;
+}
+.numero {
+  display: inline-grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  margin-right: 8px;
+  border-radius: 50%;
+  background: var(--pr);
+  color: var(--on-pr);
+  font-size: 15px;
 }
 
-.marche > li {
-  counter-increment: etape;
-  position: relative;
-  padding: 0 0 0 3rem;
-  margin-bottom: 1.75rem;
+/* Repartir de zéro : replié, en bas, loin de l'usage courant. */
+details.repli-sensible {
+  max-width: 80ch;
+  border-top: 1px dashed var(--bd);
+  padding-top: 14px;
+}
+details.repli-sensible > summary { color: var(--al); font-weight: 700; }
+
+.zone-sensible {
+  margin-top: 12px;
+  padding: 18px 22px;
+  border: 1px solid var(--bd);
+  border-radius: var(--rayon-carte);
+  background: var(--sf);
+}
+.zone-sensible .commandes { margin-bottom: 0; }
+.zone-sensible .commandes + .commandes { margin-top: 8px; }
+.zone-sensible .bilan, .zone-sensible .reste {
+  margin: 8px 0 16px;
+  padding-left: 1.25rem;
+  font-size: 15px;
+}
+.zone-sensible .reste {
+  list-style: none;
+  padding: 8px 12px;
+  border-left: 3px solid var(--ac);
+  color: var(--mu);
 }
 
+/* ---- Collecter --------------------------------------------------------------- */
+
+/* Deux colonnes : la machine à gauche (suivi, puis bilan), les gestes à droite. Le bloc
+   de suivi est un seul fragment rafraîchi ; `display: contents` laisse ses deux moitiés
+   prendre leur place dans la grille de l'écran sans le couper en deux requêtes. */
+main.ecran-collecter {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 360px;
+  /* La colonne de droite couvre les deux rangées : sans ce `1fr`, sa hauteur se répartirait
+     sur les deux, et un vide s'ouvrirait sous le suivi. */
+  grid-template-rows: auto 1fr;
+  gap: 20px;
+  align-items: start;
+}
+#suivi, .suivi-grille { display: contents; }
+.suivi-principal { grid-column: 1; grid-row: 1; padding: 26px 28px; }
+.suivi-cote { grid-column: 2; grid-row: 1 / span 2; display: flex; flex-direction: column; gap: 20px; }
+#chiffres { grid-column: 1; grid-row: 2; padding: 22px 28px; }
+
+.suivi-principal h2 { font-size: 34px; line-height: 1.1; margin-bottom: 8px; }
+
+.bloc-commandes { padding: 22px; }
+.bloc-commandes .commandes { flex-direction: column; align-items: stretch; }
+.bloc-commandes .commandes button { padding: 14px; font-size: 16px; }
+.bloc-commandes .commandes .discret { flex: none; }
+
+.invite-relire {
+  padding: 22px;
+  border-radius: var(--rayon-carte);
+  background: var(--pr-bg);
+}
+.invite-relire p { font-size: 15px; }
+.invite-relire p strong { font-size: 17px; }
+
+.bloc-historique { padding: 20px 22px; }
+.bloc-historique h3 { margin-top: 0; font-size: 17px; }
+.detail-file { margin-top: 12px; font-size: 14px; }
+
+/* Les trois passes du run, en frise. Une liste ordonnée : c'est une suite d'étapes. */
+ol.etapes {
+  display: grid;
+  grid-template-columns: 1fr 2fr 1fr;
+  gap: 6px;
+  margin: 18px 0 8px;
+  padding: 0;
+  list-style: none;
+  font-size: 15px;
+  font-weight: 700;
+}
+ol.etapes li { padding-top: 14px; position: relative; color: var(--tx); }
+ol.etapes li::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--pr);
+}
+ol.etapes li.faite::after { content: " · faite"; font-weight: 400; color: var(--mu); }
+ol.etapes li.courante::after { content: " · en cours"; font-weight: 400; color: var(--mu); }
+ol.etapes li.courante::before { background: var(--c2); }
+ol.etapes li.a_venir { color: var(--mu); }
+ol.etapes li.a_venir::before { background: none; border: 1px dashed var(--mu); height: 6px; }
+ol.etapes li.a_venir::after { content: " · à venir"; font-weight: 400; }
+ol.etapes-presentees li::after { content: none !important; }
+ol.etapes-presentees li .discret { display: block; font-weight: 400; }
+
+.journal {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  font: 13px/1.8 var(--m);
+  color: var(--mu);
+}
+.journal time { color: var(--ac); }
+
+.detail-chiffres { margin-top: 8px; }
+.detail-chiffres > summary { color: var(--pr); font-size: 15px; }
+
+/* ---- Relire ------------------------------------------------------------------ */
+
+.entete-relire { display: flex; align-items: baseline; justify-content: space-between; gap: 16px; }
+.bascule-mode { display: inline-flex; border: 1px solid var(--bd); border-radius: var(--rayon); overflow: hidden; }
+.bascule-mode a, .bascule-mode span { padding: 6px 14px; font-size: 14px; text-decoration: none; color: var(--tx); }
+.bascule-mode .actif { background: var(--pr); color: var(--on-pr); font-weight: 700; }
+.compteur-relecture { margin-bottom: 16px; }
+
+.atelier {
+  display: grid;
+  grid-template-columns: 300px minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+
+.file-relecture h2 { display: flex; justify-content: space-between; font-size: 14px; margin: 0; }
+.file-relecture h2 .discret { font-weight: 400; }
+.file-items { list-style: none; margin: 0 0 10px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+a.item {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 12px 14px;
+  border: 1px solid var(--bd);
+  border-radius: var(--rayon);
+  background: var(--sf);
+  color: var(--tx);
+  text-decoration: none;
+}
+a.item:hover { border-color: var(--pr); }
+a.item.actuel { border: 2px solid var(--pr); }
+a.item .type { font-size: 12px; color: var(--mu); }
+.valeur-courte { font: 700 13px var(--m); word-break: break-all; }
+.cible-courte { font-size: 13px; }
+
+.carte-relecture { display: flex; flex-direction: column; border-radius: 14px; }
+.carte-corps {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 28px;
+  padding: 26px 30px 20px;
+}
+.carte-lecture { display: flex; flex-direction: column; gap: 12px; }
+.carte-preuve { display: flex; flex-direction: column; gap: 10px; }
+
+.carte-relecture .type { font-size: 14px; color: var(--mu); }
+.carte-relecture .valeur { font-size: 24px; font-weight: 700; line-height: 1.25; word-break: break-all; }
+.carte-relecture .cible { font-size: 16px; }
+
+/* Le régime juridique : un cadre, pas une couleur. Nominatif ne veut pas dire faux. */
+.regime .etiquette {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 8px;
+  border: 1.5px solid var(--bd);
+  font-size: 14px;
+}
+.regime .etiquette.alerte { border-color: var(--tx); }
+.regime .etiquette.alerte::before { content: "👤"; font-size: 13px; }
+
+.confiance { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; margin-top: 4px; }
+.confiance .score { font-weight: 700; }
+.confiance .mot { font-size: 14px; color: var(--mu); }
+.provisoire { font-size: 13px; color: var(--ac); }
+
+.motifs p { margin: 0 0 6px; }
+.motifs ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 5px; font-size: 14px; }
+.motifs li { display: flex; gap: 8px; }
+.facteur { flex: 0 0 52px; font-weight: 700; }
+
+figure.preuve { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+figure.preuve figcaption { font-size: 14px; font-weight: 700; color: var(--ac); }
+figure.preuve blockquote {
+  margin: 0;
+  padding: 16px 18px;
+  border-radius: var(--rayon);
+  background: var(--sf2);
+  font-size: 15px;
+  line-height: 1.6;
+}
+mark { background: var(--c2); color: var(--tx); padding: 1px 3px; border-radius: 3px; }
+
+.lien-source { font-size: 14px; line-height: 1.6; color: var(--mu); }
+.lien-source a.source { color: var(--ac); word-break: break-all; }
+.lien-source .discret { display: block; }
+
+/* Le bandeau de décision : trois boutons de même poids, puis la correction. */
+form.arbitrage {
+  margin: 0;
+  padding: 18px 30px 0;
+  border-top: 1px solid var(--bd);
+  background: var(--bg);
+  border-radius: 0 0 14px 14px;
+  display: grid;
+  grid-template-columns: 2fr 1fr;
+  gap: 12px;
+  align-items: end;
+}
+.decisions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+.decisions button { padding: 14px; font-size: 17px; }
+label.correction { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--mu); }
+details.legende { font-size: 14px; padding-bottom: 10px; }
+details.legende > summary { color: var(--pr); }
+details.legende dl { margin: 8px 0 0; }
+details.legende dt { font-weight: 700; color: var(--tx); }
+details.legende dd { margin: 0 0 6px; color: var(--mu); }
+
+/* Oublier : à part, en dessous, sous un filet. Le seul geste sans retour. */
+details.oubli {
+  grid-column: 1 / -1;
+  margin: 0 -30px;
+  padding: 12px 30px 16px;
+  border-top: 1px dashed var(--bd);
+  background: var(--sf);
+  border-radius: 0 0 14px 14px;
+  font-size: 14px;
+}
+details.oubli > summary { color: var(--al); }
+details.oubli .groupe { display: flex; flex-wrap: wrap; gap: 10px; }
+details.oubli .groupe input { flex: 1 1 16rem; }
+
+.file-vide { max-width: 640px; }
+
+table.liste-relecture td { vertical-align: middle; }
+.arbitrage-ligne { display: flex; gap: 6px; align-items: center; flex-wrap: wrap; }
+.arbitrage-ligne button { padding: 6px 12px; font-size: 14px; border-width: 1.5px; }
+.source-courte { font-size: 13px; color: var(--mu); }
+
+nav.pages { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin: 12px 0; font-size: 14px; }
+
+/* ---- Exporter ---------------------------------------------------------------- */
+
+.grille-export {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.2fr);
+  gap: 24px;
+  align-items: start;
+  margin-bottom: 20px;
+}
+.export-reglages, .export-sortie {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 22px 26px;
+  background: var(--sf);
+  border: 1px solid var(--bd);
+  border-radius: var(--rayon-carte);
+}
+
+fieldset.profils { border: none; margin: 0 0 12px; padding: 0; display: flex; flex-direction: column; gap: 10px; }
+fieldset.profils legend { font-weight: 700; margin-bottom: 8px; }
+label.profil {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 14px 16px;
+  border: 1px solid var(--bd);
+  border-radius: var(--rayon);
+  cursor: pointer;
+}
+label.profil:has(input:checked) { border: 2px solid var(--pr); background: var(--pr-bg); }
+label.profil input { margin-top: 3px; flex: 0 0 auto; }
+label.profil .discret { display: block; margin-top: 4px; }
+
+.restes { margin-top: 12px; padding-top: 12px; border-top: 1px solid var(--bd); }
+.restes h3 { margin-top: 0; }
+.restes dl { margin: 0 0 8px; }
+.restes dl > div { display: flex; justify-content: space-between; gap: 12px; padding: 4px 0; font-size: 14px; }
+.restes dd { margin: 0; font-weight: 700; }
+
+.volume { font-size: 18px; }
+.volume strong { font-size: 30px; }
+.apercu { margin: 8px 0 12px; }
+.defilement { overflow-x: auto; border: 1px solid var(--bd); border-radius: var(--rayon); }
+.defilement table { font-size: 13px; }
+.defilement th, .defilement td { padding: 8px 10px; white-space: nowrap; max-width: 18rem; overflow: hidden; text-overflow: ellipsis; }
+.defilement th code { background: none; padding: 0; }
+
+.avant-telecharger { margin-top: 8px; padding-top: 16px; border-top: 1px solid var(--bd); }
+.avant-telecharger button.primaire { padding: 14px 22px; font-size: 16px; }
+
+.export-suspendu { max-width: 760px; }
+
+/* ---- Mode d'emploi ----------------------------------------------------------- */
+
+.ecran-aide { max-width: 80ch; }
+
+.marche { list-style: none; counter-reset: etape; margin: 0; padding: 0; }
+.marche > li { counter-increment: etape; position: relative; padding-left: 3rem; margin-bottom: 1.75rem; }
 .marche > li::before {
   content: counter(etape);
   position: absolute;
@@ -526,66 +851,50 @@ label.bascule input { width: 1.1rem; height: 1.1rem; accent-color: var(--alerte)
   display: grid;
   place-items: center;
   border-radius: 50%;
-  background: var(--accent-doux);
-  color: var(--accent);
-  font-weight: 650;
-  font-variant-numeric: tabular-nums;
+  background: var(--pr-bg);
+  color: var(--pr);
+  font-weight: 700;
 }
+.marche h3 { margin: 0.15rem 0 0.4rem; }
 
-.marche h3 { margin: 0.15rem 0 0.4rem; font-size: 1rem; }
-.marche p { margin: 0 0 0.5rem; }
-
-.obligations {
-  max-width: 72ch;
-  margin: 0 0 1rem;
-  padding-left: 1.25rem;
-}
+.obligations { padding-left: 1.25rem; }
 .obligations li { margin-bottom: 0.65rem; }
 
-.faq {
-  max-width: 72ch;
-  margin: 0;
-}
-.faq dt {
-  font-weight: 650;
-  margin-top: 1.1rem;
-  padding-top: 1.1rem;
-  border-top: 1px solid var(--trait);
-}
+.faq dt { font-weight: 700; margin-top: 1.1rem; padding-top: 1.1rem; border-top: 1px solid var(--bd); }
 .faq dt:first-child { margin-top: 0; padding-top: 0; border-top: none; }
-.faq dd { margin: 0.3rem 0 0; color: var(--discret); }
+.faq dd { margin: 0.3rem 0 0; color: var(--mu); }
 
-/* ---- Repartir de zero -----------------------------------------------------
+/* ---- Petits écrans ----------------------------------------------------------- */
 
-   Une operation irreversible n'a pas sa place a cote du bouton de lancement : elle est
-   en bas de page, dans un encadre qui se distingue sans crier. La couleur d'alerte est
-   reservee au moment ou l'on montre ce qui va partir, pas a l'invitation a regarder. */
-
-.zone-sensible {
-  border: 1px solid var(--trait-fort);
-  border-radius: var(--rayon);
-  padding: 1rem 1.15rem;
-  background: var(--fond-carte);
-  max-width: 72ch;
+/* Pensé pour 1280 px ; utilisable à 375. La barre passe sur plusieurs lignes, les
+   grilles s'empilent, rien ne déborde horizontalement. */
+@media (max-width: 1100px) {
+  .grille-preparer { grid-template-columns: 1fr; }
+  .carte-corps { grid-template-columns: 1fr; }
 }
 
-.zone-sensible .commandes { margin-bottom: 0; }
-.zone-sensible .commandes + .commandes { margin-top: 0.5rem; }
+@media (max-width: 900px) {
+  header.barre { flex-wrap: wrap; }
+  #stations, .stations-aide { order: 3; flex-basis: 100%; border-top: 1px solid var(--bd); overflow-x: auto; }
+  details.portee { flex: 1; }
+  a.station { padding: 8px 12px; }
+  main { padding: 16px; }
+  main.ecran-collecter { grid-template-columns: 1fr; }
+  .suivi-principal, .suivi-cote, #chiffres { grid-column: 1; grid-row: auto; }
+  .atelier, .grille-export { grid-template-columns: 1fr; }
+  /* Sur un téléphone, la décision d'abord : la file passe sous la carte. */
+  .atelier .file-relecture { order: 2; }
+  ol.etapes { grid-template-columns: 1fr; }
+  .decisions { grid-template-columns: 1fr; }
+  form.arbitrage { grid-template-columns: 1fr; padding: 16px 16px 0; }
+  details.oubli { margin: 0 -16px; padding: 12px 16px 16px; }
+  .carte-corps { padding: 20px 16px; }
+  h1, .suivi-principal h2 { font-size: 26px; }
+}
 
-/* Ce qui part, et ce qui reste : deux listes, et la seconde rassure autant que la
-   premiere avertit. Les donner l'une sans l'autre serait mentir par omission. */
-.zone-sensible .bilan, .zone-sensible .reste {
-  margin: 0.5rem 0 1rem;
-  padding-left: 1.25rem;
-  font-size: 0.9375rem;
+@media (max-width: 520px) {
+  .marque > span { display: none; }
+  .station .sous { display: none; }
+  ol.stations > li { flex: 0 0 auto; }
+  footer { padding: 12px 16px; }
 }
-.zone-sensible .bilan li { margin-bottom: 0.2rem; }
-.zone-sensible .reste {
-  color: var(--discret);
-  border-left: 3px solid var(--bon);
-  list-style: none;
-  padding: 0.5rem 0.75rem;
-  border-radius: 0 var(--rayon) var(--rayon) 0;
-}
-.zone-sensible .reste li { margin-bottom: 0.35rem; }
-.zone-sensible .reste li:last-child { margin-bottom: 0; }

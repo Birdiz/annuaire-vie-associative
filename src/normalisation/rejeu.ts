@@ -27,6 +27,7 @@ import { dedupliquer } from "./dedup.ts";
 import { classer, VERSION_CLASSIFICATION } from "./classification.ts";
 import { lireVerdicts, verifierDomaines } from "./mx.ts";
 import { noter, VERSION_SCORE } from "./score.ts";
+import type { Note } from "./score.ts";
 import { valider } from "./validation.ts";
 import { domaineDeLAdresse } from "../http/dns.ts";
 import type { ResultatMx } from "./mx.ts";
@@ -191,17 +192,64 @@ function classerAssociations(
   return { ecrites, aJour };
 }
 
-type LigneContact = {
-  id: number;
+/**
+ * Ce que la notation lit d'une ligne de `contact`. Les noms sont ceux des colonnes : la
+ * normalisation les lit par `SQL_CONTACTS`, le crawl par sa propre requete au moment du
+ * commit (ADR-039), et les deux passent par `noterLigne`.
+ */
+export type LigneANoter = {
   kind: string;
   confiance: number;
   is_generique: number | null;
   association_id: number | null;
   valeur_normalisee: string;
-  score_version: number | null;
   corrige: number;
   prefiltre_verdict: string | null;
 };
+
+type LigneContact = LigneANoter & {
+  id: number;
+  score_version: number | null;
+};
+
+/**
+ * Une ligne, une note. **Le seul chemin vers `noter()`** : la normalisation et le crawl
+ * l'empruntent tous deux, pour que le bareme garde un proprietaire unique (ADR-021) — un
+ * second assemblage des entrees finirait par lire le MX ou la correction autrement.
+ *
+ * `mxDe` dit le verdict connu d'un domaine, `null` s'il n'a jamais ete verifie. La
+ * normalisation le lit dans la table entiere, le crawl domaine par domaine : aucun DNS ici.
+ */
+export function noterLigne(
+  ligne: LigneANoter,
+  mxDe: (domaine: string) => 0 | 1 | null,
+): Note & { valide: boolean } {
+  const kind = ligne.kind === "phone" ? "phone" : "email";
+  const validation = valider(kind, ligne.valeur_normalisee);
+
+  const domaine =
+    kind === "email" && validation.valide ? domaineDeLAdresse(ligne.valeur_normalisee) : undefined;
+  // Un domaine absent de la table n'a pas ete verifie : c'est un `null`, comme un
+  // echec de resolution. Les deux disent « on ne sait pas », et se traitent pareil.
+  const mx = domaine === undefined ? null : mxDe(domaine);
+
+  const note = noter({
+    kind,
+    syntaxeValide: validation.valide,
+    confiance: ligne.confiance,
+    isGenerique: ligne.is_generique === null ? null : ligne.is_generique === 1 ? 1 : 0,
+    rattache: ligne.association_id !== null,
+    mx,
+    prefiltreVerdict:
+      ligne.prefiltre_verdict === "retenue" || ligne.prefiltre_verdict === "ecartee"
+        ? ligne.prefiltre_verdict
+        : null,
+    // La revue a deja recopie la correction dans `valeur_normalisee` : la syntaxe et
+    // le MX ci-dessus portent donc sur la valeur corrigee, pas sur celle qui a ete lue.
+    corrigeEnRevue: ligne.corrige === 1,
+  });
+  return { ...note, valide: validation.valide };
+}
 
 function noterContacts(
   db: Database,
@@ -234,31 +282,8 @@ function noterContacts(
       aJour += 1;
       continue;
     }
-    const kind = ligne.kind === "phone" ? "phone" : "email";
-    const validation = valider(kind, ligne.valeur_normalisee);
-    if (!validation.valide) invalides += 1;
-
-    const domaine =
-      kind === "email" && validation.valide ? domaineDeLAdresse(ligne.valeur_normalisee) : undefined;
-    // Un domaine absent de la table n'a pas ete verifie : c'est un `null`, comme un
-    // echec de resolution. Les deux disent « on ne sait pas », et se traitent pareil.
-    const mx = domaine === undefined ? null : (verdicts.get(domaine) ?? null);
-
-    const { score, motifs } = noter({
-      kind,
-      syntaxeValide: validation.valide,
-      confiance: ligne.confiance,
-      isGenerique: ligne.is_generique === null ? null : ligne.is_generique === 1 ? 1 : 0,
-      rattache: ligne.association_id !== null,
-      mx,
-      prefiltreVerdict:
-        ligne.prefiltre_verdict === "retenue" || ligne.prefiltre_verdict === "ecartee"
-          ? ligne.prefiltre_verdict
-          : null,
-      // La revue a deja recopie la correction dans `valeur_normalisee` : la syntaxe et
-      // le MX ci-dessus portent donc sur la valeur corrigee, pas sur celle qui a ete lue.
-      corrigeEnRevue: ligne.corrige === 1,
-    });
+    const { score, motifs, valide } = noterLigne(ligne, (domaine) => verdicts.get(domaine) ?? null);
+    if (!valide) invalides += 1;
 
     tranche.push([score, JSON.stringify(motifs), VERSION_SCORE, maintenant, ligne.id]);
     if (tranche.length >= TAILLE_TRANCHE) ecrire();
