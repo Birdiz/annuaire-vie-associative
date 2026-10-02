@@ -62,7 +62,7 @@ transmettre quoi que ce soit à l'éditeur de l'outil.</p>
 
   <li>
     <h3>Lancer la collecte, et la laisser travailler</h3>
-    <p>Bouton « Lancer le run complet ». <strong>Comptez plusieurs heures</strong>, parfois une
+    <p>Bouton « Lancer la collecte complète ». <strong>Comptez plusieurs heures</strong>, parfois une
     journée sur un gros département.</p>
     <p>Cette lenteur est voulue et ne se règle pas : l'outil attend <strong>deux secondes entre
     deux visites d'un même site</strong>, pour ne pas peser sur des serveurs de mairie qui n'ont
