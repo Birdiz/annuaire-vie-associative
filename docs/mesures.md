@@ -75,6 +75,14 @@ tombent à zéro. Sur l'Ille-et-Vilaine et les Vosges, les lignes identiques des
 nouvelles passent de 61 et 20 à zéro. Coût : 32 Ko de bundle, dont 15 Ko de prénoms
 ([ADR-036](docs/adr/036-une-personne-n-est-pas-une-structure.md)).
 
+Lot 13 : **on relit pendant que la collecte tourne.** Le crawl note chaque contact à mesure, à
+titre provisoire, et la normalisation rend le score définitif
+([ADR-039](docs/adr/039-la-notation-commence-au-crawl.md)). Chaque carte porte l'extrait de la
+page où la valeur a été lue, surlignée ([ADR-040](docs/adr/040-l-extrait-preuve-de-la-carte.md)).
+L'interface devient « L'Établi » : quatre stations, une carte à la fois, l'aide en panneau
+latéral ([ADR-041](docs/adr/041-l-etabli.md)). Coût : les fichiers statiques passent de 68 à
+117 Ko, dont 33 Ko de police variable ; le bundle ne bouge pas.
+
 
 ## Ce que coûte un département, et ce qu'il rapporte
 

@@ -1,5 +1,6 @@
 /**
- * Ecran de synthese : le §8 du brief a l'ecran.
+ * Station Collecter (ADR-041) : la machine tourne, et l'ecran dit ou elle en est. Le
+ * bilan de couverture — le §8 du brief a l'ecran — vit ici, sous la collecte.
  *
  * « Prevoir un export de ces metriques en JSON et un ecran de synthese » — le JSON est
  * `annuaire metrics --json` depuis le lot 1, cet ecran est l'autre moitie. Il ne calcule
@@ -20,6 +21,7 @@ import {
   duree,
   ecart,
   jour,
+  pluriel,
 } from "../rendu.ts";
 import type { LigneRun, DistributionRevue } from "../requetes.ts";
 import type { EtatPilote } from "../pilote.ts";
@@ -30,8 +32,8 @@ import type { DistributionNormalisation } from "../../normalisation/rejeu.ts";
 import type { Couverture } from "../../metrics/couverture.ts";
 import type { Dormance } from "../../metrics/dormance.ts";
 import type { JobState } from "../../jobs/queue.ts";
-import { fragmentReinitialisation } from "./reinitialisation.ts";
-import type { DonneesReinitialisation } from "./reinitialisation.ts";
+import { libelleDepartement } from "../../departements.ts";
+import type { ActiviteCollecte, PageRecente } from "../requetes.ts";
 import { ETATS_JOB } from "../../jobs/queue.ts";
 
 /**
@@ -90,32 +92,22 @@ export type DonneesSuivi = {
    * doit tomber sur l'horloge injectee, sans quoi il ne se teste pas.
    */
   maintenant: number;
+  /** Compteurs de la campagne en cours ; absents quand aucune n'est ouverte. */
+  activite: ActiviteCollecte | undefined;
+  /** Les dernieres pages traitees, pour « En ce moment ». */
+  recentes: readonly PageRecente[];
+  /**
+   * Contacts deja prets a relire. La collecte les note a mesure (ADR-039) : l'attente de
+   * plusieurs heures peut devenir du temps de relecture, et l'ecran le propose.
+   */
+  aRelire: number;
+  /** Rien en base pour ce departement : l'ecran presente la collecte au lieu de la suivre. */
+  jamaisAmorce: boolean;
 };
 
-/** Le drapeau des mobiles, tel que l'ecran le presente. Hors du bloc rafraichi. */
-export type DonneesMobiles = {
-  /** Ce qui s'appliquera au prochain run. */
-  actif: boolean;
-  /** Pendant un run, le drapeau est fige : le formulaire est rendu inerte. */
-  verrouille: boolean;
-  refus: string | undefined;
-};
-
-export type DonneesReglages = {
-  contactUrl: string | undefined;
-  /** Fixee par l'environnement : le fichier de configuration n'y peut rien. */
-  parEnvironnement: boolean;
-  message: string | undefined;
-  erreur: string | undefined;
-};
-
-export type DonneesSynthese = {
+export type DonneesCollecter = {
   departement: string;
-  /** Hors du suivi : un ecran de confirmation ne doit pas disparaitre en le lisant. */
-  reinitialisation: DonneesReinitialisation;
   suivi: DonneesSuivi;
-  reglages: DonneesReglages;
-  mobiles: DonneesMobiles;
   couverture: Couverture;
   dormance: Dormance;
   prefiltre: DistributionPrefiltre | undefined;
@@ -127,6 +119,10 @@ export type DonneesSynthese = {
 /**
  * Fragment rafraichi par htmx. Rendu isolement pour qu'un rafraichissement ne recalcule
  * pas les distributions du departement entier toutes les deux secondes.
+ *
+ * Il porte aussi les commandes : ce ne sont que des boutons, et le bouton change avec
+ * l'etat — « Arreter » pendant la collecte, « Reprendre » apres un arret. Aucun champ de
+ * saisie, en revanche : une valeur en cours de frappe serait effacee au rafraichissement.
  */
 export function fragmentSuivi(suivi: DonneesSuivi): string {
   const enCours = suivi.runs.find((run) => run.statut === "en_cours");
@@ -140,7 +136,7 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
         }</p>`
       : `<p><strong>Collecte n° ${enCours.id}</strong> sur le département ${echapperHtml(enCours.departement)}, ` +
         `démarrée le ${dateHeure(enCours.started_at)}${ecoule(enCours.started_at, suivi.maintenant)}` +
-        ` — ${nombre(actifs)} travaux à traiter.</p>`;
+        ` — ${nombre(actifs)} travaux à traiter. <span class="discret">Actualisé toutes les 2 s.</span></p>`;
 
   // Une ligne restee 'en_cours' apres un kill -9 ne doit pas condamner l'interface : on
   // le dit, et on laisse relancer. C'est vrai par l'invariant 9, pas par optimisme.
@@ -158,14 +154,157 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
     suivi.runs.map((run) => [
       `n° ${run.id}`,
       echapperHtml(run.departement),
-      echapperHtml(run.statut),
+      echapperHtml(LIBELLE_STATUT[run.statut] ?? run.statut),
       dateHeure(run.started_at),
       dureeRun(run, suivi.maintenant),
     ]),
   );
 
-  return `${commandes(suivi)}\n${orphelin}\n${entete}\n${progression(suivi.progression)}\n${file}
-<h3>Dernières collectes</h3>\n${runs}`;
+  const principal =
+    enCours === undefined && suivi.jamaisAmorce
+      ? presentation(suivi.departement)
+      : `<h2>${echapperHtml(titre(suivi, enCours))}</h2>
+${entete}
+${orphelin}
+${progression(suivi.progression)}
+${enCours === undefined ? "" : compteurs(suivi)}
+${enCours === undefined ? "" : journal(suivi.recentes)}`;
+
+  return `<div class="suivi-grille">
+<div class="suivi-principal">
+${principal}
+</div>
+<div class="suivi-cote">
+<div class="bloc-commandes">
+${commandes(suivi)}
+</div>
+${inviteRelire(suivi, enCours !== undefined)}
+<div class="bloc-historique">
+<h3>Dernières collectes</h3>
+${runs}
+<details class="detail-file"><summary>File de travail</summary>
+${file}
+</details>
+</div>
+</div>
+</div>`;
+}
+
+/** Le titre du bloc : ce que la machine fait, ou ce qu'elle a fait en dernier. */
+function titre(suivi: DonneesSuivi, enCours: LigneRun | undefined): string {
+  if (enCours !== undefined) {
+    const phase = suivi.progression?.phase ?? enCours.phase;
+    return (phase === null ? undefined : TITRE_PHASE[phase]) ?? "Collecte en cours";
+  }
+  const derniere = derniereDuDepartement(suivi);
+  if (derniere?.statut === "interrompu") return "Collecte arrêtée";
+  if (derniere?.statut === "echec") return "La collecte s'est interrompue";
+  if (derniere?.statut === "termine") return "Collecte terminée";
+  return "Collecte";
+}
+
+/** Ce que fait chaque passe, dit a qui la regarde — et non le nom interne de la phase. */
+const TITRE_PHASE: Record<string, string> = {
+  amorce: "Lecture du registre national",
+  decouverte: "Découverte des sites de mairie",
+  normalisation: "Normalisation et notation",
+};
+
+/** Les valeurs de `run.statut` sont des valeurs de colonne, pas des mots. */
+const LIBELLE_STATUT: Record<string, string> = {
+  en_cours: "en cours",
+  termine: "terminée",
+  interrompu: "arrêtée",
+  echec: "interrompue",
+};
+
+function derniereDuDepartement(suivi: DonneesSuivi): LigneRun | undefined {
+  return suivi.runs.find((run) => run.departement === suivi.departement);
+}
+
+/**
+ * Un departement jamais collecte : on presente ce qui va se passer, plutot qu'un suivi
+ * sans rien a suivre.
+ */
+function presentation(departement: string): string {
+  return `<h2>${echapperHtml(libelleDepartement(departement))} n'a jamais été collecté</h2>
+<p>La collecte commence par lire le registre national des associations du département, puis
+visite les sites des mairies. <strong>Comptez plusieurs heures</strong> ; vous pourrez relire dès
+les premiers contacts.</p>
+<ol class="etapes etapes-presentees">
+  <li class="a_venir">Amorce <span class="discret">lecture du registre</span></li>
+  <li class="a_venir">Découverte <span class="discret">sites des mairies</span></li>
+  <li class="a_venir">Normalisation <span class="discret">nettoyage, score</span></li>
+</ol>`;
+}
+
+/**
+ * Les compteurs de la campagne. Des etats, pas des restes a faire : la file grandit a
+ * chaque lien retenu, et l'ecran n'annonce aucune duree qu'il ne sait pas calculer.
+ */
+function compteurs(suivi: DonneesSuivi): string {
+  const activite = suivi.activite;
+  if (activite === undefined) return "";
+  const avancement = suivi.progression?.phase === "decouverte" ? suivi.progression.avancement : undefined;
+  const sites =
+    avancement === undefined
+      ? ""
+      : `<div><dt>sites de mairie explorés</dt><dd>${nombre(avancement.faits)} / ${nombre(avancement.total)}</dd></div>`;
+  return `<dl class="compteurs">
+  ${sites}
+  <div><dt>pages en file d'attente</dt><dd>${nombre(activite.enFile)}</dd></div>
+  <div><dt>contacts extraits</dt><dd>${nombre(activite.contacts)}</dd></div>
+  <div><dt>pages refusées par robots.txt</dt><dd>${nombre(activite.bloquees)}</dd></div>
+</dl>`;
+}
+
+/**
+ * « En ce moment » : les dernieres pages traitees. Lues dans la base, comme le reste du
+ * suivi — une collecte lancee dans un terminal s'y voit aussi.
+ */
+function journal(recentes: readonly PageRecente[]): string {
+  if (recentes.length === 0) return "";
+  const lignes = recentes
+    .map((page) => {
+      const resultat =
+        page.statut === "bloquee"
+          ? "page interdite, ignorée"
+          : page.statut === "erreur"
+            ? "page en erreur"
+            : page.statut === "hors_type"
+              ? "pas une page web, ignorée"
+              : `${nombre(page.contacts_extraits ?? 0)} contact${pluriel(page.contacts_extraits ?? 0)}`;
+      return `<li><time>${heure(page.fetched_at)}</time> <span class="url">${echapperHtml(sansSchema(page.url))}</span> · ${resultat}</li>`;
+    })
+    .join("\n");
+  return `<h3>En ce moment</h3>
+<ul class="journal">
+${lignes}
+</ul>`;
+}
+
+/** « 10:53:12 », dans le fuseau de la machine, comme `dateHeure`. */
+function heure(valeur: string): string {
+  const date = new Date(valeur);
+  if (Number.isNaN(date.getTime())) return echapperHtml(valeur);
+  return [date.getHours(), date.getMinutes(), date.getSeconds()].map((n) => String(n).padStart(2, "0")).join(":");
+}
+
+function sansSchema(url: string): string {
+  return url.replace(/^https?:\/\//i, "");
+}
+
+/** Relire n'attend pas la fin de la collecte (ADR-039). L'ecran le propose quand c'est vrai. */
+function inviteRelire(suivi: DonneesSuivi, enCours: boolean): string {
+  if (suivi.aRelire === 0) return "";
+  const dept = encodeURIComponent(suivi.departement);
+  return `<div class="invite-relire">
+  <p><strong>${nombre(suivi.aRelire)} contact${pluriel(suivi.aRelire)}</strong> attend${
+    suivi.aRelire >= 2 ? "ent" : ""
+  }${enCours ? " déjà" : ""} une relecture.</p>
+  ${enCours ? '<p class="discret">Pas besoin d\'attendre la fin : la collecte continue pendant que vous relisez.</p>' : ""}
+  <a class="bouton" href="/relire?departement=${dept}">${enCours ? "Commencer à relire" : "Relire"}</a>
+</div>`;
 }
 
 /** « (il y a 12 min) », ou rien si l'horodatage est illisible. */
@@ -251,17 +390,28 @@ ${mentionMobiles(suivi.pilote.avecMobiles, "Cette collecte conserve")}${refus}`;
       : "";
 
   if (!suivi.collecteConfiguree) {
-    return `<p class="avis">Renseignez l'URL de contact ci-dessus pour pouvoir lancer une collecte.</p>
+    return `<p class="avis">Renseignez l'URL de contact dans
+<a href="/preparer?departement=${encodeURIComponent(suivi.departement)}">Préparer</a> pour pouvoir lancer une collecte.</p>
 ${issue}${refus}`;
   }
 
-  // Le libelle ne redit pas le departement : la barre de portee, en haut de page, est le
-  // seul endroit ou il se lit — et le seul ou il se change. La duree est celle du run
+  // Apres un arret, le meme bouton reprend : la file garde ses jobs et l'amorce son offset,
+  // rien ne sera refait (invariant 9). Le dire evite de croire qu'on repart de zero.
+  const derniere = derniereDuDepartement(suivi);
+  const libelle =
+    derniere?.statut === "interrompu"
+      ? "Reprendre la collecte"
+      : derniere?.statut === "echec"
+        ? "Réessayer la collecte"
+        : "Lancer la collecte complète";
+
+  // Le libelle ne redit pas le departement : la plaque, en haut de page, est le seul
+  // endroit ou il se lit — et le seul ou il se change. La duree est celle du run
   // entier ; « une quarantaine de minutes » etait le chiffre de la seule decouverte, et
   // lu devant un run complet il faisait croire a un mode d'essai.
   return `<form method="post" action="/run" hx-post="/run" hx-target="#suivi" class="commandes">
   <input type="hidden" name="departement" value="${departement}">
-  <button type="submit" class="primaire">Lancer la collecte complète</button>
+  <button type="submit" class="primaire">${libelle}</button>
   <span class="discret">Les trois étapes à la suite : lecture du registre national des associations,
   découverte des sites de mairie (20 pages par commune), puis normalisation et notation.
   <strong>Comptez plusieurs heures</strong> — le délai de 2 s entre deux requêtes vers un même
@@ -302,118 +452,17 @@ const LIBELLE_ISSUE: Record<string, string> = {
   echec: "échec",
 };
 
-/**
- * L'URL de contact (§4.4), demandee la ou l'on en a besoin.
- *
- * Hors du bloc de suivi, et donc hors du rafraichissement automatique : un champ qu'on
- * remplit ne doit pas etre remplace pendant la frappe.
- */
-export function fragmentReglages(reglages: DonneesReglages): string {
-  const erreur = reglages.erreur === undefined ? "" : `<p class="refus">${echapperHtml(reglages.erreur)}</p>`;
-  const message = reglages.message === undefined ? "" : `<p class="discret">${echapperHtml(reglages.message)}</p>`;
-
-  if (reglages.parEnvironnement) {
-    return `<p class="discret">URL de contact : <code>${echapperHtml(reglages.contactUrl)}</code>,
-      fixée par la variable d'environnement <code>ANNUAIRE_CONTACT_URL</code>. Elle l'emporte
-      sur le fichier de configuration.</p>`;
-  }
-
-  const explication =
-    reglages.contactUrl === undefined
-      ? `<p class="avis">Aucune URL de contact n'est configurée. Elle est annoncée à chaque page
-         visitée pour qu'un webmestre puisse vous joindre, et
-         <strong>aucune collecte ne part sans elle</strong>. Une page « contact » ou une adresse de
-         service convient.</p>`
-      : `<p class="discret">URL de contact annoncée à chaque page visitée :
-         <code>${echapperHtml(reglages.contactUrl)}</code>.</p>`;
-
-  return `${explication}${erreur}${message}
-<form method="post" action="/reglages" hx-post="/reglages" hx-target="#reglages" class="reglages">
-  <label>URL de contact
-    <input type="url" name="contactUrl" required placeholder="https://exemple.fr/contact"
-           value="${echapperHtml(reglages.contactUrl ?? "")}">
-  </label>
-  <button type="submit">Enregistrer</button>
-</form>`;
-}
-
-/**
- * Le drapeau des mobiles (§4.6, invariant 6), avec ce qu'il engage.
- *
- * **Hors du bloc de suivi**, comme les reglages : ce fragment porte une case a cocher, et
- * le suivi est reechange toutes les deux secondes — la case serait decochee pendant la
- * lecture de l'avertissement, ce qui est la meilleure facon de faire cliquer sans lire.
- *
- * **Une case plus un bouton, pas une bascule directe.** Cocher puis valider est deux
- * gestes, et c'est voulu : le premier ouvre un traitement de donnees personnelles dont
- * l'utilisateur repond (ADR-025). Un interrupteur qui bascule au survol ne conviendrait
- * pas a ce qu'il declenche.
- *
- * **Rien n'est persiste** : le drapeau vit en memoire dans le pilote et retombe a
- * « exclus » au prochain lancement de l'interface. L'ecran le dit, sans quoi l'utilisateur
- * croirait avoir regle une fois pour toutes ce qu'il devra re-armer.
- */
-export function fragmentMobiles(mobiles: DonneesMobiles): string {
-  const refus = mobiles.refus === undefined ? "" : `<p class="refus">${echapperHtml(mobiles.refus)}</p>`;
-  const inerte = mobiles.verrouille ? " disabled" : "";
-
-  const explication = mobiles.actif
-    ? `<p class="avertissement"><strong>Les numéros mobiles (06/07) sont conservés</strong>,
-       en plus des numéros fixes, qui le sont toujours.
-       Un mobile publié sur le site d'une commune est presque toujours la ligne personnelle
-       d'un bénévole — président, secrétaire — et non le téléphone d'un local associatif. Il
-       identifie donc directement une personne physique : la base légale et la mise en
-       balance vous incombent, et l'obligation d'informer les personnes concernées
-       (art. 14 du RGPD) porte alors sur une donnée qui les désigne. Ce choix ne vaut que
-       pour cette session.</p>`
-    : `<p class="discret"><strong>Les numéros fixes sont toujours collectés</strong> ; ce
-       réglage ne porte que sur les mobiles. Les numéros mobiles (06/07) sont
-       <strong>exclus</strong> : un mobile publié sur le site d'une commune est presque
-       toujours la ligne personnelle d'un bénévole plutôt que le téléphone d'un local
-       associatif, et le conserver ouvre un traitement de données personnelles dont vous
-       êtes responsable. Les conserver reste possible, le temps de cette session
-       seulement.</p>`;
-
-  const verrou = mobiles.verrouille
-    ? `<p class="discret">Figé pendant la collecte : le choix est inscrit dans chaque page à
-       visiter dès la planification, le changer maintenant ne changerait rien à ce qui est
-       collecté.</p>`
-    : "";
-
-  return `${explication}${refus}
-<form method="post" action="/mobiles" hx-post="/mobiles" hx-target="#mobiles" class="reglages">
-  <label class="bascule">
-    <input type="checkbox" name="avecMobiles" value="1"${mobiles.actif ? " checked" : ""}${inerte}>
-    Conserver <em>aussi</em> les numéros mobiles 06/07 pendant cette session
-  </label>
-  <button type="submit"${inerte}>Appliquer</button>
-</form>
-${verrou}`;
-}
-
-export function ecranSynthese(donnees: DonneesSynthese): string {
-  return `<h2>Collecte</h2>
-<section id="reglages">
-${fragmentReglages(donnees.reglages)}
-</section>
-<section id="mobiles">
-${fragmentMobiles(donnees.mobiles)}
-</section>
-
-<h2>Suivi</h2>
-<section id="suivi" hx-get="/suivi?departement=${encodeURIComponent(donnees.departement)}"
+export function ecranCollecter(donnees: DonneesCollecter): string {
+  const dept = encodeURIComponent(donnees.departement);
+  return `<h1 class="masque">Collecter</h1>
+<section id="suivi" class="carte suivi" hx-get="/suivi?departement=${dept}"
          hx-trigger="every 2s" hx-swap="innerHTML">
 ${fragmentSuivi(donnees.suivi)}
 </section>
 
-<section id="chiffres" hx-get="/chiffres?departement=${encodeURIComponent(donnees.departement)}"
+<section id="chiffres" class="carte" hx-get="/chiffres?departement=${dept}"
          hx-trigger="every 10s" hx-swap="innerHTML">
 ${fragmentChiffres(donnees)}
-</section>
-
-<h2>Repartir de zéro</h2>
-<section id="reinitialisation" class="zone-sensible">
-${fragmentReinitialisation(donnees.reinitialisation)}
 </section>
 `;
 }
@@ -430,7 +479,7 @@ ${fragmentReinitialisation(donnees.reinitialisation)}
  * base, la ou le suivi ne lit que des compteurs de file. Aucun champ de saisie ici non
  * plus — un bloc qui se remplace efface ce qu'on est en train d'y taper.
  */
-export function fragmentChiffres(donnees: DonneesSynthese): string {
+export function fragmentChiffres(donnees: DonneesCollecter): string {
   const { couverture, normalisation, prefiltre, revue, dormance } = donnees;
 
   const chiffre = (valeur: string, libelle: string): string =>
@@ -488,7 +537,8 @@ export function fragmentChiffres(donnees: DonneesSynthese): string {
   );
 
   return `<h2>Couverture</h2>
-<div class="cartes">
+<p class="discret">Sur ${nombre(couverture.actives)} associations actives · actualisé toutes les 10 s.</p>
+<div class="cartes cartes-couverture">
 ${chiffre(pourcent(couverture.avecEmail, couverture.actives), "au moins un email")}
 ${chiffre(pourcent(couverture.avecEmailExploitable, couverture.actives), "… exploitable")}
 ${chiffre(pourcent(couverture.avecEmailJoignable, couverture.actives), "… dont le domaine reçoit du courrier")}
@@ -499,13 +549,16 @@ Les trois taux se lisent ensemble : leur écart dit si la couverture tient à de
 mortes ou à ce que les communes publient.
 </p>
 
-<h2>Entonnoir</h2>
+<details class="detail-chiffres">
+<summary>Voir le détail : entonnoir, messagerie, relecture, classification</summary>
+
+<h3>Entonnoir</h3>
 ${entonnoir}
 
-<h2>Messagerie</h2>
+<h3>Messagerie</h3>
 ${mx}
 
-<h2>Revue humaine</h2>
+<h3>Revue humaine</h3>
 <div class="cartes">
 ${chiffre(nombre(revue.aRevoir), "à arbitrer")}
 ${chiffre(nombre(revue.valides), "validés")}
@@ -520,7 +573,8 @@ et non sur un compteur d'événements — changer d'avis sur un contact ne le co
 fois.
 </p>
 
-<h2>Classification</h2>
+<h3>Classification</h3>
 ${types}
+</details>
 `;
 }

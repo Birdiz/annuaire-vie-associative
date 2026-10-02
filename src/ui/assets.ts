@@ -15,7 +15,7 @@
  * facons, et chacune range ces fichiers ailleurs : a cote des sources en developpement, a
  * cote du bundle pour `npx` et pour Docker, et *dans* l'executable unique — qui n'a aucun
  * fichier voisin a lire (ADR-001, ADR-022). C'est ce module, et lui seul, qui connait la
- * difference. Le contenu est lu une fois et garde en memoire : trois fichiers, cinquante
+ * difference. Le contenu est lu une fois et garde en memoire : une centaine de
  * kilo-octets.
  */
 
@@ -33,10 +33,27 @@ export type Asset = { corps: Buffer; type: string };
 export const HTMX_VERSION = "2.0.7";
 export const HTMX_SHA256 = "60231ae6ba9db3825eb15a261122d5f55921c4d53b66bf637dc18b4ee27c79f9";
 
+/**
+ * La police de l'interface (ADR-041) : Atkinson Hyperlegible Next, dessinee pour la basse
+ * vision — 0 et O, 1, l et I ne se confondent pas, ce qui compte sur un ecran ou l'on
+ * relit des adresses et des numeros. Licence SIL OFL 1.1, voyageant avec le fichier.
+ *
+ * Une **police variable**, sous-ensemble latin, telle que Google Fonts la distribue : un
+ * seul fichier couvre le 400 et le 700. Recuperee une fois, a la main — l'adresse exacte
+ * est dans l'ADR-041, aucune URL n'ayant sa place dans `src/` ; aucune requete ne part vers
+ * Google a l'execution. Meme discipline que htmx : une empreinte, verifiee par un test.
+ */
+export const ATKINSON_SOURCE = "Google Fonts, Atkinson Hyperlegible Next v7, police variable, sous-ensemble latin";
+export const ATKINSON_SHA256 = "1e4cea71d75ec427581d6259fc07148a2e60d60d16cabf4b4f5360487b3f9dc3";
+
 const TYPES: Record<string, string> = {
   "htmx.min.js": "text/javascript; charset=utf-8",
   "annuaire.css": "text/css; charset=utf-8",
   "htmx.LICENSE.txt": "text/plain; charset=utf-8",
+  "atkinson-hyperlegible-next.woff2": "font/woff2",
+  "atkinson-hyperlegible-next.OFL.txt": "text/plain; charset=utf-8",
+  "logo.svg": "image/svg+xml",
+  "etabli.js": "text/javascript; charset=utf-8",
 };
 
 /**

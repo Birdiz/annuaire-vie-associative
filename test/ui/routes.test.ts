@@ -103,11 +103,11 @@ test("le jeton de l'URL est echange contre un cookie, puis disparait de l'adress
   const ctx = contexte(t);
   const reponse = verifierAcces(
     ctx,
-    requete(`/revue?departement=35&jeton=${JETON}`, { entetes: { host: `127.0.0.1:${PORT}` } }),
+    requete(`/relire?departement=35&jeton=${JETON}`, { entetes: { host: `127.0.0.1:${PORT}` } }),
   );
 
   assert.equal(reponse?.statut, 303);
-  assert.equal(reponse?.entetes["Location"], "/revue?departement=35");
+  assert.equal(reponse?.entetes["Location"], "/relire?departement=35");
   assert.match(String(reponse?.entetes["Set-Cookie"]), /SameSite=Strict/);
   assert.match(String(reponse?.entetes["Set-Cookie"]), /HttpOnly/);
 });
@@ -139,10 +139,10 @@ test("une ecriture venue d'une autre origine est refusee", (t) => {
   );
 });
 
-test("les trois ecrans repondent, et portent leurs en-tetes de securite", (t) => {
+test("les quatre stations repondent, et portent leurs en-tetes de securite", (t) => {
   const ctx = contexte(t);
 
-  for (const chemin of ["/", "/revue", "/export"]) {
+  for (const chemin of ["/preparer", "/collecter", "/relire", "/exporter"]) {
     const reponse = router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`));
     assert.equal(reponse.statut, 200, chemin);
     assert.match(String(reponse.entetes["Content-Type"]), /text\/html/, chemin);
@@ -158,7 +158,7 @@ test("les trois ecrans repondent, et portent leurs en-tetes de securite", (t) =>
 
 test("htmx est configure pour afficher un refus, et sans une ligne de script en ligne", (t) => {
   const ctx = contexte(t);
-  const html = corpsTexte(router(ctx, requete("/revue")).corps);
+  const html = corpsTexte(router(ctx, requete("/relire")).corps);
 
   // Sans cette configuration, htmx ignore les reponses 4xx : un arbitrage refuse ne
   // produirait rien a l'ecran, et la personne croirait avoir corrige. Elle passe par une
@@ -205,7 +205,7 @@ test("sans parametre, l'ecran livre le fichier simple ; le nom du fichier le dit
 
 test("l'ecran d'export offre les deux profils, le simple presente", (t) => {
   const ctx = contexte(t);
-  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(ecran, /value="simple"[^>]*checked/);
   assert.match(ecran, /value="complet"/);
@@ -220,7 +220,7 @@ test("l'ecran d'export offre les deux profils, le simple presente", (t) => {
 test("l'ecran d'export en profil complet tient sa promesse de provenance", (t) => {
   const ctx = contexte(t);
   const ecran = corpsTexte(
-    router(ctx, requete(`/export?departement=${DEPARTEMENT}&profil=complet`)).corps,
+    router(ctx, requete(`/exporter?departement=${DEPARTEMENT}&profil=complet`)).corps,
   );
 
   assert.match(ecran, /Chaque ligne porte son URL source/);
@@ -241,7 +241,7 @@ test("l'ecran dit combien de contacts le fichier simple laisse de cote", (t) => 
     )
     .run(CODE_INSEE);
 
-  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
   // Sans ce chiffre, l'exclusion est silencieuse et l'ecart avec le fichier complet se
   // lit comme une perte de donnees.
   assert.match(ecran, /sans nom de structure/);
@@ -262,14 +262,14 @@ test("l'ecran dit aussi ce qu'il ecarte faute d'indice associatif", (t) => {
     )
     .run(CODE_INSEE);
 
-  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /structure de la vie associative/);
   assert.doesNotMatch(ecran, /Garage Pupier/, "l'ecran compte les ecartes, il ne les nomme pas");
 });
 
 test("l'ecran d'export leve le malentendu sur les telephones", (t) => {
   const ctx = contexte(t);
-  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /tous les numéros fixes/);
   assert.match(ecran, /ne filtre aucun numéro/);
 });
@@ -299,7 +299,7 @@ test("un contact piege ne devient pas du balisage dans l'ecran de revue", (t) =>
       'javascript:alert("source")',
     );
 
-  const corps = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  const corps = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
   assert.doesNotMatch(corps, /<script>alert/, "la valeur lue ne doit jamais devenir du balisage");
   assert.match(corps, /&lt;script&gt;alert\(&quot;xss&quot;\)/);
   // Une URL non http(s) est rendue en texte, pas en lien : echapper ne suffirait pas.
@@ -318,7 +318,7 @@ test("un arbitrage par formulaire redirige, un arbitrage htmx renvoie la file", 
     }),
   );
   assert.equal(formulaire.statut, 303, "sans redirection, un rechargement rejouerait l'arbitrage");
-  assert.equal(formulaire.entetes["Location"], "/revue?departement=35");
+  assert.equal(formulaire.entetes["Location"], "/relire?departement=35");
   // `review_note` existe depuis le lot 1 et n'avait jamais eu de quoi l'ecrire.
   assert.equal(
     (ctx.db.prepare("SELECT review_note FROM contact WHERE id = ?").get(id) as { review_note: string })
@@ -380,7 +380,7 @@ test("POST /run transmet le departement au pilote et redirige un formulaire ordi
 
   assert.deepEqual(ctx.pilote.demarrages, [DEPARTEMENT]);
   assert.equal(reponse.statut, 303, "sans redirection, un rechargement relancerait un run");
-  assert.equal(reponse.entetes["Location"], `/?departement=${DEPARTEMENT}`);
+  assert.equal(reponse.entetes["Location"], `/collecter?departement=${DEPARTEMENT}`);
 });
 
 test("POST /run par htmx rend le seul bloc de suivi", (t) => {
@@ -421,10 +421,13 @@ test("le bouton cede la place au reglage tant que l'URL de contact manque (§4.4
   const ctx = contexte(t);
   ctx.reglages = reglagesDouble();
 
-  const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
-
-  assert.doesNotMatch(ecran, /Lancer un run/);
+  const ecran = corpsTexte(router(ctx, requete(`/preparer?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /aucune collecte ne part sans elle/);
+
+  // Et la station Collecter renvoie au reglage au lieu d'offrir un bouton qui echouerait.
+  const collecter = corpsTexte(router(ctx, requete(`/collecter?departement=${DEPARTEMENT}`)).corps);
+  assert.doesNotMatch(collecter, /Lancer la collecte complète/);
+  assert.match(collecter, /Renseignez l'URL de contact/);
 });
 
 test("POST /reglages enregistre l'URL de contact, et le bouton apparait", (t) => {
@@ -457,7 +460,7 @@ test("une URL de contact venue de l'environnement s'affiche sans champ de saisie
   const ctx = contexte(t);
   ctx.reglages = reglagesDouble("https://exemple.example/contact", true);
 
-  const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/preparer?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(ecran, /ANNUAIRE_CONTACT_URL/);
   assert.doesNotMatch(ecran, /name="contactUrl"/, "un champ qui ne servirait a rien vaut mieux absent");
@@ -508,7 +511,7 @@ test("la revue ne compte comme « a arbitrer » que ce qui est note", (t) => {
   const ctx = contexte(t);
   sansNotation(ctx);
 
-  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(ecran, /0 prêt à arbitrer/, "la file est vide, le compteur doit le dire");
   assert.match(ecran, /en attente de notation/);
@@ -524,7 +527,7 @@ test("pendant un run pilote, la revue le dit et n'invite pas a lancer la normali
   sansNotation(ctx);
   lancerRunPilote(ctx);
 
-  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(ecran, /Collecte en cours sur le département 35/);
   assert.match(ecran, /Rien à arbitrer pour l'instant/);
@@ -539,7 +542,7 @@ test("pendant un run pilote, l'export est retire et l'URL du fichier refuse", (t
   const ctx = contexte(t);
   lancerRunPilote(ctx);
 
-  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /Collecte en cours sur le département 35/);
   assert.doesNotMatch(ecran, /Télécharger l'annuaire/, "un bouton grise invite a chercher comment l'activer");
 
@@ -555,7 +558,7 @@ test("une ligne de run orpheline previent mais ne barre ni l'export ni la revue"
     .prepare("INSERT INTO run (departement, started_at, statut, phase) VALUES (?, ?, 'en_cours', 'decouverte')")
     .run(DEPARTEMENT, "2026-09-01T09:00:00.000Z");
 
-  const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /sans être pilotée depuis cette interface/);
   assert.match(ecran, /Télécharger le fichier/, "un reste de kill -9 ne doit pas condamner l'export");
 
@@ -565,7 +568,7 @@ test("une ligne de run orpheline previent mais ne barre ni l'export ni la revue"
 test("les chiffres ont leur propre fragment, rafraichi comme le suivi", (t) => {
   const ctx = contexte(t);
 
-  const ecran = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/collecter?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /id="chiffres"/);
   assert.match(ecran, /hx-get="\/chiffres\?departement=35"/);
 
@@ -598,7 +601,7 @@ test("POST /mobiles arme le drapeau et rend le bloc de reglage, pas le suivi", (
   assert.deepEqual(ctx.pilote.bascules, [true]);
   assert.equal(reponse.statut, 200);
   assert.match(corps, /class="avertissement"/, "l'avertissement RGPD doit accompagner l'armement");
-  assert.doesNotMatch(corps, /Lancer un run/, "la cible est le reglage, pas le bloc de commandes");
+  assert.doesNotMatch(corps, /Lancer la collecte complète/, "la cible est le reglage, pas le bloc de commandes");
 });
 
 test("une case decochee n'envoie rien, et l'absence vaut exclusion", (t) => {
@@ -628,7 +631,7 @@ test("sans htmx, POST /mobiles redirige : un rechargement ne doit pas rejouer le
   const reponse = router(ctx, post(`/mobiles?departement=${DEPARTEMENT}`, "avecMobiles=1"));
 
   assert.equal(reponse.statut, 303);
-  assert.equal(reponse.entetes["Location"], `/?departement=${DEPARTEMENT}`);
+  assert.equal(reponse.entetes["Location"], `/preparer?departement=${DEPARTEMENT}`);
 });
 
 test("le POST croise est refuse sur /mobiles comme sur les autres ecritures", (t) => {
@@ -794,14 +797,14 @@ function idsAffiches(corps: string): string[] {
   return [...corps.matchAll(/id="contact-(\d+)"/g)].map((m) => m[1] ?? "");
 }
 
-test("la file se pagine : la page 2 montre d'autres contacts que la page 1", (t) => {
+test("la liste se pagine : la page 2 montre d'autres contacts que la page 1", (t) => {
   const ctx = contexte(t);
-  remplirLaFile(ctx, 25);
+  remplirLaFile(ctx, 120);
 
-  const un = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
-  const deux = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=2`)).corps);
+  const un = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&mode=liste`)).corps);
+  const deux = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&mode=liste&page=2`)).corps);
 
-  assert.equal(idsAffiches(un).length, 10, "une page tient dix contacts");
+  assert.equal(idsAffiches(un).length, 50, "une page de la liste tient cinquante contacts");
   assert.match(un, /page 1 sur/);
   assert.match(deux, /page 2 sur/);
 
@@ -811,38 +814,38 @@ test("la file se pagine : la page 2 montre d'autres contacts que la page 1", (t)
 
 test("une page hors bornes retombe sur la derniere, sans erreur", (t) => {
   const ctx = contexte(t);
-  remplirLaFile(ctx, 25);
+  remplirLaFile(ctx, 120);
 
   // Le cas arrive tout seul : on arbitre les derniers contacts, et la page se vide sous
   // les pieds de qui y travaille. Un 404 pour un lien valide dix secondes plus tot serait
   // une punition, pas une information.
-  const trop = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=99`)).corps);
+  const trop = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&mode=liste&page=99`)).corps);
   assert.match(trop, /page 3 sur 3/);
   assert.ok(idsAffiches(trop).length > 0, "la derniere page doit montrer quelque chose");
 
   for (const absurde of ["0", "-2", "deux", ""]) {
     const rendu = corpsTexte(
-      router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=${absurde}`)).corps,
+      router(ctx, requete(`/relire?departement=${DEPARTEMENT}&mode=liste&page=${absurde}`)).corps,
     );
     assert.match(rendu, /page 1 sur 3/, `page=${absurde} doit ramener a la premiere`);
   }
 });
 
-test("arbitrer depuis une page y laisse la personne qui revoit", (t) => {
+test("arbitrer depuis une page de la liste y laisse la personne qui relit", (t) => {
   const ctx = contexte(t);
-  remplirLaFile(ctx, 25);
+  remplirLaFile(ctx, 120);
 
-  const page3 = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=3`)).corps);
+  const page3 = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&mode=liste&page=3`)).corps);
   const cible = idsAffiches(page3)[0];
   assert.ok(cible !== undefined);
 
-  // Le formulaire de chaque carte porte la page : sans elle, le fragment renvoye serait
-  // celui de la premiere, et on perdrait sa place a chaque clic.
-  assert.match(page3, new RegExp(`action="/revue/${cible}\\?departement=35&page=3"`));
+  // Le formulaire de chaque ligne porte le mode et la page : sans eux, le fragment renvoye
+  // serait celui de la premiere, et on perdrait sa place a chaque clic.
+  assert.match(page3, new RegExp(`action="/relire/${cible}\\?departement=35&amp;mode=liste&amp;page=3"`));
 
   const apres = router(
     ctx,
-    post(`/revue/${cible}?departement=${DEPARTEMENT}&page=3`, "action=valide", true),
+    post(`/relire/${cible}?departement=${DEPARTEMENT}&mode=liste&page=3`, "action=valide", true),
   );
   assert.equal(apres.statut, 200);
   assert.match(corpsTexte(apres.corps), /page 3 sur/, "l'arbitrage ne doit pas renvoyer page 1");
@@ -851,7 +854,7 @@ test("arbitrer depuis une page y laisse la personne qui revoit", (t) => {
 test("sans deuxieme page, aucun lien de pagination n'est rendu", (t) => {
   const ctx = contexte(t);
 
-  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
   assert.doesNotMatch(ecran, /page 1 sur 1/, "une seule page ne se navigue pas");
 });
 
@@ -867,7 +870,7 @@ test("sans deuxieme page, aucun lien de pagination n'est rendu", (t) => {
 test("la barre de portee est rendue meme quand la base ne connait qu'un departement", (t) => {
   const ctx = contexte(t);
 
-  for (const chemin of ["/", "/revue", "/export"]) {
+  for (const chemin of ["/preparer", "/collecter", "/relire", "/exporter"]) {
     const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
     assert.match(ecran, /class="portee"/, `${chemin} doit porter la barre`);
     assert.match(
@@ -881,7 +884,7 @@ test("la barre de portee est rendue meme quand la base ne connait qu'un departem
 test("un departement jamais amorce s'ouvre, et l'ecran dit qu'il est vide", (t) => {
   const ctx = contexte(t);
 
-  const ecran = corpsTexte(router(ctx, requete("/?departement=88")).corps);
+  const ecran = corpsTexte(router(ctx, requete("/collecter?departement=88")).corps);
 
   assert.match(ecran, /value="88"/, "le departement demande est celui qu'on affiche");
   assert.match(ecran, /Jamais amorcé/, "un ecran de zeros ne dit pas s'il est vide ou non collecte");
@@ -892,7 +895,7 @@ test("un departement jamais amorce s'ouvre, et l'ecran dit qu'il est vide", (t) 
 test("un code de departement malforme est refuse, sans emporter l'ecran", (t) => {
   const ctx = contexte(t);
 
-  const ecran = corpsTexte(router(ctx, requete("/?departement=TOUS")).corps);
+  const ecran = corpsTexte(router(ctx, requete("/collecter?departement=TOUS")).corps);
 
   // Le message passe par `echapperHtml` : l'apostrophe y devient `&#39;`.
   assert.match(ecran, /pas un code de departement/);
@@ -903,7 +906,7 @@ test("un code de departement malforme est refuse, sans emporter l'ecran", (t) =>
 test("le departement saisi est normalise : « 2a » et « 2A » sont le meme", (t) => {
   const ctx = contexte(t);
 
-  const ecran = corpsTexte(router(ctx, requete("/?departement=+2a+")).corps);
+  const ecran = corpsTexte(router(ctx, requete("/collecter?departement=+2a+")).corps);
 
   assert.match(ecran, /value="2A"/);
 });
@@ -911,8 +914,8 @@ test("le departement saisi est normalise : « 2a » et « 2A » sont le meme", (
 test("le departement ne se redit plus dans les libelles d'action", (t) => {
   const ctx = contexte(t);
 
-  const synthese = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
-  const exporter = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
+  const synthese = corpsTexte(router(ctx, requete(`/collecter?departement=${DEPARTEMENT}`)).corps);
+  const exporter = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
 
   // La barre de portee le dit une fois. Repete sur chaque bouton, il donnait a l'outil
   // l'air d'etre soude a un departement dont on ne pouvait pas sortir.
@@ -924,7 +927,7 @@ test("le departement ne se redit plus dans les libelles d'action", (t) => {
 test("aucun ecran n'affiche de reference ADR ou de numero de paragraphe du brief", (t) => {
   const ctx = contexte(t);
 
-  for (const chemin of ["/", "/revue", "/export"]) {
+  for (const chemin of ["/preparer", "/collecter", "/relire", "/exporter"]) {
     const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
     // Ce qui est lu, et rien d'autre. Les commentaires HTML voyagent jusqu'au navigateur
     // sans etre affiches ; le `<head>` porte la configuration htmx, dont les codes de
@@ -943,7 +946,7 @@ test("aucun ecran n'affiche de reference ADR ou de numero de paragraphe du brief
 test("l'ecran de revue dit ce qu'on arbitre avant de montrer une valeur nue", (t) => {
   const ctx = contexte(t);
 
-  const ecran = corpsTexte(router(ctx, requete(`/revue?departement=${DEPARTEMENT}`)).corps);
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
 
   assert.match(ecran, /valeur de contact lue sur une page de/, "une chaine nue ne se juge pas");
   assert.match(ecran, /Que font les quatre boutons/, "la legende des actions est a portee");
@@ -965,7 +968,7 @@ test("le mode d'emploi est servi, et atteignable depuis chaque ecran", (t) => {
   assert.equal(aide.statut, 200);
   assert.match(corpsTexte(aide.corps), /Mode d'emploi/);
 
-  for (const chemin of ["/", "/revue", "/export"]) {
+  for (const chemin of ["/preparer", "/collecter", "/relire", "/exporter"]) {
     const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
     assert.match(ecran, /href="\/aide\?departement=35"/, `${chemin} doit y renvoyer`);
   }
@@ -1018,8 +1021,8 @@ function poster(chemin: string, corps: string): RequeteUi {
 
 test("le premier clic ne fait que compter : rien n'est effacé", (t) => {
   const ctx = contexte(t);
-  const avant = corpsTexte(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).corps);
-  assert.match(avant, /id="reinitialisation"/, "le bloc est sur l'ecran de synthese");
+  const avant = corpsTexte(router(ctx, requete(`/preparer?departement=${DEPARTEMENT}`)).corps);
+  assert.match(avant, /id="reinitialisation"/, "le bloc est dans la station Preparer");
 
   const simulation = corpsTexte(
     router(ctx, poster("/reinitialiser", `departement=${DEPARTEMENT}`)).corps,
@@ -1116,4 +1119,118 @@ test("le bloc de reinitialisation vit hors du suivi, qui se remplace toutes les 
   // Un ecran de confirmation qui disparait pendant qu'on le lit est la meilleure facon de
   // faire cliquer sans comprendre.
   assert.doesNotMatch(suivi, /reinitialiser/);
+});
+
+/**
+ * L'Etabli (ADR-041) : quatre stations, une carte a la fois, la preuve a cote de la
+ * decision. Ce qu'on defend ici, c'est ce que la refonte a promis sans le dire en clair :
+ * les anciennes adresses menent toujours quelque part, la barre ne porte aucun champ, la
+ * carte relue est bien celle qu'on a ouverte, et rien de ce qui vient du crawl ne devient
+ * du balisage.
+ */
+
+test("ADR-041 : l'entree mene a Preparer tant que rien ne peut partir, a Collecter ensuite", (t) => {
+  const ctx = contexte(t);
+  const regle = router(ctx, requete(`/?departement=${DEPARTEMENT}`));
+  assert.equal(regle.statut, 303);
+  assert.equal(regle.entetes["Location"], `/collecter?departement=${DEPARTEMENT}`);
+
+  ctx.reglages = reglagesDouble();
+  assert.equal(router(ctx, requete(`/?departement=${DEPARTEMENT}`)).entetes["Location"], `/preparer?departement=${DEPARTEMENT}`);
+});
+
+test("ADR-041 : les anciennes adresses demenagent pour de bon, query comprise", (t) => {
+  const ctx = contexte(t);
+  const revue = router(ctx, requete(`/revue?departement=${DEPARTEMENT}&page=2`));
+  assert.equal(revue.statut, 308);
+  assert.equal(revue.entetes["Location"], `/relire?departement=${DEPARTEMENT}&page=2`);
+
+  const exporter = router(ctx, requete(`/export?departement=${DEPARTEMENT}&profil=complet`));
+  assert.equal(exporter.statut, 308);
+  assert.equal(exporter.entetes["Location"], `/exporter?departement=${DEPARTEMENT}&profil=complet`);
+
+  // Le fichier, lui, garde son adresse : c'est celle qu'on met en favori.
+  assert.equal(router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`)).statut, 200);
+});
+
+test("ADR-041 : la barre des stations se rafraichit seule, sans champ, et dit ce qui reste a relire", (t) => {
+  const ctx = contexte(t);
+  const page = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
+  assert.match(page, /hx-get="\/stations\?departement=35&amp;onglet=relire" hx-trigger="every 10s"/);
+
+  const fragment = corpsTexte(router(ctx, requete(`/stations?departement=${DEPARTEMENT}&onglet=relire`)).corps);
+  assert.doesNotMatch(fragment, /<!doctype html>/);
+  assert.doesNotMatch(fragment, /<input/, "un bloc qui se remplace seul efface ce qu'on y tape");
+  for (const nom of ["Préparer", "Collecter", "Relire", "Exporter"]) assert.match(fragment, new RegExp(nom));
+  assert.match(fragment, /href="\/relire\?departement=35" aria-current="page"/);
+  assert.match(fragment, /class="badge"/, "les contacts prets a relire se comptent dans la barre");
+});
+
+test("ADR-041 : la carte ouverte par son lien est celle qu'on relit, et la decision passe a la suivante", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 5);
+  const ids = (ctx.db.prepare("SELECT id FROM contact WHERE review_statut = 'a_revoir' ORDER BY score, id").all() as {
+    id: number;
+  }[]).map((ligne) => ligne.id);
+  const choisi = ids[2];
+  assert.ok(choisi !== undefined);
+
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&contact=${choisi}`)).corps);
+  assert.match(ecran, new RegExp(`<article class="contact carte-relecture" id="contact-${choisi}"`));
+  assert.match(ecran, /data-raccourci="v"/);
+
+  const apres = corpsTexte(router(ctx, post(`/relire/${choisi}?departement=${DEPARTEMENT}`, "action=valide", true)).corps);
+  assert.doesNotMatch(apres, /<!doctype html>/, "htmx recoit l'atelier, pas une page");
+  assert.doesNotMatch(apres, new RegExp(`<article[^>]*id="contact-${choisi}"`), "un contact arbitre quitte la carte");
+  assert.match(apres, /<article class="contact carte-relecture"/, "la carte suivante prend sa place");
+
+  // Un contact deja arbitre ne se rouvre pas par son lien : on retombe sur la file.
+  const rouvert = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&contact=${choisi}`)).corps);
+  assert.doesNotMatch(rouvert, new RegExp(`<article[^>]*id="contact-${choisi}"`));
+});
+
+test("ADR-040 : la preuve est echappee morceau par morceau, et seule la cible est surlignee", (t) => {
+  const ctx = contexte(t);
+  ctx.db
+    .prepare("UPDATE contact SET extrait = ?, score = 0.01 WHERE id = (SELECT min(id) FROM contact)")
+    .run(JSON.stringify({ avant: "<script>alert(1)</script> écrire à ", cible: "<b>club@asso.example</b>", apres: " — merci" }));
+
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /La preuve — extrait de la page/);
+  assert.match(ecran, /&lt;script&gt;alert\(1\)&lt;\/script&gt; écrire à <mark>&lt;b&gt;club@asso\.example&lt;\/b&gt;<\/mark> — merci/);
+  assert.doesNotMatch(ecran, /<script>alert/);
+});
+
+test("ADR-041 : aucune des quatre stations ne porte de style ni de script en ligne", (t) => {
+  const ctx = contexte(t);
+  for (const chemin of ["/preparer", "/collecter", "/relire", "/exporter", "/aide"]) {
+    const ecran = corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps);
+    assert.doesNotMatch(ecran, /\sstyle=/, `${chemin} : la CSP refuse un attribut style`);
+    assert.doesNotMatch(ecran, /<script>/, `${chemin} : aucun script en ligne`);
+    assert.doesNotMatch(ecran, /\son[a-z]+="/, `${chemin} : aucun gestionnaire en ligne`);
+    assert.match(ecran, /"includeIndicatorStyles":false/, `${chemin} : htmx n'injecte pas de feuille de style`);
+  }
+});
+
+test("ADR-041 : l'aide s'ouvre par-dessus l'ecran, sans script, et le mode d'emploi reste une page", (t) => {
+  const ctx = contexte(t);
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /<aside id="aide" popover/);
+  assert.match(ecran, /popovertarget="aide"/);
+  assert.match(ecran, /Sur cet écran/);
+
+  const aide = router(ctx, requete(`/aide?departement=${DEPARTEMENT}`));
+  assert.equal(aide.statut, 200);
+  assert.doesNotMatch(corpsTexte(aide.corps), /<aside id="aide" popover/, "la page d'aide ne s'ouvre pas une aide");
+});
+
+test("ADR-041 : l'apercu d'export montre les premieres lignes du fichier, avec ses vraies colonnes", (t) => {
+  const ctx = contexte(t);
+  const simple = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
+  assert.match(simple, /<th><code>departement<\/code><\/th><th><code>commune<\/code><\/th>/);
+
+  const complet = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}&profil=complet`)).corps);
+  assert.match(complet, /<th><code>source_url<\/code><\/th>/);
+  const lignes = complet.slice(complet.indexOf('class="apercu"')).split("</table>")[0]?.match(/<tr>/g) ?? [];
+  assert.ok(lignes.length >= 2 && lignes.length <= 4, "l'en-tete et trois lignes au plus");
 });

@@ -47,3 +47,4 @@ Une ADR acceptée ne se réécrit pas : on en ajoute une qui la remplace.
 | [038](038-suivre-un-annuaire-jusqu-au-bout.md) | Suivre un annuaire jusqu'au bout | Acceptée |
 | [039](039-la-notation-commence-au-crawl.md) | La notation commence au crawl | Acceptée |
 | [040](040-l-extrait-preuve-de-la-carte.md) | L'extrait, preuve de la carte de relecture | Acceptée |
+| [041](041-l-etabli.md) | L'Établi : quatre stations, une carte à la fois | Acceptée |

@@ -95,12 +95,15 @@ dependance**, et par defaut s'en passer. Le projet a **une seule** dependance ru
 `node-html-parser`, entree au lot 3 apres mesure de son cout (ADR-011). C'est un seuil
 qui ne se franchit qu'une fois : tout ajout ulterieur se justifie de la meme facon.
 
-Deux fichiers tiers sont embarques hors npm, avec la meme discipline : une constante dit
-d'ou ils viennent, un test verifie leur empreinte — ni un fichier minifie ni une liste de
-deux mille mots ne se relisent en revue de diff.
+Trois fichiers tiers sont embarques hors npm, avec la meme discipline : une constante dit
+d'ou ils viennent, un test verifie leur empreinte — ni un fichier minifie, ni une police,
+ni une liste de deux mille mots ne se relisent en revue de diff.
 
 - `src/ui/assets/htmx.min.js`, vendorise au lot 6 (ADR-020) ; version et SHA-256 dans
   `src/ui/assets.ts`.
+- `src/ui/assets/atkinson-hyperlegible-next.woff2`, la police de l'interface (ADR-041),
+  police variable sous OFL, licence a cote ; SHA-256 dans `src/ui/assets.ts`, adresse
+  d'origine dans l'ADR — aucune URL n'a sa place dans `src/`.
 - `src/normalisation/prenoms.ts`, la liste de prenoms du lot 12 (ADR-036), **generee** par
   `scripts/prenoms.ts` depuis le fichier des prenoms de l'INSEE (Licence Ouverte), qu'on
   range a la main sous `data/prenoms/` — le script ne telecharge rien. Source, seuil et
@@ -266,6 +269,13 @@ Depuis le lot 8, l'interface **lance** le run et n'en est plus seulement le spec
 l'etat. Le bloc de suivi se rafraichit toutes les deux secondes — il ne peut donc porter
 aucun champ de saisie, et un message qui doit etre lu se garde dans le pilote plutot que
 d'etre rendu une seule fois.
+
+Depuis le lot 13, l'interface est « L'Etabli » (ADR-041) : quatre stations — `/preparer`,
+`/collecter`, `/relire`, `/exporter` — dans une barre rafraichie seule (`/stations`, 10 s),
+qui ne porte donc **aucun champ** ; la plaque du departement, qui en porte un, vit a cote.
+`/revue` et `/export` repondent en 308. L'aide est un `popover` declaratif, les raccourcis
+de relecture un fichier externe facultatif (`etabli.js`) : toujours aucun script en ligne,
+et aucun attribut `style` — la jauge de confiance est faite de classes.
 
 Toute valeur venue du crawl passe par `echapperHtml` de `src/ui/rendu.ts` avant d'entrer
 dans une page — meme discipline que le desamorcage des formules a l'export. La CSP ferme

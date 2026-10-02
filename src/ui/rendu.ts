@@ -10,10 +10,11 @@
  *
  * Pas de moteur de gabarit : des fonctions qui rendent des chaines. Le poids du bundle
  * est un critere de conception, et une dependance de plus ne se justifierait pas pour
- * trois ecrans.
+ * quatre ecrans.
  */
 
 import type { Amorce } from "./requetes.ts";
+import { libelleDepartement } from "../departements.ts";
 
 const ENTITES: Record<string, string> = {
   "&": "&amp;",
@@ -154,19 +155,62 @@ export function barre(faits: number, total: number, libelle: string, phrase?: st
 </div>`;
 }
 
-export type Onglet = "synthese" | "revue" | "export" | "aide";
+/**
+ * Les quatre stations de l'etabli (ADR-041), plus le mode d'emploi. L'ordre est celui du
+ * travail : on prepare, la machine collecte, on relit, on sort le fichier.
+ */
+export type Station = "preparer" | "collecter" | "relire" | "exporter";
+export type Onglet = Station | "aide";
 
-/** Le chemin de chaque onglet. La barre de portee y renvoie, pour rester sur l'ecran. */
+export const STATIONS: readonly Station[] = ["preparer", "collecter", "relire", "exporter"];
+
+/** Le chemin de chaque ecran. La plaque du departement y renvoie, pour rester sur l'ecran. */
 export const CHEMIN_ONGLET: Record<Onglet, string> = {
-  synthese: "/",
-  revue: "/revue",
-  export: "/export",
+  preparer: "/preparer",
+  collecter: "/collecter",
+  relire: "/relire",
+  exporter: "/exporter",
   aide: "/aide",
 };
 
+const NOM_STATION: Record<Station, string> = {
+  preparer: "Préparer",
+  collecter: "Collecter",
+  relire: "Relire",
+  exporter: "Exporter",
+};
+
 /**
- * De quoi rendre la barre de portee : le departement affiche, ceux que la base connait
- * deja, et ce qu'elle contient pour celui-ci.
+ * Ce que chaque station dit d'elle-meme dans la barre : « en cours · 2 h 41 », « 1 287
+ * restants », « suspendu pendant la collecte ». C'est la barre qui est le parcours : on y
+ * lit ou l'on en est sans ouvrir aucun ecran.
+ */
+export type EtatStation = { sous: string; badge?: string | undefined };
+export type EtatStations = Record<Station, EtatStation>;
+
+/**
+ * La barre des stations. Rafraichie seule toutes les dix secondes (`GET /stations`) : elle
+ * ne porte donc **aucun champ**, la plaque du departement — qui en porte un — vit a cote,
+ * hors du bloc rafraichi.
+ */
+export function barreStations(etat: EtatStations, onglet: Onglet, departement: string): string {
+  const dept = encodeURIComponent(departement);
+  return `<ol class="stations">
+${STATIONS.map((station, rang) => {
+  const actif = onglet === station;
+  const { sous, badge } = etat[station];
+  return `  <li><a class="station${actif ? " actif" : ""}" href="${CHEMIN_ONGLET[station]}?departement=${dept}"${
+    actif ? ' aria-current="page"' : ""
+  }><span class="rang">${rang + 1}</span><span class="nom">${NOM_STATION[station]}${
+    badge === undefined ? "" : ` <span class="badge">${echapperHtml(badge)}</span>`
+  }</span><span class="sous">${echapperHtml(sous)}</span></a></li>`;
+}).join("\n")}
+</ol>`;
+}
+
+/**
+ * De quoi rendre la plaque du departement : le departement affiche, ceux que la base
+ * connait deja, et ce qu'elle contient pour celui-ci.
  */
 export type DonneesPortee = {
   departement: string;
@@ -178,12 +222,11 @@ export type DonneesPortee = {
 };
 
 /**
- * La barre de portee : **le seul endroit de l'interface ou le departement se dit**.
+ * La plaque de l'etabli : **le seul endroit de l'interface ou le departement se dit et se
+ * change** (ADR-029, ADR-041).
  *
- * Elle remplace un selecteur qui ne s'affichait qu'a partir de deux departements en base
- * et ne listait que l'existant. Consequence : depuis une base amorcee sur le seul 35, il
- * n'y avait aucun chemin vers le 88 — le departement etait partout a l'ecran et nulle
- * part modifiable, et il fallait passer par la ligne de commande pour en ouvrir un autre.
+ * Repliee par defaut : on la lit a chaque ecran, on ne la change qu'une fois de temps en
+ * temps. Le formulaire est celui de l'ancienne barre de portee, sans retouche.
  *
  * D'ou une **saisie libre** plutot qu'une liste : un departement qui n'est pas encore en
  * base est justement celui qu'on veut pouvoir demander. Les departements deja amorces
@@ -202,36 +245,39 @@ export function barrePortee(donnees: DonneesPortee): string {
   const liste = connus
     .map(
       (dept) =>
-        `<a href="${chemin}?departement=${encodeURIComponent(dept)}">${echapperHtml(dept)}</a>`,
+        `<a href="${chemin}?departement=${encodeURIComponent(dept)}">${echapperHtml(libelleDepartement(dept))}</a>`,
     )
-    .join(" ");
+    .join(" · ");
   const options = donnees.departements
     .map((dept) => `<option value="${echapperHtml(dept)}"></option>`)
     .join("");
 
   const etat =
     donnees.amorce.communes === 0
-      ? `<span class="vide">Jamais amorcé. Le lancer le remplira depuis le registre national.</span>`
-      : `<span>${nombre(donnees.amorce.associations)} association${pluriel(donnees.amorce.associations)}
-         dans ${nombre(donnees.amorce.communes)} commune${pluriel(donnees.amorce.communes)}</span>`;
+      ? `<p class="vide">Jamais amorcé. Le lancer le remplira depuis le registre national.</p>`
+      : `<p>${nombre(donnees.amorce.associations)} association${pluriel(donnees.amorce.associations)}
+         dans ${nombre(donnees.amorce.communes)} commune${pluriel(donnees.amorce.communes)}</p>`;
 
-  const autres = liste === "" ? "" : `<span class="autres">Déjà en base : ${liste}</span>`;
-  const refus = donnees.refus === undefined ? "" : `<p class="refus">${echapperHtml(donnees.refus)}</p>`;
+  const autres = liste === "" ? "" : `<p class="autres">Déjà en base : ${liste}</p>`;
 
-  return `<div class="portee">
-  <form method="get" action="${chemin}">
-    <label for="portee-departement">Département</label>
-    <input type="text" id="portee-departement" name="departement" value="${courant}"
-           list="portee-connus" size="4" maxlength="3" autocomplete="off" required
-           pattern="[0-9]{2}|[0-9][ABab]|[0-9]{3}"
-           title="Deux chiffres (35), un chiffre et une lettre en Corse (2A), trois chiffres outre-mer (971).">
-    <datalist id="portee-connus">${options}</datalist>
-    <button type="submit">Ouvrir</button>
-  </form>
-  ${etat}
-  ${autres}
-</div>
-${refus}`;
+  return `<details class="portee"${donnees.refus === undefined ? "" : " open"}>
+  <summary><span class="etiquette-plaque">Département</span>
+    <strong>${echapperHtml(libelleDepartement(donnees.departement))}</strong></summary>
+  <div class="plaque-panneau">
+    <form method="get" action="${chemin}">
+      <label for="portee-departement">Code du département</label>
+      <input type="text" id="portee-departement" name="departement" value="${courant}"
+             list="portee-connus" size="4" maxlength="3" autocomplete="off" required
+             pattern="[0-9]{2}|[0-9][ABab]|[0-9]{3}"
+             title="Deux chiffres (35), un chiffre et une lettre en Corse (2A), trois chiffres outre-mer (971).">
+      <datalist id="portee-connus">${options}</datalist>
+      <button type="submit">Ouvrir</button>
+    </form>
+    ${etat}
+    ${autres}
+    <p class="discret">Changer de département ne supprime rien.</p>
+  </div>
+</details>`;
 }
 
 export type OptionsPage = {
@@ -241,54 +287,118 @@ export type OptionsPage = {
   contenu: string;
   version: string;
   /**
-   * La barre de portee, deja rendue : la page ne lit pas la base. Vide sur le mode
+   * La plaque du departement, deja rendue : la page ne lit pas la base. Vide sur le mode
    * d'emploi, qui ne depend d'aucun departement — y montrer un selecteur laisserait
    * croire que le texte change avec lui.
    */
   portee: string;
+  /** Un code de departement mal forme : dit sous la barre, a l'endroit ou on l'a tape. */
+  refusPortee?: string | undefined;
+  /** La barre des stations, deja rendue. */
+  stations: string;
+  /** Le panneau d'aide de l'ecran, deja rendu — vide sur le mode d'emploi lui-meme. */
+  aide: string;
 };
 
+/**
+ * Le logo : une carte posee sur la pile, celle qu'on est en train de relire. En SVG dans
+ * la page, et non en `<img>`, pour suivre les couleurs du theme ; sans `xmlns`, inutile en
+ * HTML — et qu'un test d'architecture refuserait, puisqu'il porte une URL `http:`.
+ */
+const LOGO = `<svg class="logo" width="28" height="28" viewBox="0 0 24 24" aria-hidden="true" focusable="false">
+<rect class="logo-fond" x="1" y="1" width="22" height="22" rx="5"></rect>
+<rect class="logo-pile" x="7.5" y="5" width="11" height="8" rx="1.5"></rect>
+<rect class="logo-carte" x="5.5" y="8.5" width="11" height="10" rx="1.5"></rect>
+</svg>`;
+
 export function page(options: OptionsPage): string {
-  const onglet = (cible: Onglet, libelle: string): string =>
-    `<a href="${CHEMIN_ONGLET[cible]}?departement=${encodeURIComponent(options.departement)}"` +
-    `${options.onglet === cible ? ' class="actif" aria-current="page"' : ""}>${libelle}</a>`;
+  const dept = encodeURIComponent(options.departement);
+  const stations =
+    options.onglet === "aide"
+      ? options.stations
+      : `<nav id="stations" aria-label="Étapes du travail"
+     hx-get="/stations?departement=${dept}&amp;onglet=${options.onglet}" hx-trigger="every 10s" hx-swap="innerHTML">
+${options.stations}
+</nav>`;
+  const boutonAide =
+    options.aide === ""
+      ? ""
+      : `<button type="button" class="bouton-aide" popovertarget="aide" title="Aide de cet écran">?<span class="masque"> Aide</span></button>`;
+  const panneauAide =
+    options.aide === ""
+      ? ""
+      : `<aside id="aide" popover class="panneau-aide" aria-label="Aide">
+${options.aide}
+</aside>`;
+  const refus =
+    options.refusPortee === undefined ? "" : `<p class="refus refus-portee">${echapperHtml(options.refusPortee)}</p>`;
 
   return `<!doctype html>
 <html lang="fr">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>${echapperHtml(options.titre)} — annuaire</title>
+<title>${echapperHtml(options.titre)} — Annuaire local</title>
+<link rel="icon" href="/assets/logo.svg" type="image/svg+xml">
 <link rel="stylesheet" href="/assets/annuaire.css">
 <!-- htmx n'echange par defaut que les reponses 2xx. Un arbitrage refuse repond 422 —
      le code dit la verite sur ce qui s'est passe — et son corps porte le message a
      lire : il faut donc l'autoriser explicitement. La configuration passe par une
-     balise meta et non par du script, que la CSP interdit. -->
-<meta name="htmx-config" content='{"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
+     balise meta et non par du script, que la CSP interdit. Pour la meme raison, htmx
+     n'injecte pas sa propre feuille de style : la CSP la refusait a chaque page. -->
+<meta name="htmx-config" content='{"includeIndicatorStyles":false,"responseHandling":[{"code":"204","swap":false},{"code":"[23]..","swap":true},{"code":"422","swap":true},{"code":"[45]..","swap":false,"error":true}]}'>
 <script src="/assets/htmx.min.js" defer></script>
+<script src="/assets/etabli.js" defer></script>
 </head>
 <body>
-<header>
-  <span class="marque">Annuaire de la vie associative</span>
-  <nav>
-    ${onglet("synthese", "Synthèse")}
-    ${onglet("revue", "Revue")}
-    ${onglet("export", "Export")}
-    ${onglet("aide", "Aide")}
-  </nav>
-  <span class="version">v${echapperHtml(options.version)}</span>
+<header class="barre">
+  <a class="marque" href="/?departement=${dept}">${LOGO}<span><strong>Annuaire local</strong><span class="sous-marque">associations · collecte et relecture</span></span></a>
+  ${options.portee}
+  ${stations}
+  ${boutonAide}
 </header>
-${options.portee}
-<main>
+${refus}
+${panneauAide}
+<main class="ecran-${options.onglet}">
 ${options.contenu}
 </main>
 <footer>
   Serveur local : rien de ce qui est affiché ici ne sort de cette machine.
+  <a href="/aide?departement=${dept}">Mode d'emploi</a>
   <span class="version">Version ${echapperHtml(options.version)}</span>
 </footer>
 </body>
 </html>
 `;
+}
+
+/**
+ * La confiance en dix points, une seule teinte (ADR-041) : jamais vert, orange, rouge. Le
+ * chiffre et un mot l'accompagnent toujours — la couleur seule ne dit rien a qui ne la
+ * voit pas. Des classes et non une largeur en ligne : la CSP refuse `style=`.
+ */
+export function jauge(score: number | null): string {
+  const allumes = score === null ? 0 : Math.max(0, Math.min(10, Math.round(score * 10)));
+  const points = Array.from({ length: 10 }, (_, i) => `<span class="${i < allumes ? "on" : "off"}"></span>`).join("");
+  return `<span class="jauge" aria-hidden="true">${points}</span>`;
+}
+
+/**
+ * Le mot qui accompagne la jauge. Seuils nommes, pour qu'on les retrouve : sous 0,50 la
+ * lecture est faible, sous 0,80 moyenne, elevee au-dela.
+ */
+export const SEUILS_CONFIANCE = { faible: 0.5, moyenne: 0.8 } as const;
+
+export function motConfiance(score: number | null): string {
+  if (score === null) return "non notée";
+  if (score < SEUILS_CONFIANCE.faible) return "faible";
+  if (score < SEUILS_CONFIANCE.moyenne) return "moyenne";
+  return "élevée";
+}
+
+/** Un decimal a la francaise : « 0,38 ». Les valeurs de colonnes du CSV, elles, gardent le point. */
+export function decimal(valeur: number, chiffres = 2): string {
+  return valeur.toFixed(chiffres).replace(".", ",");
 }
 
 /** Marqueur des cellules numeriques, pose par l'appelant qui sait ce qu'il rend. */

@@ -48,22 +48,24 @@ transmettre quoi que ce soit à l'éditeur de l'outil.</p>
     <p>Chaque page visitée reçoit l'adresse d'une page où vous joindre, pour qu'un webmestre de
     mairie puisse vous écrire s'il a une question. <strong>Sans elle, rien n'est collecté</strong> :
     ce n'est pas un réglage, c'est une condition. Une page « contact » de votre collectivité convient.</p>
-    <p class="discret">Écran <a href="/?departement=${dept}">Synthèse</a>, premier bloc.</p>
+    <p class="discret">Station <a href="/preparer?departement=${dept}">Préparer</a>.</p>
   </li>
 
   <li>
     <h3>Choisir le département</h3>
-    <p>La barre grise, en haut de chaque écran. Tapez le code — <code>35</code>,
-    <code>2A</code> en Corse, <code>971</code> outre-mer — puis « Ouvrir ». Un département encore
-    jamais collecté s'ouvre vide, et la barre le dit : c'est normal, l'étape suivante le remplira.</p>
+    <p>La plaque « Département », en haut à gauche de chaque écran. Ouvrez-la, tapez le code —
+    <code>35</code>, <code>2A</code> en Corse, <code>971</code> outre-mer — puis « Ouvrir ». Un
+    département encore jamais collecté s'ouvre vide, et la plaque le dit : c'est normal, l'étape
+    suivante le remplira.</p>
     <p class="discret">Trois départements restent hors de portée : le 57, le 67 et le 68. Le droit
     local d'Alsace-Moselle place leurs associations dans un autre registre, que cet outil ne lit pas.</p>
   </li>
 
   <li>
     <h3>Lancer la collecte, et la laisser travailler</h3>
-    <p>Bouton « Lancer le run complet ». <strong>Comptez plusieurs heures</strong>, parfois une
-    journée sur un gros département.</p>
+    <p>Station <a href="/collecter?departement=${dept}">Collecter</a>, bouton « Lancer la collecte
+    complète ». <strong>Comptez plusieurs heures</strong>, parfois une journée sur un gros
+    département.</p>
     <p>Cette lenteur est voulue et ne se règle pas : l'outil attend <strong>deux secondes entre
     deux visites d'un même site</strong>, pour ne pas peser sur des serveurs de mairie qui n'ont
     rien demandé. Aller plus vite reviendrait à se faire bloquer, et à le mériter.</p>
@@ -73,17 +75,18 @@ transmettre quoi que ce soit à l'éditeur de l'outil.</p>
 
   <li>
     <h3>Relire ce dont l'outil n'est pas sûr</h3>
-    <p>Écran <a href="/revue?departement=${dept}">Revue</a>. On y trouve ce que l'outil n'a pas su
-    trancher seul, <strong>les cas les moins sûrs en premier</strong> — c'est là que votre lecture
-    apporte quelque chose. Chaque carte affiche ce qui a fait baisser la note, et un lien vers la
-    page où la valeur a été lue : c'est ce lien qu'il faut ouvrir pour vérifier.</p>
+    <p>Station <a href="/relire?departement=${dept}">Relire</a>. On y trouve ce que l'outil n'a pas
+    su trancher seul, <strong>les cas les moins sûrs en premier</strong> — c'est là que votre lecture
+    apporte quelque chose. Chaque carte affiche ce qui a fait baisser la note, l'extrait de la page
+    où la valeur a été lue, et un lien vers cette page. <strong>Pas besoin d'attendre la fin de la
+    collecte</strong> : la file se remplit à mesure.</p>
     <p class="discret">Cette étape n'est pas obligatoire. L'export fonctionne sans ; la revue
     améliore le fichier, elle ne le conditionne pas.</p>
   </li>
 
   <li>
     <h3>Exporter le fichier</h3>
-    <p>Écran <a href="/export?departement=${dept}">Export</a>. Vous obtenez un fichier CSV, qui
+    <p>Station <a href="/exporter?departement=${dept}">Exporter</a>. Vous obtenez un fichier CSV, qui
     s'ouvre dans un tableur. Le « score minimum » filtre sur la confiance : <code>0.6</code> est un
     point de départ raisonnable, un champ vide sort tout, y compris ce dont l'outil doute.</p>
     <p class="discret">Deux fichiers possibles. Le <strong>fichier simple</strong> tient en six
@@ -121,8 +124,8 @@ c'est vous qui collectez.</p>
   règles, et il ne vous est pas fourni avec.</li>
 </ul>
 
-<p>Si une personne demande à être effacée : le bouton <strong>« Oublier »</strong> de l'écran de
-revue. Il supprime la donnée, efface la copie de la page gardée en cache, et inscrit une exclusion
+<p>Si une personne demande à être effacée : <strong>« Oublier ce contact »</strong>, sous la carte
+de relecture. Il supprime la donnée, efface la copie de la page gardée en cache, et inscrit une exclusion
 pour qu'elle ne revienne pas à la collecte suivante — sans quoi effacer ne durerait que jusqu'à la
 collecte d'après.</p>
 
@@ -131,11 +134,11 @@ collecte d'après.</p>
 <dl class="faq">
   <dt>Rien ne bouge depuis vingt minutes. C'est bloqué ?</dt>
   <dd>Probablement pas. Deux secondes entre chaque visite d'un même site, sur des milliers de
-  pages, cela fait des heures où l'écran avance à peine. La barre de progression et le compteur de
-  travaux de l'écran Synthèse disent ce qui se passe réellement.</dd>
+  pages, cela fait des heures où l'écran avance à peine. La station Collecter dit ce qui se passe
+  réellement : la barre de progression, les compteurs, et les dernières pages visitées.</dd>
 
   <dt>Mon département n'affiche que des zéros.</dt>
-  <dd>Il n'a jamais été collecté. La barre du haut l'indique. Lancez la collecte.</dd>
+  <dd>Il n'a jamais été collecté. La plaque du haut l'indique. Lancez la collecte.</dd>
 
   <dt>Où sont mes données ?</dt>
   <dd>Dans <code>${echapperHtml(donnees.dataDir)}</code>, sur cette machine. On y trouve la base,
@@ -170,7 +173,7 @@ collecte d'après.</p>
   chacune, si un site a été trouvé et ce que la visite a donné.</dd>
 
   <dt>Je veux un deuxième département.</dt>
-  <dd>La barre du haut : tapez son code, puis lancez la collecte. Sachez que chaque département
+  <dd>La plaque du haut : tapez son code, puis lancez la collecte. Sachez que chaque département
   relit le registre national en entier — 1,25 Go à chaque fois — car il n'est pas conservé sur
   votre disque.</dd>
 
@@ -181,3 +184,70 @@ collecte d'après.</p>
 </dl>
 `;
 }
+
+/**
+ * Le panneau « ? » (ADR-041) : l'aide de l'ecran ou l'on est, ouverte par-dessus sans le
+ * quitter — on lit la legende des quatre boutons la carte toujours sous les yeux. Un
+ * `popover` declaratif : aucune ligne de script. Le mode d'emploi complet reste une page,
+ * pour qui veut le lire d'une traite ou n'a pas de navigateur recent.
+ */
+export function panneauAide(ecran: "preparer" | "collecter" | "relire" | "exporter", departement: string): string {
+  const dept = encodeURIComponent(departement);
+  return `<div class="panneau-entete">
+  <h2>Aide</h2>
+  <button type="button" popovertarget="aide" popovertargetaction="hide">Fermer</button>
+</div>
+<h3>Sur cet écran</h3>
+${SUR_CET_ECRAN[ecran]}
+<h3>Les cinq étapes</h3>
+<ol class="etapes-courtes">
+  <li>Renseigner l'URL de contact, une fois</li>
+  <li>Choisir le département</li>
+  <li>Lancer la collecte et la laisser travailler</li>
+  <li>Relire ce dont l'outil n'est pas sûr</li>
+  <li>Exporter le fichier</li>
+</ol>
+<h3>Questions fréquentes</h3>
+<dl class="faq">
+  <dt>Que veulent dire « score » et « lu » ?</dt>
+  <dd>« Lu » : à quel point l'outil est sûr d'avoir bien lu la valeur sur la page. « Score » : à
+  quel point il pense qu'elle vaut d'être publiée — le domaine reçoit-il du courrier, l'adresse
+  désigne-t-elle une personne, est-elle rattachée à une association.</dd>
+  <dt>Pourquoi relire pendant la collecte ?</dt>
+  <dd>Parce que la collecte dure des heures, et que la file se remplit à mesure. Ce qui est
+  arbitré reste arbitré ; seul le score peut encore bouger, quand la normalisation vérifie le
+  domaine des adresses.</dd>
+  <dt>Pourquoi les mobiles sont-ils exclus ?</dt>
+  <dd>Un 06 publié sur le site d'une commune est presque toujours la ligne personnelle d'un
+  bénévole. Les conserver reste possible, dans Préparer, le temps d'une session.</dd>
+  <dt>Que dois-je faire après l'export ?</dt>
+  <dd>Informer les personnes concernées dans le mois (article 14 du RGPD). Ce fichier n'est pas
+  un fichier de prospection.</dd>
+  <dt>Quelqu'un demande à être effacé</dt>
+  <dd>« Oublier ce contact », sous sa carte de relecture : la donnée est supprimée, sa copie
+  effacée, et elle ne reviendra pas.</dd>
+</dl>
+<p><a href="/aide?departement=${dept}">Lire le mode d'emploi complet</a></p>`;
+}
+
+const SUR_CET_ECRAN: Record<"preparer" | "collecter" | "relire" | "exporter", string> = {
+  preparer: `<p>Ce qu'on règle avant de collecter : l'URL de contact, annoncée à chaque site
+visité ; le département, sur la plaque en haut à gauche ; les numéros mobiles, exclus par défaut.
+« Repartir de zéro », replié en bas, efface un département pour le recollecter à neuf — rien
+n'est effacé au premier clic.</p>`,
+  collecter: `<p>La collecte tourne sur cette machine, à raison d'une page toutes les deux
+secondes par site. Le bloc de suivi s'actualise seul. Arrêter ne perd rien : relancer reprend
+où elle s'est arrêtée. Vous pouvez relire pendant qu'elle travaille.</p>`,
+  relire: `<p>Une carte à la fois, les moins sûres d'abord. Sous la valeur : ce qui a fait baisser
+le score, et l'extrait de la page où elle a été lue.</p>
+<dl>
+  <dt>Valider <kbd>V</kbd></dt><dd>Le contact est juste. Il pourra sortir dans l'export.</dd>
+  <dt>Rejeter <kbd>R</kbd></dt><dd>Faux ou hors sujet. Il reste en base mais ne sort pas.</dd>
+  <dt>Corriger <kbd>C</kbd></dt><dd>Remplace la valeur ; la valeur lue reste dans la provenance.</dd>
+  <dt>Oublier</dt><dd>Efface le contact et empêche toute collecte future. Motif obligatoire, sans retour.</dd>
+</dl>`,
+  exporter: `<p>Le fichier simple tient en six colonnes, une ligne par structure, sans provenance.
+Le fichier complet porte, pour chaque contact, la page d'où il vient, la date, la méthode et le
+score : c'est celui qu'on garde pour répondre « d'où sort cette adresse ? ». L'aperçu montre les
+premières lignes, telles que le fichier les portera.</p>`,
+};
