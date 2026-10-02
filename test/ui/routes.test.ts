@@ -541,7 +541,7 @@ test("pendant un run pilote, l'export est retire et l'URL du fichier refuse", (t
 
   const ecran = corpsTexte(router(ctx, requete(`/export?departement=${DEPARTEMENT}`)).corps);
   assert.match(ecran, /Collecte en cours sur le département 35/);
-  assert.doesNotMatch(ecran, /Télécharger l'annuaire/, "un bouton grise invite a chercher comment l'activer");
+  assert.doesNotMatch(ecran, /Télécharger le fichier/, "un bouton grise invite a chercher comment l'activer");
 
   // Le bouton retire ne suffit pas : l'URL du formulaire se garde en favori.
   const fichier = router(ctx, requete(`/export.csv?departement=${DEPARTEMENT}`));
@@ -598,7 +598,7 @@ test("POST /mobiles arme le drapeau et rend le bloc de reglage, pas le suivi", (
   assert.deepEqual(ctx.pilote.bascules, [true]);
   assert.equal(reponse.statut, 200);
   assert.match(corps, /class="avertissement"/, "l'avertissement RGPD doit accompagner l'armement");
-  assert.doesNotMatch(corps, /Lancer un run/, "la cible est le reglage, pas le bloc de commandes");
+  assert.doesNotMatch(corps, /Lancer la collecte complète/, "la cible est le reglage, pas le bloc de commandes");
 });
 
 test("une case decochee n'envoie rien, et l'absence vaut exclusion", (t) => {
@@ -993,6 +993,33 @@ test("le mode d'emploi couvre ce qu'on ne peut pas deviner de l'ecran", (t) => {
   assert.match(aide, /tout reprend où\s+cela s'était arrêté/, "on peut fermer l'outil sans rien perdre");
   assert.match(aide, /article 14 du RGPD/, "l'obligation d'information n'est pas devinable");
   assert.match(aide, /57, le 67 et le 68/, "un departement hors champ doit se dire avant l'essai");
+});
+
+test("chaque libelle que le mode d'emploi cite entre guillemets existe a l'ecran", (t) => {
+  const ctx = contexte(t);
+
+  // Les guillemets du mode d'emploi designent un bouton ou un champ a chercher des yeux.
+  // Un libelle renomme a l'ecran et pas ici envoie l'utilisateur chercher un bouton qui
+  // n'existe plus : « Lancer le run complet » l'a fait. Les citations qui ne sont pas des
+  // libelles se declarent ici, pour qu'une nouvelle citation soit verifiee par defaut.
+  const PAS_DES_LIBELLES = new Set(["contact", "d'où sort cette adresse ?"]);
+
+  const aide = corpsTexte(router(ctx, requete("/aide")).corps);
+  const citations = [...aide.matchAll(/«\s*([^»]+?)\s*»/g)]
+    .map(([, texte]) => texte!.replace(/\s+/g, " "))
+    .filter((texte) => !PAS_DES_LIBELLES.has(texte));
+  assert.ok(citations.length >= 3, "le mode d'emploi cite au moins le lancement, la portee et l'oubli");
+
+  const ecrans = ["/", "/revue", "/export"]
+    .map((chemin) => corpsTexte(router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`)).corps))
+    .join("\n");
+  for (const libelle of citations) {
+    const echappe = libelle.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/ /g, "\\s+");
+    // Le texte d'un bouton ou d'un champ, pas d'une phrase ni d'une legende : la revue
+    // definit « Oublier » dans un `<dt>`, qui resterait juste sous un bouton renomme.
+    const controle = new RegExp(`<(button|label)\\b[^>]*>\\s*${echappe}\\s*<`, "i");
+    assert.match(ecrans, controle, `« ${libelle} » n'est le libelle d'aucun bouton ni champ`);
+  }
 });
 
 /**
