@@ -869,4 +869,28 @@ ALTER TABLE page ADD COLUMN role TEXT NOT NULL DEFAULT 'exploration'
 CREATE INDEX idx_page_budget_role ON page (campagne, code_insee, role);
 `,
   },
+  {
+    version: 15,
+    name: "extrait-preuve",
+    sql: `
+--------------------------------------------------------------------------------
+-- La preuve sur la carte de relecture (ADR-040)
+--------------------------------------------------------------------------------
+
+-- Quelques phrases de la page autour de la valeur, telle que le crawl l'a lue : la
+-- personne qui relit juge sur ce que la page disait, sans aller la rouvrir. Ecrit en JSON
+-- {avant, cible, apres}, comme score_motifs : l'ecran surligne la cible que la page
+-- montrait — l'ancre d'un mailto, parfois —, et non une valeur qu'il chercherait a son tour.
+--
+-- NULL est permis, et ce n'est pas un trou dans l'invariant 5 : la provenance — URL,
+-- date, methode, score — reste obligatoire et le reste. L'extrait est un confort de
+-- relecture, recalcule depuis le cache pour une base anterieure (src/reparation.ts) ;
+-- quand le cache a ete purge, il n'y a plus de quoi le recalculer, et la carte s'en
+-- passe plutot que d'inventer.
+--
+-- Il peut citer une personne (« ecrire au tresorier : … ») : il ne sort dans aucun
+-- export, et disparait avec la ligne quand on l'oublie ou qu'on la purge.
+ALTER TABLE contact ADD COLUMN extrait TEXT;
+`,
+  },
 ];

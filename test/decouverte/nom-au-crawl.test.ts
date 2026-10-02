@@ -52,6 +52,7 @@ function ecrire(db: ReturnType<typeof openDatabase>, vue: Vue): number {
         vue.nom === null ? null : "bloc:avant",
         vue.nom === null ? null : NOW,
         vue.nom === null ? null : VERSION_NOM,
+        null,
       ).changes,
   );
 }

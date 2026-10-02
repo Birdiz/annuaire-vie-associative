@@ -34,7 +34,8 @@ import { transaction } from "../db/index.ts";
 import { analyser, decoder, estHtml } from "../parse/html.ts";
 import { extraireContacts } from "./extraction.ts";
 import { nommerDansLaPage, predicatFiche, reconnaitreAnnuaire, ROLES_PAGE } from "./annuaire.ts";
-import type { RolePage } from "./annuaire.ts";
+import type { PageLue, RolePage } from "./annuaire.ts";
+import type { ResultatExtraction } from "./extraction.ts";
 import { VERSION_NOM } from "./nom-pressenti.ts";
 import { normaliserNom } from "../texte.ts";
 import type { Clock } from "../clock.ts";
@@ -263,19 +264,9 @@ function nomsDeLaPage(
   role: RolePage,
   commune: ContexteCommune | string,
 ): Map<string, NomPressenti> | undefined {
-  const entree = cache.get(url);
-  if (entree === undefined) return undefined;
-  if (!estHtml(entree.meta.contentType)) return undefined;
-
-  // Le meme chemin qu'au crawl, role de la page compris (ADR-038) : deux facons de nommer
-  // feraient diverger une base collectee et une base reparee.
-  const doc = analyser(decoder(entree.body, entree.meta.contentType), entree.meta.finalUrl);
-  const annuaire = reconnaitreAnnuaire(doc.liens, entree.meta.finalUrl, role);
-  const extraction = extraireContacts(doc, {
-    avecMobiles: true,
-    estUneFiche: predicatFiche(annuaire, entree.meta.finalUrl),
-  });
-  const page = { doc, role, annuaire, contactsHorsGabarit: extraction.contactsHorsGabarit };
+  const lue = relirePage(cache, url, role);
+  if (lue === undefined) return undefined;
+  const { page, extraction } = lue;
 
   const noms = new Map<string, NomPressenti>();
   for (const contact of extraction.contacts) {
@@ -283,4 +274,29 @@ function nomsDeLaPage(
     if (trouve !== undefined) noms.set(`${contact.kind} ${contact.valeurNormalisee}`, trouve);
   }
   return noms;
+}
+
+/**
+ * Une page relue depuis le cache, analysee **par le meme chemin qu'au crawl**, role de la
+ * page compris (ADR-038) : deux facons de lire feraient diverger une base collectee et une
+ * base reparee. Sert au nommage ici et a la preuve des cartes (`src/reparation.ts`).
+ *
+ * `undefined` quand le corps n'est plus en cache ou n'est pas du HTML.
+ */
+export function relirePage(
+  cache: HttpCache,
+  url: string,
+  role: RolePage,
+): { page: PageLue; extraction: ResultatExtraction } | undefined {
+  const entree = cache.get(url);
+  if (entree === undefined) return undefined;
+  if (!estHtml(entree.meta.contentType)) return undefined;
+
+  const doc = analyser(decoder(entree.body, entree.meta.contentType), entree.meta.finalUrl);
+  const annuaire = reconnaitreAnnuaire(doc.liens, entree.meta.finalUrl, role);
+  const extraction = extraireContacts(doc, {
+    avecMobiles: true,
+    estUneFiche: predicatFiche(annuaire, entree.meta.finalUrl),
+  });
+  return { page: { doc, role, annuaire, contactsHorsGabarit: extraction.contactsHorsGabarit }, extraction };
 }

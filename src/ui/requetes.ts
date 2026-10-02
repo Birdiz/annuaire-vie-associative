@@ -113,6 +113,8 @@ export type ContactARevoir = {
   valeur_corrigee: string | null;
   is_generique: number | null;
   score: number | null;
+  /** `NULL` sur un contact de la file : score du crawl, provisoire (ADR-039). */
+  score_version: number | null;
   score_motifs: string | null;
   confiance: number;
   methode_extraction: string;
@@ -148,7 +150,7 @@ export function fileRevue(
   return db
     .prepare(
       `SELECT ct.id, ct.kind, ct.valeur, ct.valeur_corrigee, ct.is_generique, ct.score,
-              ct.score_motifs, ct.confiance, ct.methode_extraction, ct.source_url,
+              ct.score_version, ct.score_motifs, ct.confiance, ct.methode_extraction, ct.source_url,
               ct.collected_at, c.nom AS commune, a.nom AS association
          FROM contact ct
          JOIN commune c ON c.code_insee = ct.code_insee

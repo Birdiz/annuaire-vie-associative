@@ -24,9 +24,10 @@
  * respiration-la n'a de sens que dans une commande explicite.
  */
 
-import { lecteurDeCommunes, remplirNoms } from "./decouverte/noms.ts";
+import { lecteurDeCommunes, relirePage, remplirNoms } from "./decouverte/noms.ts";
+import { ROLES_PAGE } from "./decouverte/annuaire.ts";
 import { VERSION_NOM, nomEncoreAcceptable } from "./decouverte/nom-pressenti.ts";
-import { classerEmail, decollerEmail } from "./decouverte/extraction.ts";
+import { classerEmail, decollerEmail, extraitAutour } from "./decouverte/extraction.ts";
 import { SQL_EST_EXCLU } from "./oubli.ts";
 import { transaction } from "./db/index.ts";
 import type { Database } from "./db/index.ts";
@@ -43,6 +44,16 @@ const MARQUEUR = "nom_pressenti_version";
 export const VERSION_ADRESSES = 1;
 const MARQUEUR_ADRESSES = "adresses_version";
 
+/**
+ * Version du calcul de la preuve des cartes de relecture (ADR-040). Son propre marqueur :
+ * l'extrait se recalcule depuis le cache comme le nom, mais ne vieillit pas avec lui.
+ */
+export const VERSION_EXTRAITS = 1;
+const MARQUEUR_EXTRAITS = "extraits_version";
+
+/** Ecritures par transaction, comme le rejeu des noms. */
+const TRANCHE_EXTRAITS = 200;
+
 const SQL_LIRE = "SELECT valeur FROM metric WHERE run_id IS NULL AND etape = ? AND nom = ?";
 
 const SQL_ECRIRE = `
@@ -53,6 +64,8 @@ const SQL_ECRIRE = `
 export type ResultatReparation = {
   /** Adresses que la reparation a decollees — corrigees, fondues avec leur jumelle ou effacees. */
   adressesDecollees: number;
+  /** Contacts d'une base anterieure dont la preuve a ete retrouvee dans le cache. */
+  extraitsRemplis: number;
   /** Absent quand la base etait deja a jour : la reparation n'a alors rien lu. */
   noms: ResultatNoms | undefined;
   /** Noms effaces faute de passer le filtre courant, page absente du cache. */
@@ -78,9 +91,13 @@ export function reparerApresMiseAJour(app: App): ResultatReparation {
     });
   }
 
+  // Apres les adresses, pour la meme raison que les noms : la preuve se retrouve par la
+  // valeur, et une valeur encore collee ne serait pas dans la page.
+  const extraitsRemplis = remplirLesExtraits(app);
+
   const ligne = app.db.prepare(SQL_LIRE).get(ETAPE, MARQUEUR) as { valeur?: number } | undefined;
   if (Number(ligne?.valeur ?? 0) === VERSION_NOM) {
-    return { adressesDecollees, noms: undefined, nomsInvalides: 0, versionAppliquee: VERSION_NOM };
+    return { adressesDecollees, extraitsRemplis, noms: undefined, nomsInvalides: 0, versionAppliquee: VERSION_NOM };
   }
 
   const noms = remplirNoms(app.db, app.cache, app.clock, {});
@@ -97,7 +114,98 @@ export function reparerApresMiseAJour(app: App): ResultatReparation {
       effaces: nomsInvalides,
     });
   }
-  return { adressesDecollees, noms, nomsInvalides, versionAppliquee: VERSION_NOM };
+  return { adressesDecollees, extraitsRemplis, noms, nomsInvalides, versionAppliquee: VERSION_NOM };
+}
+
+/**
+ * Les contacts sans preuve, et la page d'ou ils viennent. Meme jointure que le rejeu des
+ * noms (`SQL_A_NOMMER`), sans s'y limiter aux orphelins : tout contact a une carte.
+ */
+const SQL_SANS_EXTRAIT = `
+  SELECT ct.id, ct.kind, ct.valeur_normalisee, p.url_hash, p.url, p.role
+    FROM contact ct
+    JOIN page p
+      ON coalesce(p.final_url, p.url) = ct.source_url
+     AND p.code_insee = ct.code_insee
+     AND p.statut = 'visitee'
+     AND p.campagne = (SELECT max(p2.campagne) FROM page p2
+                        WHERE coalesce(p2.final_url, p2.url) = ct.source_url
+                          AND p2.code_insee = ct.code_insee)
+   WHERE ct.extrait IS NULL
+   ORDER BY p.url_hash, ct.id
+`;
+
+/**
+ * Donne leur preuve aux contacts qu'une version anterieure a ecrits sans elle (ADR-040).
+ *
+ * **La meme fonction que le crawl**, `extraitAutour`, sur la meme page relue par
+ * `relirePage` : une base reparee montre la preuve qu'une base collectee aurait montree.
+ *
+ * Une page absente du cache laisse ses contacts sans preuve, et la carte s'en passe. Le
+ * marqueur est ecrit malgre tout : sans lui, une base dont le cache a ete purge relirait
+ * toutes ses lignes a chaque commande pour n'en rien tirer. Un contact recollecte plus tard
+ * recoit sa preuve du crawl, sans passer par ici.
+ */
+function remplirLesExtraits(app: App): number {
+  const marque = app.db.prepare(SQL_LIRE).get(ETAPE, MARQUEUR_EXTRAITS) as { valeur?: number } | undefined;
+  if (Number(marque?.valeur ?? 0) === VERSION_EXTRAITS) return 0;
+
+  const lignes = app.db.prepare(SQL_SANS_EXTRAIT).all() as unknown as {
+    id: number;
+    kind: string;
+    valeur_normalisee: string;
+    url_hash: string;
+    url: string;
+    role: string;
+  }[];
+
+  let remplis = 0;
+  let tranche: (readonly [string, number])[] = [];
+  const vider = (): void => {
+    if (tranche.length === 0) return;
+    const lot = tranche;
+    tranche = [];
+    transaction(app.db, () => {
+      const ecrire = app.db.prepare("UPDATE contact SET extrait = ? WHERE id = ? AND extrait IS NULL");
+      for (const ecriture of lot) ecrire.run(...ecriture);
+    });
+  };
+
+  // Une analyse par page, pour tous les contacts qu'elle porte : les lignes sont triees
+  // par `url_hash` pour cela.
+  let pageCourante: string | undefined;
+  let extraits: Map<string, string> | undefined;
+  for (const ligne of lignes) {
+    if (ligne.url_hash !== pageCourante) {
+      pageCourante = ligne.url_hash;
+      const role = ROLES_PAGE.find((connu) => connu === ligne.role) ?? "exploration";
+      const lue = relirePage(app.cache, ligne.url, role);
+      extraits = undefined;
+      if (lue !== undefined) {
+        extraits = new Map();
+        for (const contact of lue.extraction.contacts) {
+          const extrait = extraitAutour(lue.page.doc, contact);
+          if (extrait !== undefined) extraits.set(`${contact.kind} ${contact.valeurNormalisee}`, JSON.stringify(extrait));
+        }
+      }
+    }
+    const trouve = extraits?.get(`${ligne.kind} ${ligne.valeur_normalisee}`);
+    if (trouve === undefined) continue;
+    tranche.push([trouve, ligne.id]);
+    remplis += 1;
+    if (tranche.length >= TRANCHE_EXTRAITS) vider();
+  }
+  vider();
+
+  app.db.prepare(SQL_ECRIRE).run(ETAPE, MARQUEUR_EXTRAITS, VERSION_EXTRAITS);
+  if (remplis > 0) {
+    app.logger.info("Reparation des preuves de relecture apres mise a jour", {
+      version: VERSION_EXTRAITS,
+      examines: lignes.length,
+      remplis,
+    });
+  }
+  return remplis;
 }
 
 const SQL_ADRESSES = `

@@ -20,7 +20,7 @@ import { SOURCE_EMAIL, SOURCE_TELEPHONE } from "./motifs.ts";
 import { estEtiquetteDeMessagerie } from "../normalisation/messageries.ts";
 import { normaliserNom } from "../texte.ts";
 import { SCHEMA_JETON_TYPO3 } from "../parse/html.ts";
-import type { Bloc, DocumentAnalyse, Fiche } from "../parse/html.ts";
+import type { Bloc, DocumentAnalyse, Fiche, Lien } from "../parse/html.ts";
 
 export type KindContact = "email" | "phone";
 
@@ -673,4 +673,90 @@ export function normaliserTelephone(brut: string): string | undefined {
 export function estMobile(normalise: string): boolean {
   const national = `0${normalise.slice(3)}`;
   return MOBILE_PREFIXES.some((prefixe) => national.startsWith(prefixe));
+}
+
+/**
+ * La preuve d'une carte de relecture (ADR-040) : le texte de la page autour de la valeur,
+ * en trois morceaux pour que l'ecran puisse surligner **ce qui a ete lu**, et non ce qu'il
+ * croit retrouver. Un `mailto:` dont le lien dit « Ecrire au club » n'a pas son adresse
+ * dans le texte : c'est l'ancre qu'on surligne, parce que c'est elle que la page montrait.
+ */
+export type Extrait = { avant: string; cible: string; apres: string };
+
+/** Caracteres gardes de part et d'autre : deux phrases, a peu pres, sur une carte. */
+export const RAYON_EXTRAIT = 100;
+
+/** En dessous, une ancre (« ici », « mail ») se retrouverait partout dans la page. */
+const LONGUEUR_MIN_CIBLE = 4;
+
+/**
+ * Pure, comme `extraireContacts` : le crawl l'appelle sur la page qu'il vient de lire, la
+ * reparation sur la meme page relue depuis le cache. Une seule fonction, pour que les deux
+ * bases — collectee et reparee — montrent la meme preuve.
+ *
+ * Elle lit `doc.texte`, deja sans `<script>` ni `<style>` : un extrait ne peut pas citer
+ * du code que la page n'affichait pas.
+ */
+export function extraitAutour(
+  doc: Pick<DocumentAnalyse, "texte" | "liens">,
+  contact: Pick<ContactExtrait, "kind" | "valeur" | "valeurNormalisee" | "empreinte">,
+): Extrait | undefined {
+  const texte = doc.texte.replace(/\s+/g, " ").trim();
+  const position = situerDansLeTexte(texte, doc.liens, contact);
+  if (position === undefined) return undefined;
+  const [debut, fin] = position;
+
+  let gauche = Math.max(0, debut - RAYON_EXTRAIT);
+  let droite = Math.min(texte.length, fin + RAYON_EXTRAIT);
+  // Couper aux mots : un extrait qui commence par « ociation sportive » se lit comme une
+  // erreur de l'outil, pas comme une citation.
+  if (gauche > 0) {
+    const espace = texte.indexOf(" ", gauche);
+    if (espace !== -1 && espace < debut) gauche = espace + 1;
+  }
+  if (droite < texte.length) {
+    const espace = texte.lastIndexOf(" ", droite);
+    if (espace > fin) droite = espace;
+  }
+
+  return {
+    avant: `${gauche > 0 ? "… " : ""}${texte.slice(gauche, debut)}`,
+    cible: texte.slice(debut, fin),
+    apres: `${texte.slice(fin, droite)}${droite < texte.length ? " …" : ""}`,
+  };
+}
+
+function situerDansLeTexte(
+  texte: string,
+  liens: readonly Lien[],
+  contact: Pick<ContactExtrait, "kind" | "valeur" | "valeurNormalisee" | "empreinte">,
+): readonly [number, number] | undefined {
+  const bas = texte.toLowerCase();
+  const chercher = (aiguille: string): readonly [number, number] | undefined => {
+    const propre = aiguille.replace(/\s+/g, " ").trim();
+    if (propre.length < LONGUEUR_MIN_CIBLE) return undefined;
+    const index = bas.indexOf(propre.toLowerCase());
+    return index === -1 ? undefined : [index, index + propre.length];
+  };
+
+  // Dans l'ordre de ce qui designe le plus surement le contact : la valeur telle que lue,
+  // puis le texte qui l'a fait reperer, puis l'ancre du lien qui la portait.
+  const empreinteTextuelle = /^(?:mailto:|tel:|x-typo3-mailto:)/i.test(contact.empreinte)
+    ? undefined
+    : contact.empreinte;
+  const ancre = liens.find((lien) => lien.href === contact.empreinte)?.ancre;
+  for (const aiguille of [contact.valeur, empreinteTextuelle, ancre]) {
+    if (aiguille === undefined) continue;
+    const trouve = chercher(aiguille);
+    if (trouve !== undefined) return trouve;
+  }
+
+  // Un `tel:` ecrit `+33299412780` quand la page affiche « 02 99 41 27 80 » : on cherche
+  // les memes chiffres, separateurs quelconques.
+  if (contact.kind === "phone" && /^\+33\d{9}$/.test(contact.valeurNormalisee)) {
+    const chiffres = contact.valeurNormalisee.slice(3).split("").join("[\\s.\\-]?");
+    const trouve = new RegExp(`(?:\\+33\\s?(?:\\(0\\)\\s?)?|0)${chiffres}`).exec(texte);
+    if (trouve !== null) return [trouve.index, trouve.index + trouve[0].length];
+  }
+  return undefined;
 }

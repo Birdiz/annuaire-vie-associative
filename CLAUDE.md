@@ -183,11 +183,21 @@ dont ils ont besoin (ADR-035, ADR-036).
 - **Ce qui demande de relire la page vit dans `src/reparation.ts`**, appelee par le
   `ouvrir()` commun de `cli.ts`, comme la purge. Elle rejoue le nommage depuis le cache, et
   **efface** — sans rien mettre a la place — les noms que le filtre courant refuse et
-  qu'aucune page ne permet plus de recalculer.
+  qu'aucune page ne permet plus de recalculer. Elle donne aussi leur preuve aux cartes de
+  relecture (`contact.extrait`, ADR-040), sous `metric(reparation, extraits_version)`, par
+  la meme `extraitAutour` que le crawl.
 
 Un marqueur `metric(reparation, nom_pressenti_version)` la limite a **une execution par
 version d'heuristique**. Sans lui, une base dont le cache a disparu repasserait sur tous ses
 contacts a chaque commande.
+
+## On relit pendant que la collecte tourne
+
+Le crawl note chaque contact qu'il ecrit (ADR-039), par `noterLigne` — le seul chemin vers
+`noter()`, que la normalisation emprunte aussi. Ce score est **provisoire** : le MX d'un
+domaine jamais verifie compte pour « non verifie », et `score_version` reste `NULL`. C'est
+cette version vide, et non l'absence de score, qui fait que la normalisation le reprend.
+Le crawl ne fait aucun DNS : son commit est synchrone.
 
 ## Un bloc qui porte tous les contacts n'en nomme aucun
 

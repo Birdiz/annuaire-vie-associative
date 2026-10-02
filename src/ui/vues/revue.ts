@@ -112,8 +112,8 @@ export function fragmentFile(donnees: DonneesRevue): string {
 
   const banniere = banniereRun(
     donnees.collecte,
-    "La file se remplit au fur et à mesure : ce qui est arbitré maintenant reste arbitré, mais " +
-      "l'essentiel des contacts n'est pas encore noté. Revenir à la fin de la collecte évite de repasser deux fois.",
+    "La file se remplit au fur et à mesure, et ce qui est arbitré maintenant reste arbitré. Les scores " +
+      "restent provisoires jusqu'à la fin : le domaine des adresses n'est vérifié qu'à la normalisation.",
   );
 
   const entete = `${refus}${banniere}\n${compteur}\n${attente}\n${aRenoter}`;
@@ -124,7 +124,7 @@ export function fragmentFile(donnees: DonneesRevue): string {
     // Trois raisons de n'avoir rien a montrer, et elles n'appellent pas la meme suite.
     const explication =
       donnees.collecte.kind !== "inactif"
-        ? "Rien à arbitrer pour l'instant : la collecte en cours n'a pas encore noté de contact. Cet écran se remplira tout seul."
+        ? "Rien à arbitrer pour l'instant : la collecte en cours n'a pas encore trouvé de contact. Cet écran se remplira tout seul."
         : d.nonNotes > 0
           ? "Rien à arbitrer tant que la notation n'est pas passée sur les contacts ci-dessus."
           : "Rien à arbitrer pour ce département.";
@@ -210,7 +210,9 @@ function carte(contact: ContactARevoir, departement: string, page: number): stri
   <div class="chapeau">
     <span class="type">${echapperHtml(type)}</span>
     <span class="score">score ${contact.score === null ? "—" : contact.score.toFixed(2)}
-      <span class="discret">· lu ${contact.confiance.toFixed(2)}</span></span>
+      <span class="discret">· lu ${contact.confiance.toFixed(2)}${
+        contact.score_version === null ? " · provisoire, domaine pas encore vérifié" : ""
+      }</span></span>
   </div>
   <div class="valeur">${echapperHtml(contact.valeur)}</div>
   <div class="cible">${cible}</div>
