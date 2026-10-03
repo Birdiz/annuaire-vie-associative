@@ -55,7 +55,15 @@ export function ecranExporter(donnees: DonneesExport): string {
 
   return `<h1>Export CSV</h1>
 ${banniere}
-<form method="get" action="/export.csv" class="grille-export">
+<!-- L'aperçu suit les réglages sans attendre de bouton : le volume, l'aperçu, ce qui reste
+     sur l'établi et l'avertissement dépendent du profil, et « Télécharger » envoie le profil
+     coché, lui. Un écran resté sur l'ancien profil annonçait un fichier et en livrait un
+     autre. Seule la colonne de sortie est échangée, pour ne pas voler le focus du réglage.
+     autocomplete="off" : un navigateur qui restaure les cases au rechargement les
+     désaccorderait de nouveau de ce que le serveur a rendu. -->
+<form method="get" action="/export.csv" class="grille-export" autocomplete="off"
+      hx-get="/exporter" hx-trigger="change, input changed delay:500ms from:#export-score-min"
+      hx-target="#export-sortie" hx-select="#export-sortie" hx-swap="outerHTML" hx-replace-url="true">
   <input type="hidden" name="departement" value="${echapperHtml(donnees.departement)}">
   <div class="export-reglages">
     <fieldset class="profils">
@@ -81,7 +89,7 @@ ${banniere}
     </fieldset>
     <p>
       <label>Score minimum
-        <input type="text" name="score-min" value="${echapperHtml(donnees.scoreMin)}"
+        <input type="text" id="export-score-min" name="score-min" value="${echapperHtml(donnees.scoreMin)}"
                placeholder="0.6" size="6">
       </label>
       <span class="discret">vide = tous les contacts, notés ou non</span>
@@ -95,11 +103,11 @@ ${banniere}
     <!-- formaction : sans JavaScript, ce bouton recharge l'ecran avec les reglages choisis,
          et l'apercu suit. Le bouton de telechargement, lui, part vers le fichier. -->
     <p><button type="submit" formaction="/exporter">Mettre à jour l'aperçu</button></p>
-    ${restes(donnees, simple)}
   </div>
 
-  <div class="export-sortie">
+  <div class="export-sortie" id="export-sortie">
     ${volumetrie(donnees, simple)}
+    ${restes(donnees, simple)}
     ${apercu(donnees, simple)}
     <!-- L'avertissement est ici, et pas seulement dans le README : c'est le moment ou le
          fichier quitte l'outil, donc le seul ou il sera lu par quelqu'un qui est sur le point
@@ -109,18 +117,19 @@ ${banniere}
       ${avertissement(simple)}
       <p><button type="submit" class="primaire">Télécharger le fichier</button></p>
     </section>
+    <p class="discret">
+    Équivalent en ligne de commande :
+    <code>annuaire exporter --departement ${echapperHtml(donnees.departement)}${
+        simple ? " --profil simple" : ""
+      }${donnees.scoreMin === "" ? "" : ` --score-min ${echapperHtml(donnees.scoreMin)}`}${
+        donnees.avecRejetes ? " --avec-rejetes" : ""
+      } --fichier annuaire-${echapperHtml(donnees.departement)}.csv</code>
+    <br>Sans <code>--profil</code>, la ligne de commande produit le fichier complet.
+    </p>
   </div>
 </form>
 
-<p class="discret">
-Équivalent en ligne de commande :
-<code>annuaire exporter --departement ${echapperHtml(donnees.departement)}${
-    simple ? " --profil simple" : ""
-  }${donnees.scoreMin === "" ? "" : ` --score-min ${echapperHtml(donnees.scoreMin)}`}${
-    donnees.avecRejetes ? " --avec-rejetes" : ""
-  } --fichier annuaire-${echapperHtml(donnees.departement)}.csv</code>
-<br>Sans <code>--profil</code>, la ligne de commande produit le fichier complet.
-</p>
+
 
 <p class="discret">Les contacts rejetés en relecture sont exclus par défaut : un arbitrage humain
 qui ne changerait rien au fichier livré ne servirait à rien. <a href="/relire?departement=${dept}">Aller à la relecture</a>.</p>

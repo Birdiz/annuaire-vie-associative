@@ -186,7 +186,7 @@ test("une correction qui fabriquerait un doublon est refusee par la base", (t) =
   });
 
   assert.equal(resultat.kind, "refus");
-  if (resultat.kind === "refus") assert.match(resultat.message, /existe deja/);
+  if (resultat.kind === "refus") assert.match(resultat.message, /existe déjà/);
   assert.equal(ligneDe(db, id)["valeur_normalisee"], "secretariat@tennis-bruzou.example");
 });
 

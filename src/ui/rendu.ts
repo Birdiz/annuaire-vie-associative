@@ -199,7 +199,10 @@ export function barreStations(etat: EtatStations, onglet: Onglet, departement: s
 ${STATIONS.map((station, rang) => {
   const actif = onglet === station;
   const { sous, badge } = etat[station];
-  return `  <li><a class="station${actif ? " actif" : ""}" href="${CHEMIN_ONGLET[station]}?departement=${dept}"${
+  // L'id n'est pas decoratif : la barre est remplacee toutes les dix secondes, et htmx ne
+  // rend le focus qu'a un element qui en porte un. Sans lui, qui parcourt la barre au
+  // clavier se retrouvait renvoye en haut de page.
+  return `  <li><a id="station-${station}" class="station${actif ? " actif" : ""}" href="${CHEMIN_ONGLET[station]}?departement=${dept}"${
     actif ? ' aria-current="page"' : ""
   }><span class="rang">${rang + 1}</span><span class="nom">${NOM_STATION[station]}${
     badge === undefined ? "" : ` <span class="badge">${echapperHtml(badge)}</span>`

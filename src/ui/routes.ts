@@ -22,7 +22,7 @@ import type { JobQueue } from "../jobs/queue.ts";
 import type { Counters } from "../metrics/counters.ts";
 import type { Clock } from "../clock.ts";
 import { lireAsset } from "./assets.ts";
-import { page, nombre, octets, barrePortee, barreStations, duree, ecart, dateHeure, jour, STATIONS } from "./rendu.ts";
+import { page, nombre, octets, barrePortee, barreStations, duree, ecart, dateHeure, STATIONS } from "./rendu.ts";
 import type { EtatCollecte, EtatStations, Station } from "./rendu.ts";
 import {
   activiteCollecte,
@@ -41,7 +41,7 @@ import {
 } from "./requetes.ts";
 import type { LigneRun } from "./requetes.ts";
 import { arbitrer, estActionRevue } from "./revue.ts";
-import { ecranCollecter, fragmentSuivi, fragmentChiffres } from "./vues/collecter.ts";
+import { ecranCollecter, fragmentSuivi, fragmentChiffres, fragmentDetailChiffres } from "./vues/collecter.ts";
 import type { DonneesSuivi, DonneesCollecter, Progression } from "./vues/collecter.ts";
 import { ecranPreparer, fragmentReglages, fragmentMobiles } from "./vues/preparer.ts";
 import type { DonneesReglages, DonneesMobiles } from "./vues/preparer.ts";
@@ -331,7 +331,9 @@ function etatStations(ctx: ContexteUi, departement: string): EtatStations {
   } else if (derniere === undefined) {
     collecter = amorce.communes === 0 ? "jamais amorcé" : "en attente";
   } else if (derniere.statut === "termine") {
-    collecter = `terminée le ${jour(derniere.finished_at ?? derniere.started_at).slice(0, 5)}`;
+    // `dateHeure` et non `jour` : les horodatages sont en UTC, et `jour` lit la date telle
+    // qu'elle est ecrite — une collecte finie a 0 h 30 se serait dite finie la veille.
+    collecter = `terminée le ${dateHeure(derniere.finished_at ?? derniere.started_at).slice(0, 5)}`;
   } else if (derniere.statut === "interrompu") {
     collecter = `arrêtée le ${dateHeure(derniere.finished_at ?? derniere.started_at).slice(0, 5)}`;
   } else if (derniere.statut === "echec") {
@@ -410,6 +412,12 @@ export function router(ctx: ContexteUi, requete: RequeteUi): ReponseUi {
 
   if (requete.methode === "GET" && requete.chemin === "/chiffres") {
     return html(fragmentChiffres(donneesCollecter(ctx, departement)));
+  }
+
+  // Le contenu du detail replie, sans le <details> : celui-ci reste dans la page, et ne se
+  // referme donc pas a chaque rafraichissement.
+  if (requete.methode === "GET" && requete.chemin === "/chiffres/detail") {
+    return html(fragmentDetailChiffres(donneesCollecter(ctx, departement)));
   }
 
   // Lancer et arreter. Rien n'est attendu ici : le pilote rend la main aussitot, et
@@ -789,7 +797,18 @@ function donneesRelire(
   const courant =
     (Number.isInteger(demande) && demande > 0 ? contactARevoir(ctx.db, departement, demande) : undefined) ??
     (file[0] === undefined ? undefined : contactARevoir(ctx.db, departement, file[0].id));
-  return { departement, mode, file, courant, distribution, refus, collecte, page: 1, pages: 1 };
+  const retourListe = requete.requete.get("retour") === "liste" ? pageDeRetour(requete) : undefined;
+  return { departement, mode, file, courant, distribution, refus, collecte, page: 1, pages: 1, retourListe };
+}
+
+/**
+ * La page de la liste ou revenir, telle que le lien « Corriger… » l'a portee. Bornee par
+ * le bas seulement : la liste a pu raccourcir entre-temps, et c'est son propre rendu qui
+ * ramene une page trop loin a la derniere.
+ */
+function pageDeRetour(requete: RequeteUi): number {
+  const page = Number(requete.requete.get("page") ?? "1");
+  return Number.isInteger(page) && page >= 1 ? page : 1;
 }
 
 /**
@@ -922,8 +941,12 @@ function enregistrerReglages(ctx: ContexteUi, requete: RequeteUi, portee: Portee
 function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): ReponseUi {
   const departement = portee.departement;
   const htmx = requete.entetes["hx-request"] === "true";
+  const champs = new URLSearchParams(requete.corps);
+  // Ce qui a ete tape revient dans les champs si l'arbitrage est refuse, par le corps de la
+  // reponse et jamais par l'URL : refuser une adresse ne doit pas la faire retaper.
+  const saisie = { valeur: champs.get("valeur") ?? "", note: champs.get("note") ?? "" };
   const rendre = (refus: string | undefined, statut: number): ReponseUi => {
-    const donnees = donneesRelire(ctx, requete, departement, refus);
+    const donnees = { ...donneesRelire(ctx, requete, departement, refus), saisie };
     if (htmx) return html(fragmentAtelier(donnees), statut);
     return html(
       pageComplete(ctx, portee, {
@@ -939,7 +962,6 @@ function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): Reponse
   const id = Number(requete.chemin.slice(prefixe.length));
   if (!Number.isInteger(id) || id <= 0) return rendre("Contact inconnu.", 400);
 
-  const champs = new URLSearchParams(requete.corps);
   const action = champs.get("action") ?? "";
   if (!estActionRevue(action)) return rendre("Action de revue inconnue.", 400);
 
@@ -961,8 +983,9 @@ function arbitrage(ctx: ContexteUi, requete: RequeteUi, portee: Portee): Reponse
   if (htmx) return rendre(undefined, 200);
   // Sans htmx, on revient a l'atelier tel qu'on l'avait : le mode et la page voyagent,
   // sans quoi arbitrer depuis la page 4 de la liste renverrait a la premiere.
+  // Une carte ouverte depuis la liste (« Corriger… ») y renvoie, a la meme page.
   const suite = new URLSearchParams({ departement });
-  if (requete.requete.get("mode") === "liste") {
+  if (requete.requete.get("mode") === "liste" || requete.requete.get("retour") === "liste") {
     suite.set("mode", "liste");
     suite.set("page", requete.requete.get("page") ?? "1");
   }

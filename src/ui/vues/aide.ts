@@ -244,7 +244,7 @@ le score, et l'extrait de la page où elle a été lue.</p>
   <dt>Valider <kbd>V</kbd></dt><dd>Le contact est juste. Il pourra sortir dans l'export.</dd>
   <dt>Rejeter <kbd>R</kbd></dt><dd>Faux ou hors sujet. Il reste en base mais ne sort pas.</dd>
   <dt>Corriger <kbd>C</kbd></dt><dd>Remplace la valeur ; la valeur lue reste dans la provenance.</dd>
-  <dt>Oublier</dt><dd>Efface le contact et empêche toute collecte future. Motif obligatoire, sans retour.</dd>
+  <dt>Oublier</dt><dd>Efface le contact et l'empêche de revenir aux collectes suivantes. Motif obligatoire, sans retour.</dd>
 </dl>`,
   exporter: `<p>Le fichier simple tient en six colonnes, une ligne par structure, sans provenance.
 Le fichier complet porte, pour chaque contact, la page d'où il vient, la date, la méthode et le

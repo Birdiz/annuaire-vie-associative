@@ -305,8 +305,10 @@ a.station.actif {
 
 /* ---- Panneau d'aide ---------------------------------------------------------- */
 
-/* Un popover déclaratif : il ne recouvre pas la carte, on lit l'aide et on décide sans
-   le fermer. Placé à droite, sur toute la hauteur. */
+/* Un popover déclaratif, placé à droite sur toute la hauteur. Il recouvre le bord droit
+   de l'écran — la preuve, sur la carte de relecture — et se referme au premier clic en
+   dehors : on le lit, puis on décide. Les raccourcis V, R, C restent actifs pendant qu'il
+   est ouvert. */
 .panneau-aide {
   position: fixed;
   inset: 0 0 0 auto;
@@ -607,7 +609,6 @@ main.ecran-collecter {
 
 .bloc-historique { padding: 20px 22px; }
 .bloc-historique h3 { margin-top: 0; font-size: 17px; }
-.detail-file { margin-top: 12px; font-size: 14px; }
 
 /* Les trois passes du run, en frise. Une liste ordonnée : c'est une suite d'étapes. */
 ol.etapes {
@@ -738,8 +739,11 @@ mark { background: var(--c2); color: var(--tx); padding: 1px 3px; border-radius:
 .lien-source a.source { color: var(--ac); word-break: break-all; }
 .lien-source .discret { display: block; }
 
-/* Le bandeau de décision : trois boutons de même poids, puis la correction. */
-form.arbitrage {
+/* Le bandeau de décision : trois boutons de même poids, puis la correction. Trois
+   formulaires dessous (relire.ts) : les deux premiers sont vides, leurs boutons s'y
+   rattachent par l'attribut `form`. */
+.carte-relecture > form:empty { display: none; }
+div.arbitrage {
   margin: 0;
   padding: 18px 30px 0;
   border-top: 1px solid var(--bd);
@@ -752,7 +756,8 @@ form.arbitrage {
 }
 .decisions { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .decisions button { padding: 14px; font-size: 17px; }
-label.correction { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--mu); }
+div.correction { display: flex; flex-direction: column; gap: 4px; font-size: 14px; color: var(--mu); }
+.chapeau .retour-liste { margin-left: 12px; font-size: 14px; }
 details.legende { font-size: 14px; padding-bottom: 10px; }
 details.legende > summary { color: var(--pr); }
 details.legende dl { margin: 8px 0 0; }
@@ -770,7 +775,7 @@ details.oubli {
   font-size: 14px;
 }
 details.oubli > summary { color: var(--al); }
-details.oubli .groupe { display: flex; flex-wrap: wrap; gap: 10px; }
+details.oubli form.groupe { margin: 0; display: flex; flex-wrap: wrap; gap: 10px; }
 details.oubli .groupe input { flex: 1 1 16rem; }
 
 .file-vide { max-width: 640px; }
@@ -886,7 +891,7 @@ label.profil .discret { display: block; margin-top: 4px; }
   .atelier .file-relecture { order: 2; }
   ol.etapes { grid-template-columns: 1fr; }
   .decisions { grid-template-columns: 1fr; }
-  form.arbitrage { grid-template-columns: 1fr; padding: 16px 16px 0; }
+  div.arbitrage { grid-template-columns: 1fr; padding: 16px 16px 0; }
   details.oubli { margin: 0 -16px; padding: 12px 16px 16px; }
   .carte-corps { padding: 20px 16px; }
   h1, .suivi-principal h2 { font-size: 26px; }
