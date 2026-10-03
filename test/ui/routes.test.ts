@@ -575,7 +575,9 @@ test("les chiffres ont leur propre fragment, rafraichi comme le suivi", (t) => {
   // Sans cette route, le bloc se viderait a la premiere seconde de rafraichissement.
   const fragment = router(ctx, requete(`/chiffres?departement=${DEPARTEMENT}`));
   assert.equal(fragment.statut, 200);
-  assert.match(corpsTexte(fragment.corps), /Entonnoir/);
+  assert.match(corpsTexte(fragment.corps), /Couverture/);
+  // Le detail a sa propre route : son <details> reste dans la page, hors du bloc remplace.
+  assert.match(corpsTexte(router(ctx, requete(`/chiffres/detail?departement=${DEPARTEMENT}`)).corps), /Entonnoir/);
   assert.doesNotMatch(
     corpsTexte(fragment.corps),
     /<input/,
@@ -1260,4 +1262,112 @@ test("ADR-041 : l'apercu d'export montre les premieres lignes du fichier, avec s
   assert.match(complet, /<th><code>source_url<\/code><\/th>/);
   const lignes = complet.slice(complet.indexOf('class="apercu"')).split("</table>")[0]?.match(/<tr>/g) ?? [];
   assert.ok(lignes.length >= 2 && lignes.length <= 4, "l'en-tete et trois lignes au plus");
+});
+
+/**
+ * Revue UX de l'Etabli. Entree dans un champ envoie le formulaire par son premier bouton :
+ * d'un seul tenant, la carte validait la valeur lue quand on croyait la corriger, et ne
+ * faisait rien de l'effacement dont on venait de taper le motif.
+ */
+test("Entree dans un champ de la carte n'envoie que le bouton de ce champ", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 3);
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}`)).corps);
+  const id = /<article class="contact carte-relecture" id="contact-(\d+)"/.exec(ecran)?.[1];
+  assert.ok(id !== undefined);
+
+  const boutons = (formulaire: string): string[] =>
+    [...ecran.matchAll(new RegExp(`<button type="submit" form="${formulaire}" name="action" value="(\\w+)"`, "g"))].map(
+      (m) => m[1] ?? "",
+    );
+  assert.deepEqual(boutons(`decision-${id}`), ["valide", "rejete"]);
+  assert.deepEqual(boutons(`correction-${id}`), ["corrige"], "le seul bouton du formulaire de correction");
+  assert.match(ecran, new RegExp(`<input type="text" id="valeur-${id}" form="correction-${id}" name="valeur" required`));
+
+  const oubli = /<form class="groupe"[\s\S]*?<\/form>/.exec(ecran)?.[0] ?? "";
+  assert.match(oubli, /name="note" required/);
+  assert.deepEqual([...oubli.matchAll(/<button[^>]*value="(\w+)"/g)].map((m) => m[1]), ["oublie"]);
+  assert.match(ecran, /data-raccourci="c"\s+data-champ="valeur-\d+"/, "C sans valeur ouvre le champ au lieu d'envoyer");
+});
+
+test("un refus garde la carte visee et ce qui avait ete tape", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 5);
+  const ids = (ctx.db.prepare("SELECT id FROM contact WHERE review_statut = 'a_revoir' ORDER BY score, id").all() as {
+    id: number;
+  }[]).map((ligne) => ligne.id);
+  const choisi = ids[3];
+  assert.ok(choisi !== undefined);
+
+  const ecran = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&contact=${choisi}`)).corps);
+  // Le contact voyage avec l'action : sans lui, le refus se rendait sur la premiere carte.
+  assert.match(ecran, new RegExp(`hx-post="/relire/${choisi}\\?departement=35&amp;contact=${choisi}"`));
+
+  const refus = router(
+    ctx,
+    post(`/relire/${choisi}?departement=${DEPARTEMENT}&contact=${choisi}`, "action=corrige&valeur=presque%40rien", true),
+  );
+  assert.equal(refus.statut, 422);
+  const corps = corpsTexte(refus.corps);
+  assert.match(corps, /role="alert"/);
+  assert.match(corps, new RegExp(`<article class="contact carte-relecture" id="contact-${choisi}"`));
+  assert.match(corps, /name="valeur" required\s+autocomplete="off" placeholder="valeur corrigée" value="presque@rien"/);
+
+  // Un motif refuse rouvre le repli d'effacement, motif compris.
+  const sansMotif = corpsTexte(
+    router(ctx, post(`/relire/${choisi}?departement=${DEPARTEMENT}&contact=${choisi}`, "action=oublie&note=+", true)).corps,
+  );
+  assert.match(sansMotif, /<details class="oubli" open>/);
+});
+
+test("« Corriger… » depuis la liste ramene a la meme page de la liste", (t) => {
+  const ctx = contexte(t);
+  remplirLaFile(ctx, 120);
+  const page2 = corpsTexte(router(ctx, requete(`/relire?departement=${DEPARTEMENT}&mode=liste&page=2`)).corps);
+  const cible = idsAffiches(page2)[0];
+  assert.ok(cible !== undefined);
+  assert.match(page2, new RegExp(`href="/relire\\?departement=35&amp;contact=${cible}&amp;retour=liste&amp;page=2">Corriger…`));
+
+  const carte = corpsTexte(
+    router(ctx, requete(`/relire?departement=${DEPARTEMENT}&contact=${cible}&retour=liste&page=2`)).corps,
+  );
+  assert.match(carte, /retour à la liste/);
+  // L'ecran entier change de mode : la decision part en formulaire ordinaire, pas en htmx.
+  assert.doesNotMatch(carte, /<form id="decision-\d+"[^>]*hx-post/);
+
+  const apres = router(
+    ctx,
+    post(`/relire/${cible}?departement=${DEPARTEMENT}&contact=${cible}&retour=liste&page=2`, "action=corrige&valeur=juste%40exemple.example"),
+  );
+  assert.equal(apres.statut, 303);
+  assert.equal(apres.entetes["Location"], "/relire?departement=35&mode=liste&page=2");
+});
+
+test("aucun <details> dans un bloc qui se remplace seul : il se refermerait sous les yeux", (t) => {
+  const ctx = contexte(t);
+  for (const chemin of ["/suivi", "/chiffres", "/chiffres/detail", `/stations`]) {
+    const fragment = router(ctx, requete(`${chemin}?departement=${DEPARTEMENT}`));
+    assert.equal(fragment.statut, 200, chemin);
+    assert.doesNotMatch(corpsTexte(fragment.corps), /<details/, `${chemin} est rafraichi par htmx`);
+  }
+  const ecran = corpsTexte(router(ctx, requete(`/collecter?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /<details class="detail-chiffres">\s*<summary>[^<]*<\/summary>\s*<div hx-get="\/chiffres\/detail\?departement=35"/);
+  assert.match(corpsTexte(router(ctx, requete(`/chiffres/detail?departement=${DEPARTEMENT}`)).corps), /File de travail/);
+});
+
+test("l'apercu d'export suit les reglages, avertissement compris", (t) => {
+  const ctx = contexte(t);
+  const ecran = corpsTexte(router(ctx, requete(`/exporter?departement=${DEPARTEMENT}`)).corps);
+  assert.match(ecran, /hx-get="\/exporter" hx-trigger="change[^"]*"\s+hx-target="#export-sortie" hx-select="#export-sortie"/);
+  const sortie = ecran.slice(ecran.indexOf('id="export-sortie"'));
+  assert.match(sortie, /Avant de télécharger/, "l'avertissement depend du profil : il doit etre echange avec lui");
+  assert.match(sortie, /Équivalent en ligne de commande/);
+});
+
+test("les liens de la barre portent un id, pour que htmx leur rende le focus", (t) => {
+  const ctx = contexte(t);
+  const fragment = corpsTexte(router(ctx, requete(`/stations?departement=${DEPARTEMENT}&onglet=relire`)).corps);
+  for (const station of ["preparer", "collecter", "relire", "exporter"]) {
+    assert.match(fragment, new RegExp(`<a id="station-${station}"`));
+  }
 });

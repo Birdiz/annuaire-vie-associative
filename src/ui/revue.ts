@@ -71,8 +71,8 @@ export function arbitrer(
       return {
         kind: "refus",
         message:
-          "Un motif est requis pour oublier : il fait la preuve de la demande honoree. " +
-          "Renseignez-le dans la note.",
+          "Un motif est requis pour oublier : il fait la preuve de la demande honorée. " +
+          "Renseignez-le à côté du bouton « Oublier ».",
       };
     }
     const resultat = oublier(
@@ -103,7 +103,7 @@ export function arbitrer(
   if (normalisee.valeurNormalisee === contact.valeur_normalisee) {
     return {
       kind: "refus",
-      message: "La valeur saisie est identique a celle qui a ete lue : validez-la plutot que de la corriger.",
+      message: "La valeur saisie est identique à celle qui a été lue : validez-la plutôt que de la corriger.",
     };
   }
 
@@ -133,7 +133,7 @@ export function arbitrer(
     if (message.includes("UNIQUE constraint failed")) {
       return {
         kind: "refus",
-        message: "Cette valeur existe deja pour ce rattachement : le contact en double ne peut pas etre cree.",
+        message: "Cette valeur existe déjà pour ce rattachement : le contact en double ne peut pas être créé.",
       };
     }
     throw cause;
@@ -164,14 +164,14 @@ export function normaliserSaisie(
   if (kind === "email") {
     const valeur = nettoyerEmail(saisie);
     if (valeur === undefined) {
-      return { kind: "refus", message: `« ${saisie} » n'a pas la forme d'une adresse electronique.` };
+      return { kind: "refus", message: `« ${saisie} » n'a pas la forme d'une adresse électronique.` };
     }
     return { kind: "ok", valeur, valeurNormalisee: valeur.toLowerCase(), isGenerique: classerEmail(valeur) };
   }
 
   const normalise = normaliserTelephone(saisie);
   if (normalise === undefined) {
-    return { kind: "refus", message: `« ${saisie} » n'a pas la forme d'un numero francais.` };
+    return { kind: "refus", message: `« ${saisie} » n'a pas la forme d'un numéro français.` };
   }
   // §4.6 : les mobiles sont exclus par defaut. L'interface sait armer le drapeau depuis
   // l'ADR-027, mais il gouverne la **collecte** — il part dans le payload de chaque job
@@ -183,7 +183,7 @@ export function normaliserSaisie(
     return {
       kind: "refus",
       message:
-        "Les numeros mobiles (06/07) sont exclus par defaut (§4.6) : ils ne peuvent pas entrer par la revue.",
+        "Les numéros mobiles (06/07) sont exclus par défaut : ils ne peuvent pas entrer par la relecture.",
     };
   }
   return { kind: "ok", valeur: saisie, valeurNormalisee: normalise, isGenerique: null };

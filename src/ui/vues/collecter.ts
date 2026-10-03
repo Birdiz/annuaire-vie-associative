@@ -147,8 +147,6 @@ export function fragmentSuivi(suivi: DonneesSuivi): string {
          sans risque — rien ne sera rejoué.</p>`
       : "";
 
-  const file = tableau(ETATS_JOB, [ETATS_JOB.map((etat) => `<span class="n">${nombre(suivi.jobs[etat])}</span>`)]);
-
   const runs = tableau(
     ["collecte", "département", "statut", "début", "durée"],
     suivi.runs.map((run) => [
@@ -182,9 +180,6 @@ ${inviteRelire(suivi, enCours !== undefined)}
 <div class="bloc-historique">
 <h3>Dernières collectes</h3>
 ${runs}
-<details class="detail-file"><summary>File de travail</summary>
-${file}
-</details>
 </div>
 </div>
 </div>`;
@@ -303,7 +298,7 @@ function inviteRelire(suivi: DonneesSuivi, enCours: boolean): string {
     suivi.aRelire >= 2 ? "ent" : ""
   }${enCours ? " déjà" : ""} une relecture.</p>
   ${enCours ? '<p class="discret">Pas besoin d\'attendre la fin : la collecte continue pendant que vous relisez.</p>' : ""}
-  <a class="bouton" href="/relire?departement=${dept}">${enCours ? "Commencer à relire" : "Relire"}</a>
+  <a class="bouton" id="invite-relire" href="/relire?departement=${dept}">${enCours ? "Commencer à relire" : "Relire"}</a>
 </div>`;
 }
 
@@ -365,6 +360,10 @@ ${barre(avancement.faits, avancement.total, avancement.unite, avancement.phrase)
 /**
  * Le bouton, et ce qu'il faut savoir avant de le presser.
  *
+ * Les boutons portent un id pour que htmx leur rende le focus a chaque rafraichissement —
+ * un id **par bouton** : partage, il ferait passer le focus de « Lancer » a « Arreter »
+ * sous le doigt de qui vient d'appuyer.
+ *
  * Aucun champ de saisie ici : ce fragment est reechange toutes les deux secondes, et
  * une valeur en cours de frappe y serait effacee. Le departement vient du selecteur de
  * l'ecran, qui recharge la page — d'ou le champ cache plutot qu'une seconde liste.
@@ -375,7 +374,7 @@ function commandes(suivi: DonneesSuivi): string {
 
   if (suivi.pilote.kind === "en_cours") {
     return `<form method="post" action="/run/arret" hx-post="/run/arret" hx-target="#suivi" class="commandes">
-  <button type="submit">Arrêter la collecte</button>
+  <button type="submit" id="commande-arreter">Arrêter la collecte</button>
   <span class="discret">Les requêtes en cours vont finir : rien ne sera perdu, et relancer reprendra où l'on s'arrête.</span>
 </form>
 ${mentionMobiles(suivi.pilote.avecMobiles, "Cette collecte conserve")}${refus}`;
@@ -411,7 +410,7 @@ ${issue}${refus}`;
   // lu devant un run complet il faisait croire a un mode d'essai.
   return `<form method="post" action="/run" hx-post="/run" hx-target="#suivi" class="commandes">
   <input type="hidden" name="departement" value="${departement}">
-  <button type="submit" class="primaire">${libelle}</button>
+  <button type="submit" id="commande-lancer" class="primaire">${libelle}</button>
   <span class="discret">Les trois étapes à la suite : lecture du registre national des associations,
   découverte des sites de mairie (20 pages par commune), puis normalisation et notation.
   <strong>Comptez plusieurs heures</strong> — le délai de 2 s entre deux requêtes vers un même
@@ -460,9 +459,19 @@ export function ecranCollecter(donnees: DonneesCollecter): string {
 ${fragmentSuivi(donnees.suivi)}
 </section>
 
-<section id="chiffres" class="carte" hx-get="/chiffres?departement=${dept}"
-         hx-trigger="every 10s" hx-swap="innerHTML">
+<section id="chiffres" class="carte">
+<div hx-get="/chiffres?departement=${dept}" hx-trigger="every 10s" hx-swap="innerHTML">
 ${fragmentChiffres(donnees)}
+</div>
+<!-- Le <details> reste hors des blocs rafraichis : un bloc remplace toutes les dix
+     secondes le recreerait replie, et le detail se refermerait sous les yeux de qui le lit.
+     Seul son contenu se rafraichit. -->
+<details class="detail-chiffres">
+<summary>Voir le détail : entonnoir, messagerie, relecture, classification, file de travail</summary>
+<div hx-get="/chiffres/detail?departement=${dept}" hx-trigger="every 10s" hx-swap="innerHTML">
+${fragmentDetailChiffres(donnees)}
+</div>
+</details>
 </section>
 `;
 }
@@ -480,10 +489,35 @@ ${fragmentChiffres(donnees)}
  * plus — un bloc qui se remplace efface ce qu'on est en train d'y taper.
  */
 export function fragmentChiffres(donnees: DonneesCollecter): string {
-  const { couverture, normalisation, prefiltre, revue, dormance } = donnees;
+  const { couverture } = donnees;
+  return `<h2>Couverture</h2>
+<p class="discret">Sur ${nombre(couverture.actives)} associations actives · actualisé toutes les 10 s.</p>
+<div class="cartes cartes-couverture">
+${chiffre(pourcent(couverture.avecEmail, couverture.actives), "au moins un email")}
+${chiffre(pourcent(couverture.avecEmailExploitable, couverture.actives), "… exploitable")}
+${chiffre(pourcent(couverture.avecEmailJoignable, couverture.actives), "… dont le domaine reçoit du courrier")}
+${chiffre(nombre(couverture.actives), "associations actives")}
+</div>
+<p class="discret">
+Les trois taux se lisent ensemble : leur écart dit si la couverture tient à des adresses
+mortes ou à ce que les communes publient.
+</p>
+`;
+}
 
-  const chiffre = (valeur: string, libelle: string): string =>
-    `<div class="chiffre"><b>${valeur}</b><span>${echapperHtml(libelle)}</span></div>`;
+function chiffre(valeur: string, libelle: string): string {
+  return `<div class="chiffre"><b>${valeur}</b><span>${echapperHtml(libelle)}</span></div>`;
+}
+
+/**
+ * Le contenu du detail replie, rafraichi a part : le `<details>` qui l'entoure ne doit
+ * jamais etre dans un bloc remplace (voir `ecranCollecter`).
+ */
+export function fragmentDetailChiffres(donnees: DonneesCollecter): string {
+  const { couverture, normalisation, prefiltre, revue, dormance } = donnees;
+  // Les contacts prets, comme la station Relire et sa barre : `aRevoir` compte aussi ceux
+  // que la notation n'a pas encore vus, et deux ecrans donnaient deux chiffres.
+  const prets = Math.max(0, revue.aRevoir - revue.nonNotes);
 
   const entonnoir = tableau(
     ["étage", "volume", "commentaire"],
@@ -513,7 +547,7 @@ export function fragmentChiffres(donnees: DonneesCollecter): string {
       [
         "contacts notés",
         `<span class="n">${nombre(normalisation.notes)}</span>`,
-        `${nombre(revue.arbitres)} arbitrés en revue`,
+        `${nombre(revue.arbitres)} arbitrés en relecture`,
       ],
     ],
   );
@@ -536,31 +570,15 @@ export function fragmentChiffres(donnees: DonneesCollecter): string {
     ]),
   );
 
-  return `<h2>Couverture</h2>
-<p class="discret">Sur ${nombre(couverture.actives)} associations actives · actualisé toutes les 10 s.</p>
-<div class="cartes cartes-couverture">
-${chiffre(pourcent(couverture.avecEmail, couverture.actives), "au moins un email")}
-${chiffre(pourcent(couverture.avecEmailExploitable, couverture.actives), "… exploitable")}
-${chiffre(pourcent(couverture.avecEmailJoignable, couverture.actives), "… dont le domaine reçoit du courrier")}
-${chiffre(nombre(couverture.actives), "associations actives")}
-</div>
-<p class="discret">
-Les trois taux se lisent ensemble : leur écart dit si la couverture tient à des adresses
-mortes ou à ce que les communes publient.
-</p>
-
-<details class="detail-chiffres">
-<summary>Voir le détail : entonnoir, messagerie, relecture, classification</summary>
-
-<h3>Entonnoir</h3>
+  return `<h3>Entonnoir</h3>
 ${entonnoir}
 
 <h3>Messagerie</h3>
 ${mx}
 
-<h3>Revue humaine</h3>
+<h3>Relecture</h3>
 <div class="cartes">
-${chiffre(nombre(revue.aRevoir), "à arbitrer")}
+${chiffre(nombre(prets), "prêts à relire")}
 ${chiffre(nombre(revue.valides), "validés")}
 ${chiffre(nombre(revue.rejetes), "rejetés")}
 ${chiffre(nombre(revue.corriges), "corrigés")}
@@ -575,6 +593,8 @@ fois.
 
 <h3>Classification</h3>
 ${types}
-</details>
+
+<h3>File de travail</h3>
+${tableau(ETATS_JOB, [ETATS_JOB.map((etat) => `<span class="n">${nombre(donnees.suivi.jobs[etat])}</span>`)])}
 `;
 }

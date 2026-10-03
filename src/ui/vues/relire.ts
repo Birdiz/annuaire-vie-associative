@@ -48,6 +48,17 @@ export type DonneesRelire = {
   distribution: DistributionRevue;
   /** Message d'un arbitrage refuse, a afficher en tete. */
   refus?: string | undefined;
+  /**
+   * Ce qui avait ete tape quand l'arbitrage a ete refuse, rendu dans les champs de la
+   * carte : un refus pour une virgule ne doit pas faire retaper une adresse entiere. Il
+   * voyage dans le corps de la reponse, jamais dans l'URL.
+   */
+  saisie?: { valeur: string; note: string } | undefined;
+  /**
+   * Page de la liste d'ou la carte a ete ouverte (« Corriger… »), pour y revenir apres la
+   * decision. Absent quand la carte a ete ouverte en mode carte.
+   */
+  retourListe?: number | undefined;
   /** Une collecte en cours change la file sous les yeux de qui arbitre. */
   collecte: EtatCollecte;
   /** Page affichee en mode liste, 1-based, deja bornee par le routeur. */
@@ -74,7 +85,8 @@ function legende(): string {
   return `<details class="legende">
   <summary>Que font les quatre boutons ?</summary>
   <dl>
-    <dt>Valider</dt><dd>La valeur est bonne. Elle sort dans l'export.</dd>
+    <dt>Valider</dt><dd>La valeur est bonne. Elle pourra sortir dans l'export, selon le score
+      minimum choisi.</dd>
     <dt>Rejeter</dt><dd>La valeur est fausse ou hors sujet. Elle reste en base mais l'export
       l'exclut par défaut.</dd>
     <dt>Corriger</dt><dd>La valeur lue est presque bonne — une adresse cassée par un site,
@@ -113,7 +125,7 @@ export function fragmentAtelier(donnees: DonneesRelire): string {
   const { distribution: d } = donnees;
 
   const refus =
-    donnees.refus === undefined ? "" : `<p class="refus">${echapperHtml(donnees.refus)}</p>\n`;
+    donnees.refus === undefined ? "" : `<p class="refus" role="alert" tabindex="-1">${echapperHtml(donnees.refus)}</p>\n`;
 
   // `aRevoir` compte aussi les lignes que l'etape [8] n'a pas encore notees, et celles-la
   // n'entrent pas dans la file. Afficher le total brut a cote de « Rien a arbitrer »
@@ -227,10 +239,18 @@ ${items}
  * Le chemin d'une decision : la page ou le mode voyagent avec l'action, sans quoi arbitrer
  * depuis la page 4 de la liste renverrait a la premiere, et on perdrait sa place a chaque
  * clic.
+ *
+ * En mode carte, le contact voyage aussi : un refus rend la page sur place, et sans lui le
+ * routeur rouvrirait la premiere carte de la file — le message d'erreur se serait affiche
+ * au-dessus d'un autre contact que celui qu'on venait de corriger. Apres une decision
+ * acceptee, le contact n'est plus a relire, et le routeur passe de lui-meme au suivant.
  */
 function cheminAction(contact: ContactARevoir, donnees: DonneesRelire): string {
   const dept = encodeURIComponent(donnees.departement);
-  const suite = donnees.mode === "liste" ? `&mode=liste&page=${donnees.page}` : "";
+  const suite =
+    donnees.mode === "liste"
+      ? `&mode=liste&page=${donnees.page}`
+      : `&contact=${contact.id}${donnees.retourListe === undefined ? "" : `&retour=liste&page=${donnees.retourListe}`}`;
   return `/relire/${contact.id}?departement=${dept}${suite}`;
 }
 
@@ -268,14 +288,23 @@ function carte(contact: ContactARevoir, donnees: DonneesRelire): string {
       : `<a class="source" href="${source}" rel="noreferrer noopener" target="_blank">${source}</a>`;
 
   const chemin = cheminAction(contact, donnees);
+  // Une carte ouverte depuis la liste y renvoie : par une redirection ordinaire, puisque
+  // c'est l'ecran entier qui change de mode, et non le seul atelier.
+  const htmx = donnees.retourListe === undefined;
+  // La saisie n'est rendue que sur la carte qu'elle visait.
+  const saisie = donnees.refus === undefined ? undefined : donnees.saisie;
   const type = LIBELLE_KIND[contact.kind] ?? contact.kind;
   const provisoire = contact.score_version === null ? '<span class="provisoire">provisoire, domaine pas encore vérifié</span>' : "";
 
   return `<article class="contact carte-relecture" id="contact-${contact.id}">
   <div class="carte-corps">
   <div class="carte-lecture">
-    <div class="chapeau"><span class="type">${echapperHtml(type)}</span></div>
-    <div class="valeur">${echapperHtml(contact.valeur)}</div>
+    <div class="chapeau"><span class="type">${echapperHtml(type)}</span>${
+      donnees.retourListe === undefined
+        ? ""
+        : ` <a class="retour-liste" href="/relire?departement=${encodeURIComponent(donnees.departement)}&amp;mode=liste&amp;page=${donnees.retourListe}">← retour à la liste</a>`
+    }</div>
+    <div class="valeur" tabindex="-1">${echapperHtml(contact.valeur)}</div>
     <div class="cible">${cible}</div>
     ${regime === "" ? "" : `<div class="regime">${regime}</div>`}
     <div class="confiance">
@@ -293,37 +322,59 @@ function carte(contact: ContactARevoir, donnees: DonneesRelire): string {
       <span class="discret">vue le ${dateHeure(contact.collected_at)} · méthode : ${echapperHtml(contact.methode_extraction)}</span></div>
   </div>
   </div>
-  <!-- method/action en plus de hx-post : sans JS le formulaire part quand meme, et le
-       serveur repond alors par une redirection plutot qu'un fragment. L'ecran reste
-       utilisable meme si htmx ne se charge pas. -->
-  <form class="arbitrage" method="post" action="${echapperHtml(chemin)}"
-        hx-post="${echapperHtml(chemin)}" hx-target="#atelier" hx-swap="innerHTML">
+  <!-- Trois formulaires et non un : Entree dans un champ envoie le formulaire par son
+       *premier* bouton. D'un seul tenant, une correction ou un motif d'effacement valides
+       d'une Entree partaient en « Valider » — la valeur lue validee, l'effacement jamais
+       fait, et la carte suivante a l'ecran comme si tout s'etait bien passe. Chaque champ
+       a donc son formulaire, dont le seul bouton est le sien ; l'attribut form garde
+       les boutons a leur place. -->
+  ${formulaire(`decision-${contact.id}`, chemin, htmx)}
+  ${formulaire(`correction-${contact.id}`, chemin, htmx)}
+  <div class="arbitrage">
     <div class="decisions">
-      <button type="submit" name="action" value="valide" data-raccourci="v">Valider <kbd>V</kbd></button>
-      <button type="submit" name="action" value="rejete" data-raccourci="r">Rejeter <kbd>R</kbd></button>
-      <button type="submit" name="action" value="corrige" data-raccourci="c">Corriger <kbd>C</kbd></button>
+      <button type="submit" form="decision-${contact.id}" name="action" value="valide" data-raccourci="v">Valider <kbd>V</kbd></button>
+      <button type="submit" form="decision-${contact.id}" name="action" value="rejete" data-raccourci="r">Rejeter <kbd>R</kbd></button>
+      <button type="submit" form="correction-${contact.id}" name="action" value="corrige" data-raccourci="c"
+              data-champ="valeur-${contact.id}">Corriger <kbd>C</kbd></button>
     </div>
-    <label class="correction">Valeur corrigée, pour « Corriger »
-      <input type="text" name="valeur" placeholder="valeur corrigée" aria-label="valeur corrigée">
-    </label>
+    <div class="correction">
+      <label for="valeur-${contact.id}">Valeur corrigée, pour « Corriger »</label>
+      <input type="text" id="valeur-${contact.id}" form="correction-${contact.id}" name="valeur" required
+             autocomplete="off" placeholder="valeur corrigée" value="${echapperHtml(saisie?.valeur)}">
+    </div>
     ${legende()}
     <!-- Oublier n'est pas rejeter. Rejeter ecrit un statut, que l'export sait remettre
          et que le run suivant recouvre ; oublier supprime la ligne, efface la copie en
          cache et inscrit l'exclusion. D'ou le motif obligatoire, et le repli. -->
-    <details class="oubli">
+    <details class="oubli"${saisie?.note ? " open" : ""}>
       <summary>Oublier ce contact — effacement définitif</summary>
       <p class="discret">Supprime le contact, efface la copie de la page gardée sur cette machine,
       et l'empêche de revenir à la collecte suivante. Sans retour.</p>
-      <div class="groupe">
-        <input type="text" name="note" placeholder="motif, obligatoire pour oublier" aria-label="note de revue">
+      <form class="groupe" method="post" action="${echapperHtml(chemin)}"${htmxCarte(chemin, htmx)}>
+        <input type="text" name="note" required autocomplete="off" placeholder="motif, obligatoire pour oublier"
+               aria-label="motif de l'effacement" value="${echapperHtml(saisie?.note)}">
         <button type="submit" name="action" value="oublie" class="danger"
                 title="Supprime définitivement ce contact et l'empêche de revenir. Le motif, saisi à côté, est obligatoire.">
           Oublier
         </button>
-      </div>
+      </form>
     </details>
-  </form>
+  </div>
 </article>`;
+}
+
+/**
+ * `method`/`action` en plus de `hx-post` : sans JS le formulaire part quand meme, et le
+ * serveur repond alors par une redirection plutot qu'un fragment. L'ecran reste utilisable
+ * meme si htmx ne se charge pas.
+ */
+function htmxCarte(chemin: string, htmx: boolean): string {
+  return htmx ? ` hx-post="${echapperHtml(chemin)}" hx-target="#atelier" hx-swap="innerHTML"` : "";
+}
+
+/** Un formulaire vide, auquel ses boutons et son champ se rattachent par `form="…"`. */
+function formulaire(id: string, chemin: string, htmx: boolean): string {
+  return `<form id="${id}" method="post" action="${echapperHtml(chemin)}"${htmxCarte(chemin, htmx)}></form>`;
 }
 
 /**
@@ -366,7 +417,7 @@ function atelierListe(donnees: DonneesRelire): string {
   <td><form class="arbitrage-ligne" method="post" action="${echapperHtml(chemin)}" hx-post="${echapperHtml(chemin)}" hx-target="#atelier" hx-swap="innerHTML">
     <button type="submit" name="action" value="valide">Valider</button>
     <button type="submit" name="action" value="rejete">Rejeter</button>
-    <a href="/relire?departement=${dept}&amp;contact=${contact.id}">Corriger…</a>
+    <a href="/relire?departement=${dept}&amp;contact=${contact.id}&amp;retour=liste&amp;page=${donnees.page}">Corriger…</a>
   </form></td>
 </tr>`;
     })

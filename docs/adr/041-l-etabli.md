@@ -128,3 +128,27 @@ page. La balise meta de configuration porte désormais `"includeIndicatorStyles"
   - la barre sans champ ;
   - le parcours carte par carte, et l'échappement de la preuve ;
   - l'absence de tout `style=` et de tout script en ligne sur les cinq écrans.
+
+## Corrections après revue (2026-10-02)
+
+Une revue de l'écran, faite après la fusion, a trouvé quatre défauts.
+
+- **La carte est faite de trois formulaires.** D'un seul tenant, Entrée dans un champ
+  envoyait le formulaire par son premier bouton, Valider :
+  - une correction validait la valeur lue ;
+  - un motif d'effacement validait le contact, sans rien effacer.
+
+  Chaque champ a désormais son formulaire, dont le seul bouton est le sien. L'attribut `form`
+  garde les boutons à leur place. `C` sans valeur saisie ouvre le champ au lieu d'envoyer.
+- **Un refus garde la carte et la saisie.** L'action porte `contact=N`. Sans lui, le refus
+  s'affichait au-dessus de la première carte de la file. Ce qui avait été tapé revient dans
+  les champs, par le corps de la réponse et jamais par l'URL. « Corriger… », depuis la liste,
+  y ramène à la même page.
+- **Aucun `<details>` dans un bloc rafraîchi.** Remplacé toutes les deux ou dix secondes, il
+  se refermait sous les yeux de qui le lisait. Seul le contenu du détail se rafraîchit
+  désormais (`/chiffres/detail`), et un test l'interdit dans les fragments.
+- **L'aperçu d'export suit les réglages.** Avant, il restait sur l'ancien profil, avec son
+  avertissement, alors que « Télécharger » envoyait le nouveau.
+
+Le panneau « ? » recouvre le bord droit de l'écran et se referme au premier clic en dehors.
+C'est le comportement voulu ; ce qui en était dit plus haut ne l'est pas.
